@@ -150,36 +150,36 @@ function buildSheep(mat, geoCache, ci) {
   const skin = [0.46, 0.4, 0.36];
   const dark = [wool[0] * 0.68, wool[1] * 0.68, wool[2] * 0.68];
   const g = new THREE.Group();
-  const body = fixedPart(mat, geoCache, `sh-body-${ci}`, 0.78, 0.58, 0.98, wool);
-  body.position.set(0, 0.6, 0);
-  const puff = fixedPart(mat, geoCache, `sh-puff-${ci}`, 0.66, 0.24, 0.8, [Math.min(1, wool[0] * 1.05), Math.min(1, wool[1] * 1.05), Math.min(1, wool[2] * 1.05)]);
-  puff.position.set(0, 0.94, -0.03);
-  const head = fixedPart(mat, geoCache, `sh-head-${ci}`, 0.36, 0.34, 0.32, skin);
-  head.position.set(0, 0.68, 0.6);
-  const snout = fixedPart(mat, geoCache, `sh-snout-${ci}`, 0.24, 0.18, 0.12, [0.36, 0.3, 0.27]);
-  snout.position.set(0, 0.6, 0.78);
+  const body = fixedPart(mat, geoCache, `sh-body-${ci}`, 0.78, 0.56, 0.86, wool);
+  body.position.set(0, 0.62, -0.06);
+  const puff = fixedPart(mat, geoCache, `sh-puff-${ci}`, 0.66, 0.24, 0.72, [Math.min(1, wool[0] * 1.05), Math.min(1, wool[1] * 1.05), Math.min(1, wool[2] * 1.05)]);
+  puff.position.set(0, 0.96, -0.08);
+  const head = fixedPart(mat, geoCache, `sh-head-${ci}`, 0.38, 0.36, 0.34, skin);
+  head.position.set(0, 0.78, 0.52);
+  const snout = fixedPart(mat, geoCache, `sh-snout-${ci}`, 0.24, 0.18, 0.14, [0.36, 0.3, 0.27]);
+  snout.position.set(0, 0.68, 0.72);
   // Рога — выглядят суровее
   const horns = [];
   for (const s of [-1, 1]) {
-    const horn = fixedPart(mat, geoCache, `sh-horn-${ci}`, 0.11, 0.1, 0.2, [0.32, 0.29, 0.26]);
-    horn.position.set(s * 0.24, 0.88, 0.5);
+    const horn = fixedPart(mat, geoCache, `sh-horn-${ci}`, 0.12, 0.11, 0.22, [0.32, 0.29, 0.26]);
+    horn.position.set(s * 0.25, 0.98, 0.46);
     horn.rotation.z = s * 0.35;
     g.add(horn);
     horns.push(horn);
-    const ear = fixedPart(mat, geoCache, `sh-ear-${ci}`, 0.12, 0.09, 0.16, skin);
-    ear.position.set(s * 0.24, 0.74, 0.52);
+    const ear = fixedPart(mat, geoCache, `sh-ear-${ci}`, 0.14, 0.1, 0.18, skin);
+    ear.position.set(s * 0.26, 0.82, 0.5);
     g.add(ear);
   }
   const legs = [];
   for (const [sx, sz] of [[-1, 1], [1, 1], [-1, -1], [1, -1]]) {
     const leg = pendulumPart(mat, geoCache, `sh-leg-${ci}`, 0.14, 0.34, 0.14, dark);
-    leg.position.set(sx * 0.22, 0.34, sz * 0.3);
+    leg.position.set(sx * 0.22, 0.34, sz * 0.26);
     legs.push(leg);
     g.add(leg);
   }
   // Морда: глаза с горизонтальными зрачками и жующий рот
-  const face = addEyes(g, mat, geoCache, `sh-${ci}`, { y: 0.74, z: 0.78, dx: 0.13, size: 0.1, pupilScale: 0.42 });
-  const mouth = addMouth(g, mat, geoCache, `sh-${ci}`, { y: 0.53, z: 0.78, w: 0.18, h: 0.05, teeth: 0, grin: false });
+  const face = addEyes(g, mat, geoCache, `sh-${ci}`, { y: 0.83, z: 0.7, dx: 0.14, size: 0.11, pupilScale: 0.42 });
+  const mouth = addMouth(g, mat, geoCache, `sh-${ci}`, { y: 0.61, z: 0.8, w: 0.2, h: 0.05, teeth: 4, grin: false });
   g.add(body, puff, head, snout);
   return { group: g, legs, head, ears: horns, hop: false, face, mouth, scale: 1.35 };
 }
@@ -192,7 +192,7 @@ function buildSlime(mat, geoCache) {
   inner.position.set(0, 0.24, 0);
   // Глаза с зрачками + широкий рот с зубами
   const face = addEyes(g, mat, geoCache, 'sl', { y: 0.42, z: 0.32, dx: 0.15, size: 0.11, pupilScale: 0.45 });
-  const mouth = addMouth(g, mat, geoCache, 'sl', { y: 0.24, z: 0.33, w: 0.3, h: 0.08, teeth: 4, grin: false });
+  const mouth = addMouth(g, mat, geoCache, 'sl', { y: 0.24, z: 0.35, w: 0.3, h: 0.08, teeth: 4, grin: false });
   // Капли по бокам
   for (const s of [-1, 1]) {
     const drip = fixedPart(mat, geoCache, 'sl-drip', 0.12, 0.12, 0.12, [0.32, 0.68, 0.32]);
@@ -235,7 +235,7 @@ function buildBird(mat, geoCache, ci) {
     wings.push(wing);
     g.add(wing);
   }
-  const face = addEyes(g, mat, geoCache, `bd-${ci}`, { y: 0.16, z: 0.32, dx: 0.07, size: 0.06, pupilScale: 0.55 });
+  const face = addEyes(g, mat, geoCache, `bd-${ci}`, { y: 0.16, z: 0.36, dx: 0.07, size: 0.06, pupilScale: 0.55 });
   g.add(body, head, beak, tail);
   return { group: g, legs: [], head: null, ears: [], wings, hop: false, bird: true, face, scale: 1.25 };
 }
@@ -244,8 +244,8 @@ function buildBird(mat, geoCache, ci) {
 // оскал с зубами, когтистые лапы и рваный хвост из теней
 function buildGloom(mat, geoCache, eyeMat) {
   const g = new THREE.Group();
-  const cloth = [0.035, 0.03, 0.055];
-  const clothDark = [0.02, 0.017, 0.032];
+  const cloth = [0.105, 0.075, 0.155];     // тёмно-фиолетовая ткань — видно даже днём
+  const clothDark = [0.055, 0.04, 0.09];
   const glow = { mat: eyeMat, color: [1, 1, 1] };
 
   // Тело-балахон (расширяется книзу) + горб сверху
@@ -268,16 +268,16 @@ function buildGloom(mat, geoCache, eyeMat) {
   // Светящиеся глаза (по два с каждой стороны — жутко), под ними оскал с зубами
   const eyes = [];
   for (const s of [-1, 1]) {
-    const big = fixedPart(eyeMat, geoCache, 'gl-eye-big', 0.16, 0.12, 0.06, [1, 1, 1]);
-    big.position.set(s * 0.15, 1.22, 0.22);
-    const small = fixedPart(eyeMat, geoCache, 'gl-eye-small', 0.09, 0.07, 0.05, [1, 1, 1]);
-    small.position.set(s * 0.16, 1.06, 0.23);
+    const big = fixedPart(eyeMat, geoCache, 'gl-eye-big', 0.19, 0.14, 0.06, [1, 1, 1]);
+    big.position.set(s * 0.15, 1.22, 0.28);
+    const small = fixedPart(eyeMat, geoCache, 'gl-eye-small', 0.11, 0.08, 0.05, [1, 1, 1]);
+    small.position.set(s * 0.16, 1.06, 0.28);
     const pupil = fixedPart(mat, geoCache, 'gl-pupil', 0.06, 0.09, 0.04, [0.02, 0.02, 0.03]);
-    pupil.position.set(s * 0.15, 1.22, 0.26);
+    pupil.position.set(s * 0.15, 1.22, 0.315);
     g.add(big, small, pupil);
     eyes.push(big, small, pupil);
   }
-  const mouth = addMouth(g, mat, geoCache, 'gl', { y: 0.9, z: 0.25, w: 0.42, h: 0.1, teeth: 5, grin: true });
+  const mouth = addMouth(g, mat, geoCache, 'gl', { y: 0.9, z: 0.29, w: 0.42, h: 0.1, teeth: 5, grin: true });
 
   // Когтистые руки (качаются при полёте)
   const arms = [];

@@ -32,8 +32,10 @@ export const STRINGS = {
       <b>Режимы:</b> в «Выживании» сломанные блоки попадают в инвентарь, блоки тратятся при
       установке, инструменты ускоряют работу, а мобы наносят урон. В «Креативе» все блоки
       бесконечны, блоки ломаются почти мгновенно, полёт — двойным пробелом, а игрок бессмертен.<br><br>
-      <b>Крафт:</b> откройте инвентарь (E) — слева список рецептов, доступные подсвечены зелёным.
-      Клик по рецепту создаёт предмет.<br><br>
+      <b>Крафт:</b> откройте инвентарь (E). Слева — список рецептов (доступные подсвечены зелёным,
+      клик — быстрый крафт), справа вверху — сетка 2×2: кладите предметы ЛКМ/ПКМ и забирайте результат.
+      Рецепты «3×3» (кирки, топоры, мечи) требуют <b>верстак</b>: 4 доски в сетке 2×2 → верстак,
+      поставьте его и нажмите ПКМ.<br><br>
       <b>Телефон:</b> слева — джойстик, справа — обзор; короткий тап — сломать блок.
       Кнопки: прыжок, поставить, копать, слот «🎒» — инвентарь.<br><br>
       Прогресс (мир, инвентарь, яблоки) сохраняется автоматически.`,
@@ -132,8 +134,10 @@ export const STRINGS = {
       <b>Modes:</b> in <b>Survival</b> broken blocks go to your inventory, placing consumes them,
       tools make work faster and mobs can hurt you. In <b>Creative</b> every block is infinite,
       blocks break almost instantly, double-tap Space flies and you cannot die.<br><br>
-      <b>Crafting:</b> open the inventory (E) — the recipe list is on the left, available recipes
-      are highlighted green, click one to craft.<br><br>
+      <b>Crafting:</b> open the inventory (E). The recipe list is on the left (available ones are
+      green, click for instant crafting), the 2×2 grid is above: place items with LMB/RMB and take the
+      result. Recipes marked “3×3” (pickaxes, axes, swords) need a <b>crafting table</b>:
+      4 planks in the 2×2 grid → table, place it and press RMB.<br><br>
       <b>Mobile:</b> joystick on the left, look on the right; quick tap — break a block.
       Buttons: jump, place, dig, «🎒» — inventory.<br><br>
       Progress (world, inventory, apples) saves automatically.`,
