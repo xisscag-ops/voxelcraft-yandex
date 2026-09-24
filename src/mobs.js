@@ -189,13 +189,71 @@ export class Mob {
     this.onSound = null;         // (kind, dist) => void
     this.onAttack = null;        // (mob, playerPos) => void
     this.speed = type === 'bunny' ? 2.2 : type === 'slime' ? 1.6 : type === 'gloom' ? 2.0 : 1.1;
-    this.hp = type === 'gloom' ? 3 : 1;
+    // HP: зайцы и овцы 2–3, слизень 4, Хмарь 3, птицы не бьются
+    if (type === 'bunny' || type === 'sheep') this.hp = 2 + (Math.random() < 0.5 ? 1 : 0);
+    else if (type === 'slime') this.hp = 4;
+    else if (type === 'gloom') this.hp = 3;
+    else this.hp = 1;
     this.attackT = 0;
     this.flashT = 0;
     this.burnT = 0;
+    this.panicT = 0;      // паника после удара (зайцы/овцы убегают)
+    this.kbT = 0; this.kbX = 0; this.kbZ = 0;   // отброс
+    this._redT = 0;       // красная вспышка урона
+    this._redMat = null;
+    this._origMats = null;
     this.dead = false;
     visuals.group.position.set(x, y, z);
     this.yBase = y;
+    this.meshes = [];
+    visuals.group.traverse((o) => { if (o.isMesh) this.meshes.push(o); });
+  }
+
+  // Красная вспышка урона на ~0.3 с (материалы временно меняются)
+  _updateRed(dt) {
+    if (this._redT <= 0) return;
+    this._redT -= dt;
+    if (!this._redMat) {
+      this._redMat = new THREE.MeshBasicMaterial({ vertexColors: true, color: 0xff2b2b, transparent: true, opacity: 0.95 });
+      this._origMats = this.meshes.map((m) => m.material);
+      for (const m of this.meshes) m.material = this._redMat;
+    }
+    if (this._redT <= 0) {
+      for (let i = 0; i < this.meshes.length; i++) this.meshes[i].material = this._origMats[i];
+      this._redMat = null;
+      this._origMats = null;
+    }
+  }
+
+  // Отброс назад маленькими шагами, не проходя сквозь блоки
+  _updateKnockback(dt) {
+    if (this.kbT <= 0) return;
+    let remaining = Math.min(this.kbT, dt);
+    this.kbT -= remaining;
+    while (remaining > 0) {
+      const s = Math.min(0.04, remaining);
+      remaining -= s;
+      const nx = this.pos.x + this.kbX * s;
+      const nz = this.pos.z + this.kbZ * s;
+      if (this._blocked(nx, nz)) break;
+      this.pos.x = nx;
+      this.pos.z = nz;
+    }
+  }
+
+  // Тело моба (~0.6 высотой) не должно врезаться в блоки
+  _blocked(x, z) {
+    const fx = Math.floor(x - 0.25), tx = Math.floor(x + 0.25);
+    const fz = Math.floor(z - 0.25), tz = Math.floor(z + 0.25);
+    const y0 = Math.floor(this.pos.y), y1 = Math.floor(this.pos.y + 0.6);
+    for (let y = y0; y <= y1; y++) {
+      for (let zz = fz; zz <= tz; zz++) {
+        for (let xx = fx; xx <= tx; xx++) {
+          if (isSolid(this.world.getBlock(xx, y, zz))) return true;
+        }
+      }
+    }
+    return false;
   }
 
   // Хмарь: подкрадывается к игроку, висит над землёй, бьёт с дистанции 1.6
@@ -231,13 +289,6 @@ export class Mob {
       v.group.rotation.x = 0;
       v.group.scale.setScalar(1);
     }
-    // Плавный отброс после удара
-    if (this.kbT > 0) {
-      const step = Math.min(this.kbT, dt);
-      this.kbT -= dt;
-      this.pos.x += this.kbX * step;
-      this.pos.z += this.kbZ * step;
-    }
 
     // Атака
     this.attackT -= dt;
@@ -258,12 +309,16 @@ export class Mob {
     const l = Math.hypot(dx, dz) || 1;
     this.kbX = (dx / l) * power;
     this.kbZ = (dz / l) * power;
-    this.kbT = 0.18;
+    this.kbT = 0.22;
   }
 
+  // Урон. true — мобы погиб. Зайцы и овцы в панике убегают
   hurt(n) {
+    if (this.dead) return false;
     this.hp -= n;
     this.flashT = 0.35;
+    this._redT = 0.3;
+    if (this.type === 'bunny' || this.type === 'sheep') this.panicT = 2.6;
     if (this.hp <= 0) {
       this.dead = true;
       return true;
@@ -281,6 +336,15 @@ export class Mob {
     const dz = this.pos.z - playerPos.z;
     const dist = Math.hypot(dx, dz);
     this.stateT -= 0.6;
+
+    // Ударили — убегаем, пока не отпугали
+    if (this.panicT > 0) {
+      this.panicT -= 0.6;
+      this.state = 'flee';
+      this.stateT = Math.max(this.stateT, 1);
+      this.heading = Math.atan2(dx, dz);
+      return;
+    }
 
     if (this.type === 'bunny' && dist < 4.5) {
       this.state = 'flee';
@@ -316,6 +380,9 @@ export class Mob {
   }
 
   update(dt, playerPos) {
+    // Общие: красная вспышка урона и отброс (не сквозь блоки)
+    this._updateRed(dt);
+    this._updateKnockback(dt);
     // Птицы летают отдельно — без привязки к земле
     if (this.type === 'bird') return this.updateBird(dt, playerPos);
     if (this.type === 'gloom') return this.updateGloom(dt, playerPos);

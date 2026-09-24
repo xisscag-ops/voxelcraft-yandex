@@ -1,7 +1,7 @@
-// VoxelCraft — точка входа: игровой цикл, чанки, строительство, сохранения
+// VoxelCraft — точка входа: игровой цикл, чанки, строительство, режимы, инвентарь, сохранения
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
-import { BLOCK, BLOCKS, STARTER_PALETTE, BUILDER_PALETTE, breakKind, isSolid, isDecor } from './blocks.js';
+import { BLOCK, BLOCKS, STARTER_PALETTE, breakKind, isSolid, isDecor } from './blocks.js';
 import { buildAtlas, tileColor, tileTexture, CRACK_TILES } from './textures.js';
 import { World } from './world.js';
 import { meshChunk } from './mesher.js';
@@ -17,6 +17,9 @@ import { Input } from './input.js';
 import { UI } from './ui.js';
 import { I18n } from './i18n.js';
 import { Ysdk } from './ysdk.js';
+import { Inventory, ITEM, maxStack, dropFor, breakMult, defaultMode, swordDamage, isBlockItem } from './inventory.js';
+import { craft as craftItem } from './crafting.js';
+import { InventoryUI } from './inventoryui.js';
 
 // ---------------------------------------------------------------- Инициализация
 const i18n = new I18n('ru');
@@ -33,15 +36,22 @@ const settings = {
   paletteUnlocked: false,
 };
 
-let state = 'loading';           // loading | menu | game | pause
+// Состояния: loading | menu | game | pause | inventory
+let state = 'loading';
 let world = null;
 let player = null;
-let palette = [...STARTER_PALETTE];
+let inv = new Inventory();
+let mode = 'creative';           // 'survival' | 'creative' (хранится в сейве)
 let hotbarIndex = 0;
+let inventoryOpen = false;
 let saveData = null;
 let sessionStart = 0;
 let interstitialShown = 0;
 let debugVisible = false;
+let shakeT = 0;                  // встряска камеры при уроне
+let attackCd = 0;
+let gloomT = 6;
+let gloomWarned = false;
 
 // ---------------------------------------------------------------- Рендер
 const canvas = document.getElementById('game-canvas');
@@ -70,12 +80,6 @@ const particles = new Particles(THREE, scene);
 const mobManager = new MobManager(scene, null);
 const weather = new Weather(THREE, scene);
 const items = new ItemDrops(scene);
-// Выживание
-let apples = 0;
-let attackCd = 0;
-let gloomT = 6;
-let gloomWarned = false;
-let prevEat = false;
 // Звуки мобов с затуханием по расстоянию
 mobManager.onSound = (kind, dist) => {
   const vol = 1 / (1 + dist * 0.35);
@@ -241,14 +245,63 @@ function disposeChunkMeshes(c) {
   if (c.meshWater) { scene.remove(c.meshWater); c.meshWater.geometry.dispose(); c.meshWater = null; }
 }
 
-// ---------------------------------------------------------------- Хотбар
-function rebuildPalette() {
-  palette = settings.paletteUnlocked
-    ? [...STARTER_PALETTE, ...BUILDER_PALETTE]
-    : [...STARTER_PALETTE];
-  hotbarIndex = Math.min(hotbarIndex, palette.length - 1);
-  ui.buildHotbar(palette, i18n.lang);
-  ui.setHotbarSelection(hotbarIndex);
+// ---------------------------------------------------------------- Хотбар / инвентарь
+function heldItem() {
+  return inv.slots[hotbarIndex] || null;
+}
+
+// Обновить хотбар, счётчик яблок и (если открыт) окно инвентаря
+function refreshUI() {
+  ui.refreshHotbar(inv, mode, hotbarIndex, i18n.lang);
+  ui.setApples(inv.count(ITEM.APPLE));
+  if (inventoryOpen) invUI.render();
+}
+
+// ---------------------------------------------------------------- Окно инвентаря
+const invUI = new InventoryUI({
+  i18n,
+  inventory: inv,
+  mode: () => mode,
+  hotbarIndex: () => hotbarIndex,
+  unlocked: () => settings.paletteUnlocked,
+  onChange: () => refreshUI(),
+  onClose: () => closeInventory(),
+  onCraft: (r) => {
+    if (craftItem(inv, r)) sfx.uiOk();
+  },
+  onToast: (msg) => ui.toast(msg, 2200),
+  onSelectHotbar: (i) => {
+    hotbarIndex = i;
+    ui.setHotbarSelection(i);
+    sfx.uiClick();
+  },
+});
+
+function openInventory() {
+  if (state !== 'game' || inventoryOpen || !world) return;
+  inventoryOpen = true;
+  state = 'inventory';
+  if (document.pointerLockElement) document.exitPointerLock();
+  // Сбрасываем «начатое» действие, чтобы тап по 🎒 не сломал блок
+  breakTarget = null;
+  breakQuick = false;
+  breakProgress = 0;
+  input.mouse.dx = 0;
+  input.mouse.dy = 0;
+  invUI.open();
+  sfx.uiClick();
+}
+
+function closeInventory() {
+  if (!inventoryOpen) return;
+  inventoryOpen = false;
+  state = 'game';
+  input.mouse.dx = 0;
+  input.mouse.dy = 0;
+  invUI.close();
+  refreshUI();
+  saveGame(); // инвентарь и яблоки сохраняем в сейв
+  sfx.uiClick();
 }
 
 // ---------------------------------------------------------------- Действия
@@ -271,9 +324,15 @@ function doBreak(hit) {
   world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
   particles.burst(hit.x, hit.y, hit.z, tileColor(BLOCKS[id].tiles[0]), 16);
   sfx.breakBlock(breakKind(id));
-  // С листвы иногда падает яблоко
-  if (id === BLOCK.LEAVES && Math.random() < 0.14) {
-    items.spawn(hit.x + 0.5, hit.y + 0.8, hit.z + 0.5, 'apple');
+  if (mode === 'survival') {
+    // Сломанный блок падает в инвентарь (трава → земля, камень → булыжник, стекло — ничего)
+    const drop = dropFor(id);
+    if (drop != null && !inv.add(drop, 1)) ui.toast(i18n.t('inv_full'));
+    // С листвы иногда падает яблоко
+    if (id === BLOCK.LEAVES && Math.random() < 0.14) {
+      items.spawn(hit.x + 0.5, hit.y + 0.8, hit.z + 0.5, 'apple');
+    }
+    refreshUI();
   }
   breakTarget = null;
   breakProgress = 0;
@@ -294,19 +353,26 @@ function handleDeath() {
   setTimeout(() => state === 'game' && ui.toast(i18n.t('respawned'), 2400), 2300);
 }
 
+// F — съесть яблоко (в инвентаре), не полёт
 function tryEat() {
-  if (apples <= 0) { ui.toast(i18n.t('eat_none'), 1400); return; }
+  if (inv.count(ITEM.APPLE) <= 0) {
+    if (mode === 'survival') ui.toast(i18n.t('eat_none'), 1400);
+    return;
+  }
   if (player.hp >= player.maxHp) return;
-  apples--;
-  ui.setApples(apples);
+  inv.remove(ITEM.APPLE, 1);
   sfx.crunch();
   player.heal(4);
   ui.setHealth(player.hp, player.maxHp);
   ui.toast(i18n.t('eat_ok'), 1600);
+  refreshUI();
 }
 
 function doPlace(hit) {
   if (!hit) return;
+  const it = heldItem();
+  // Ставим только блоки; предмет в руке должен быть
+  if (!it || !isBlockItem(it.id)) return;
   swingHand(0.6);
   // Прицел на траве/цветке — ставим блок на её место
   const onDecor = isDecor(hit.id);
@@ -321,7 +387,7 @@ function doPlace(hit) {
   const overlap = x + 1 > px - HW && x < px + HW &&
     y + 1 > py && y < py + CONFIG.PLAYER_HEIGHT &&
     z + 1 > pz - HW && z < pz + HW;
-  const id = palette[hotbarIndex];
+  const id = it.id;
   if (overlap && isSolid(id)) return;
   if (isDecor(cur)) {
     // Трава автоматически ломается при установке блока
@@ -335,18 +401,26 @@ function doPlace(hit) {
     blocksBuilt++;
     ui.setBlocksBuilt(blocksBuilt);
     ysdk.setStats({ blocksBuilt });
+    if (mode === 'survival') {
+      // Поставленный блок расходуется
+      inv.decrement(hotbarIndex);
+      refreshUI();
+    }
   }
 }
 
 // ---------------------------------------------------------------- Сохранение
 function buildSave() {
   return {
-    v: 1,
+    v: 2,
     seed: world.seed,
     edits: world.serializeEdits(),
     player: player.serialize(),
     time: sky.serialize(),
     blocksBuilt,
+    mode,                       // режим хранится в сохранении
+    inv: inv.serialize(),       // инвентарь и яблоки
+    hotbarIndex,
     paletteUnlocked: settings.paletteUnlocked,
     settings: {
       volume: settings.volume,
@@ -376,22 +450,26 @@ function attachPlayerEvents() {
 };
 mobManager.onDeath = (mob) => {
   sfx.mobDie();
-  particles.burst(mob.pos.x, mob.pos.y + 0.5, mob.pos.z, 0x2a2140, 14);
+  particles.burst(mob.pos.x, mob.pos.y + 0.5, mob.pos.z, [42, 33, 64], 14);
 };
 items.onPickup = (kind) => {
   if (kind === 'apple') {
-    apples++;
-    ui.setApples(apples);
+    const ok = inv.add(ITEM.APPLE);
     sfx.pickup();
-    if (apples === 1) ui.toast(i18n.t('apple_get'), 3200);
+    refreshUI();
+    if (ok && inv.count(ITEM.APPLE) === 1) ui.toast(i18n.t('apple_get'), 3200);
   }
 };
 player.events.onStep = (inWater) => sfx.step(inWater);
   player.events.onJump = () => sfx.jump();
   player.events.onLand = () => sfx.land();
   player.events.onHurt = () => {
+    // Урон: звук, красная вспышка, встряска камеры и интерфейса, мигание сердечек
     sfx.hurt();
     ui.flashHurt();
+    ui.shakeUI();
+    ui.blinkHearts();
+    shakeT = 0.4;
     ui.setHealth(player.hp, player.maxHp);
   };
   player.events.onDeath = () => handleDeath();
@@ -404,6 +482,7 @@ function enterGame() {
   sessionStart = sessionStart || performance.now();
   ui.showGame();
   ui.setTouchVisible(input.isTouch);
+  ui.setMode(mode);
   ysdk.gameplayStart();
   if (!input.isTouch) input.requestLock(canvas);
   showHints();
@@ -445,11 +524,23 @@ async function saveAndQuit() {
   sessionStart = 0;
 }
 
+// Выбор режима: «Играть» без сохранения и «Новый мир»
+function openModeScreen() {
+  state = 'menu';
+  ui.showScreen('mode-screen');
+}
+
 function showHints() {
   if (input.isTouch) return;
-  ui.toast(i18n.t('hint_break'), 4000);
-  setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_place'), 3500), 4200);
-  setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_fly'), 3500), 8000);
+  if (mode === 'survival') {
+    ui.toast(i18n.t('hint_break'), 4000);
+    setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_place'), 3500), 4200);
+    setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_inv'), 3500), 8000);
+  } else {
+    ui.toast(i18n.t('hint_break'), 4000);
+    setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_place'), 3500), 4200);
+    setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_fly'), 3500), 8000);
+  }
 }
 
 // ---------------------------------------------------------------- Награда за рекламу
@@ -460,10 +551,10 @@ async function requestReward() {
   if (ok || !ysdk.available) {
     // Без SDK (локальный запуск/демо) награда выдаётся сразу
     settings.paletteUnlocked = true;
-    rebuildPalette();
     ui.setRewardButton(true);
     ui.toast(i18n.t('reward_got') + (ok ? '' : ' (demo)'), 3200);
     sfx.reward();
+    refreshUI(); // каталог креатива и хотбар
     saveGame();
   } else {
     ui.toast(i18n.t('reward_fail'), 3200);
@@ -471,7 +562,8 @@ async function requestReward() {
 }
 
 // ---------------------------------------------------------------- Инициализация мира
-async function startWorld(newWorld = false) {
+// modeArg — из экрана выбора режима (для нового мира)
+async function startWorld(newWorld = false, modeArg = null) {
   ui.showScreen('loading-screen');
   ui.setLoading(0.05, i18n.t('loading'));
 
@@ -481,10 +573,14 @@ async function startWorld(newWorld = false) {
   player = new Player(world);
   mobManager.clear();
   items.clear();
-  apples = 0;
-  ui.setApples(0);
+  inv.clear();
+  shakeT = 0;
   mobManager.world = world;
   attachPlayerEvents();
+
+  // Режим: из сохранения (старые сейвы без mode — креатив), иначе из выбора
+  mode = data ? defaultMode(data) : (modeArg || 'creative');
+  player.invulnerable = mode === 'creative';
 
   if (data) {
     world.loadEdits(data.edits || []);
@@ -498,16 +594,28 @@ async function startWorld(newWorld = false) {
       settings.viewDistance = data.settings.viewDistance || settings.viewDistance;
     }
     if (data.time != null) sky.setTime(data.time);
+    inv.load(data.inv);
+    hotbarIndex = Math.max(0, Math.min(8, data.hotbarIndex | 0));
+    // Старый креативный сейв без инвентаря — наполняем хотбар стартовым набором
+    if (mode === 'creative' && !inv.slots.some(Boolean)) {
+      STARTER_PALETTE.forEach((id, i) => { inv.slots[i] = { id, n: maxStack(id) }; });
+    }
     i18n.setLang(settings.lang);
     sfx.setVolume(settings.volume);
     sfx.setEnabled(settings.sound);
   } else {
     settings.paletteUnlocked = false;
+    if (mode === 'creative') {
+      // Стартовый набор в хотбаре (бесконечный)
+      STARTER_PALETTE.forEach((id, i) => { inv.slots[i] = { id, n: maxStack(id) }; });
+    }
   }
   ui.applySettings(settings);
   ui.applyI18n();
-  rebuildPalette();
+  ui.setMode(mode);
+  ui.setRewardButton(settings.paletteUnlocked);
   sky.viewDistance = settings.viewDistance;
+  refreshUI();
 
   // Спавн
   const spawn = world.findSpawn();
@@ -520,6 +628,8 @@ async function startWorld(newWorld = false) {
       player.pos.y += 2;
     }
   }
+  // Полёта в выживании нет (на случай старого сейва с полётом)
+  if (mode === 'survival') player.flying = false;
 
   // Предгенерация вокруг спавна
   const total = 25;
@@ -534,12 +644,11 @@ async function startWorld(newWorld = false) {
     await new Promise((r) => setTimeout(r, 0));
   }
   ui.setLoading(1, i18n.t('ready'));
-  ui.setRewardButton(settings.paletteUnlocked);
 
   // Несколько мобов сразу, чтобы мир был живым
   for (let i = 0; i < 5; i++) mobManager.trySpawn(player.pos);
   ui.setHealth(player.hp, player.maxHp);
-  ui.setApples(apples);
+  ui.setApples(inv.count(ITEM.APPLE));
 
   ysdk.gameplayReady();
   saveData = buildSave(); // «Продолжить» имеет смысл и до первого сохранения
@@ -548,12 +657,19 @@ async function startWorld(newWorld = false) {
 }
 
 // ---------------------------------------------------------------- Обработчики UI
-ui.handlers.onPlay = () => { input.enterFullscreen(); sfx.resume(); sfx.uiOk(); startWorld(false); };
-ui.handlers.onNewWorld = () => { input.enterFullscreen(); sfx.resume(); sfx.uiOk(); saveData = null; startWorld(true); };
+ui.handlers.onPlay = () => {
+  input.enterFullscreen(); sfx.resume(); sfx.uiOk();
+  if (saveData) startWorld(false);
+  else openModeScreen();
+};
+ui.handlers.onNewWorld = () => { input.enterFullscreen(); sfx.resume(); sfx.uiOk(); openModeScreen(); };
+ui.handlers.onMode = (m) => { input.enterFullscreen(); sfx.uiOk(); startWorld(true, m); };
+ui.handlers.onModeBack = () => { sfx.uiClick(); ui.showScreen('menu-screen'); };
 ui.handlers.onResume = () => { input.enterFullscreen(); sfx.uiClick(); resumeGame(); };
 ui.handlers.onSaveQuit = async () => { sfx.uiOk(); await saveAndQuit(); };
 ui.handlers.onReward = () => requestReward();
 ui.handlers.onSlot = (i) => {
+  if (state !== 'game') return;
   hotbarIndex = i;
   ui.setHotbarSelection(i);
   sfx.uiClick();
@@ -574,10 +690,7 @@ ui.handlers.onSettingsChange = (delta) => {
   if (delta.lang) {
     i18n.setLang(delta.lang);
     ui.applyI18n();
-    if (palette.length) {
-      ui.buildHotbar(palette, i18n.lang);
-      ui.setHotbarSelection(hotbarIndex);
-    }
+    refreshUI();
     ui.setRewardButton(settings.paletteUnlocked);
   }
   if (delta.viewDistance) {
@@ -588,41 +701,59 @@ ui.handlers.onSettingsChange = (delta) => {
 };
 
 input.handlers.onPause = () => {
-  if (state === 'game') pauseGame();
+  if (state === 'inventory') closeInventory(); // Esc сначала закрывает инвентарь
+  else if (state === 'game') pauseGame();
   else if (state === 'pause') resumeGame();
 };
 input.handlers.onToggleFly = () => {
   if (state !== 'game') return;
+  // Полёт — только в креативе; F больше не включает полёт
+  if (mode !== 'creative') {
+    ui.toast(i18n.t('fly_locked'), 1800);
+    return;
+  }
   const on = player.toggleFly();
   ui.toast(i18n.t(on ? 'fly_on' : 'fly_off'), 1500);
   sfx.uiClick();
 };
+input.handlers.onEat = () => {
+  if (state === 'game') tryEat();
+};
+input.handlers.onInventory = () => {
+  if (state === 'game') openInventory();
+  else if (state === 'inventory') closeInventory();
+};
 input.handlers.onDigit = (i) => {
-  if (i < palette.length) {
-    hotbarIndex = i;
-    ui.setHotbarSelection(i);
-    sfx.uiClick();
-  }
+  if (state !== 'game') return;
+  hotbarIndex = i;
+  ui.setHotbarSelection(i);
+  sfx.uiClick();
 };
 input.handlers.onScroll = (dir) => {
-  hotbarIndex = (hotbarIndex + dir + palette.length) % palette.length;
+  if (state !== 'game') return;
+  hotbarIndex = (hotbarIndex + dir + 9) % 9;
   ui.setHotbarSelection(hotbarIndex);
   sfx.uiClick();
 };
-input.handlers.onActionBreak = () => {
-  if (state !== 'game') return;
-  const hit = pickTarget();
-  if (!hit) return;
-  // Тап — быстрое ломание с короткой анимацией трещин
-  breakTarget = { x: hit.x, y: hit.y, z: hit.z };
-  breakProgress = 0;
-  breakQuick = true;
-  sfx.dig(breakKind(hit.id));
-};
-input.handlers.onActionPlace = () => {
-  if (state !== 'game') return;
-  doPlace(pickTarget());
-};
+
+// Кнопка 🎒 (телефон)
+{
+  const btnInv = document.getElementById('btn-inventory');
+  if (btnInv) {
+    btnInv.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (state === 'game') openInventory();
+      else if (state === 'inventory') closeInventory();
+    });
+    // Тап не должен запускать обзор/ломание по фону
+    btnInv.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
+  }
+}
+
+// После закрытия инвентаря клик по игре снова захватывает мышь
+canvas.addEventListener('click', () => {
+  if (state === 'game' && !input.isTouch && !input.locked) input.requestLock(canvas);
+});
 
 // Потеря фокуса — пауза и стоп звука
 document.addEventListener('visibilitychange', () => {
@@ -634,7 +765,7 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-// Выход из pointer lock без Esc (браузер) — пауза
+// Выход из pointer lock без Esc (браузер) — пауза (не в инвентаре: там мышь освобождена специально)
 document.addEventListener('pointerlockchange', () => {
   if (state === 'game' && !input.isTouch && document.pointerLockElement == null) {
     pauseGame();
@@ -692,11 +823,8 @@ function frame() {
     }
     processQueue(CONFIG.MAX_MESH_PER_FRAME);
 
-    // --- Выживание: предметы, еда, ночные Хмари ---
+    // --- Выживание: предметы на земле ---
     items.update(dt, world, player.pos);
-    const eatPressed = input.keys.has('KeyF');
-    if (eatPressed && !prevEat) tryEat();
-    prevEat = eatPressed;
 
     mobManager.setNight(sky.lightLevel < 0.32);
     if (sky.lightLevel < 0.32) {
@@ -713,15 +841,15 @@ function frame() {
       gloomWarned = false;
     }
 
-    // Удар по Хмари (ЛКМ) вместо ломания блока
+    // Удар по мобу (ЛКМ) вместо ломания блока. Все, кроме птиц.
     let mobTarget = null;
     if (input.breakHeld) {
       const eye = player.eyePos();
       const d = player.lookDir();
       let bestT = 4.5;
       for (const m of mobManager.mobs) {
-        if (m.type !== 'gloom') continue;
-        const cx = m.pos.x - eye.x, cy = m.pos.y + 0.5 - eye.y, cz = m.pos.z - eye.z;
+        if (m.type === 'bird' || m.dead) continue;
+        const cx = m.pos.x - eye.x, cy = m.pos.y + 0.4 - eye.y, cz = m.pos.z - eye.z;
         const t = cx * d.x + cy * d.y + cz * d.z;
         if (t < 0.3 || t > 4.5) continue;
         const px = cx - d.x * t, py = cy - d.y * t, pz = cz - d.z * t;
@@ -732,12 +860,17 @@ function frame() {
       if (mobTarget && attackCd <= 0) {
         attackCd = 0.36;
         swingHand(1);
-        mobTarget.hurt(1);
+        // Урон: рукой 1, деревянный меч 2, каменный меч 3
+        const dmg = swordDamage(heldItem()?.id);
+        mobTarget.hurt(dmg);
         sfx.hitMob();
-        particles.burst(mobTarget.pos.x, mobTarget.pos.y + 0.5, mobTarget.pos.z, 0x2a2140, 8);
+        const mdist = Math.hypot(mobTarget.pos.x - player.pos.x, mobTarget.pos.z - player.pos.z);
+        sfx.mobHurt(1 / (1 + mdist * 0.3));
+        // Красные частицы
+        particles.burst(mobTarget.pos.x, mobTarget.pos.y + 0.5, mobTarget.pos.z, [255, 64, 64], 10);
         const kx = mobTarget.pos.x - player.pos.x, kz = mobTarget.pos.z - player.pos.z;
         const kl = Math.hypot(kx, kz) || 1;
-        mobTarget.knockback(kx / kl, kz / kl, 3.2);
+        mobTarget.knockback(kx / kl, kz / kl, 3.4);
       }
     } else {
       attackCd = 0;
@@ -772,9 +905,12 @@ function frame() {
     }
     if (breaking) {
       const kind = breakKind(breaking.id);
+      let base = CONFIG.BREAK_TIME[kind] ?? CONFIG.BREAK_TIME.default;
+      if (mode === 'creative') base = CONFIG.CREATIVE_BREAK;
+      else base *= breakMult(heldItem()?.id, breaking.id);
       const rate = breakQuick
-        ? dt / 0.3
-        : dt / (CONFIG.BREAK_TIME[kind] ?? CONFIG.BREAK_TIME.default);
+        ? dt / Math.min(0.3, base)
+        : dt / base;
       breakProgress += rate;
       if (handSwing <= 0) swingHand(0.7);
       // Пыль из трещин
@@ -804,11 +940,19 @@ function frame() {
       placeCooldown = 0.25;
     }
 
-    // Камера
+    // Камера (+ встряска при уроне)
     const eye = player.eyePos();
     camera.position.set(eye.x, eye.y, eye.z);
     camera.rotation.y = player.yaw;
     camera.rotation.x = player.pitch;
+    if (shakeT > 0) {
+      shakeT = Math.max(0, shakeT - dt);
+      const a = shakeT * 0.28;
+      camera.position.x += (Math.random() - 0.5) * a;
+      camera.position.y += (Math.random() - 0.5) * a;
+      camera.position.z += (Math.random() - 0.5) * a;
+      camera.rotation.z += (Math.random() - 0.5) * a * 0.25;
+    }
 
     // Небо, свет, вода, погода
     sky.update(dt, player.pos);
@@ -843,6 +987,8 @@ function frame() {
     particles.update(dt);
     ui.setDebug(debugVisible, fpsEma, player.pos, L);
     checkOrientation();
+  } else if (world && player && state === 'inventory') {
+    // Инвентарь открыт — мир на паузе, камера стоит на месте
   } else if (world && player) {
     // В меню/паузе — медленный облёт вокруг игрока, живой фон
     input.consumeLook();
@@ -929,4 +1075,6 @@ window.VoxelCraft = {
   get weather() { return weather; },
   get sky() { return sky; },
   get items() { return items; },
+  get inv() { return inv; },
+  get mode() { return mode; },
 };

@@ -32,6 +32,7 @@
     <div id="look-zone"></div>
     <div id="joystick"><div id="joy-knob"></div></div>
     <div id="touch-buttons">
+      <button id="btn-inventory" class="touch-btn" aria-label="Inventory">🎒</button>
       <button id="btn-fly" class="touch-btn" aria-label="Fly">🕊</button>
       <button id="btn-break" class="touch-btn" aria-label="Break">⛏</button>
       <button id="btn-place" class="touch-btn" aria-label="Place">🧱</button>
@@ -60,6 +61,23 @@
         <button id="btn-reward" class="btn reward" data-i18n="reward_btn">Смотреть рекламу</button>
         <button id="btn-settings" class="btn" data-i18n="settings">Настройки</button>
         <button id="btn-howto" class="btn" data-i18n="howto">Как играть</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="mode-screen" class="screen hidden">
+    <div class="panel">
+      <h2 data-i18n="mode_title">Выберите режим</h2>
+      <div class="menu-buttons">
+        <button id="btn-mode-survival" class="btn primary">
+          <span data-i18n="mode_survival">Выживание</span>
+          <small data-i18n="mode_survival_desc">Собирайте ресурсы, крафтите инструменты. Мобы опасны, полёта нет.</small>
+        </button>
+        <button id="btn-mode-creative" class="btn">
+          <span data-i18n="mode_creative">Креатив</span>
+          <small data-i18n="mode_creative_desc">Бесконечные блоки, мгновенное ломание, полёт. Стройте что угодно!</small>
+        </button>
+        <button id="btn-mode-back" class="btn" data-i18n="back">Назад</button>
       </div>
     </div>
   </div>
@@ -115,6 +133,29 @@
       </div>
     </div>
   </div>
+
+  <!-- ===================== Инвентарь (E / 🎒) ===================== -->
+  <div id="inventory-screen" class="screen hidden">
+    <div class="panel inv-panel">
+      <div class="inv-head">
+        <h2 data-i18n="inv_title">Инвентарь</h2>
+        <span class="inv-hint" data-i18n="inv_hint">ЛКМ — взять/положить · ПКМ — по одному</span>
+      </div>
+      <div class="inv-wrap">
+        <div id="inv-left">
+          <div class="inv-title" id="inv-left-title"></div>
+          <div id="inv-list" class="inv-list catalog"></div>
+        </div>
+        <div id="inv-grid" class="inv-grid"></div>
+      </div>
+      <div class="menu-buttons inv-actions">
+        <button id="btn-inv-close" class="btn primary" data-i18n="close">Закрыть</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Предмет «в руке» следует за курсором -->
+  <div id="item-cursor" class="hidden"></div>
 
   <!-- Тосты -->
   <div id="toast"></div>
