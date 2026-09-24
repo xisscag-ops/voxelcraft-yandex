@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>VoxelCraft — воксельная песочница</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <canvas id="game-canvas"></canvas>
+
+  <!-- Подводный эффект -->
+  <div id="underwater"></div>
+
+  <!-- ===================== HUD ===================== -->
+  <div id="hud" class="hidden">
+    <div id="crosshair"></div>
+    <div id="break-bar" class="hidden"><div id="break-fill"></div></div>
+    <div id="debug" class="hidden"></div>
+    <div id="hotbar"></div>
+    <button id="btn-pause-hud" class="icon-btn hidden" aria-label="Pause">⏸</button>
+  </div>
+
+  <!-- ===================== Сенсорное управление ===================== -->
+  <div id="touch-controls" class="hidden">
+    <div id="look-zone"></div>
+    <div id="joystick"><div id="joy-knob"></div></div>
+    <div id="touch-buttons">
+      <button id="btn-fly" class="touch-btn" aria-label="Fly">🕊</button>
+      <button id="btn-break" class="touch-btn" aria-label="Break">⛏</button>
+      <button id="btn-place" class="touch-btn" aria-label="Place">🧱</button>
+      <button id="btn-sneak" class="touch-btn small" aria-label="Down">▼</button>
+      <button id="btn-jump" class="touch-btn small" aria-label="Jump">▲</button>
+    </div>
+  </div>
+
+  <!-- ===================== Экраны ===================== -->
+  <div id="loading-screen" class="screen">
+    <div class="panel">
+      <h1 class="logo">Voxel<span>Craft</span></h1>
+      <div class="tagline" data-i18n="tagline">Воксельная песочница</div>
+      <div class="progress"><div id="loading-bar"></div></div>
+      <div id="loading-text" data-i18n="loading">Генерация мира…</div>
+    </div>
+  </div>
+
+  <div id="menu-screen" class="screen hidden">
+    <div class="panel">
+      <h1 class="logo">Voxel<span>Craft</span></h1>
+      <div class="tagline" data-i18n="tagline">Воксельная песочница</div>
+      <div class="menu-buttons">
+        <button id="btn-play" class="btn primary" data-i18n="play">Играть</button>
+        <button id="btn-new-world" class="btn hidden" data-i18n="new_world">Новый мир</button>
+        <button id="btn-reward" class="btn reward" data-i18n="reward_btn">Смотреть рекламу</button>
+        <button id="btn-settings" class="btn" data-i18n="settings">Настройки</button>
+        <button id="btn-howto" class="btn" data-i18n="howto">Как играть</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="pause-screen" class="screen hidden">
+    <div class="panel">
+      <h2 data-i18n="pause">Пауза</h2>
+      <div class="menu-buttons">
+        <button id="btn-resume" class="btn primary" data-i18n="resume">Продолжить игру</button>
+        <button id="btn-reward2" class="btn reward" data-i18n="reward_btn">Смотреть рекламу</button>
+        <button id="btn-settings2" class="btn" data-i18n="settings">Настройки</button>
+        <button id="btn-save-quit" class="btn" data-i18n="save_quit">Сохранить и выйти</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="howto-screen" class="screen hidden">
+    <div class="panel wide">
+      <h2 data-i18n="howto_title">Как играть</h2>
+      <div class="howto-text" data-i18n-html="howto_text"></div>
+      <div class="menu-buttons">
+        <button id="btn-howto-back" class="btn primary" data-i18n="back">Назад</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="settings-screen" class="screen hidden">
+    <div class="panel">
+      <h2 data-i18n="settings">Настройки</h2>
+      <div class="settings-row">
+        <label data-i18n="sound">Звук</label>
+        <input type="checkbox" id="set-sound" checked />
+      </div>
+      <div class="settings-row">
+        <label><span id="set-volume-title">Громкость</span>: <span id="set-volume-label">80%</span></label>
+        <input type="range" id="set-volume" min="0" max="100" value="80" />
+      </div>
+      <div class="settings-row">
+        <label data-i18n="view_distance">Дальность прорисовки</label>
+        <span id="set-viewdist-label">5</span>
+        <input type="range" id="set-viewdist" min="3" max="8" value="5" />
+      </div>
+      <div class="settings-row">
+        <label data-i18n="language">Язык</label>
+        <select id="set-lang">
+          <option value="ru">Русский</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+      <div class="menu-buttons">
+        <button id="btn-settings-back" class="btn primary" data-i18n="back">Назад</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Тосты -->
+  <div id="toast"></div>
+
+  <!-- Реклама / загрузка -->
+  <div id="ad-overlay" class="hidden"><div class="spinner"></div></div>
+
+  <!-- Подсказка поворота экрана -->
+  <div id="rotate-hint" class="hidden">
+    <div class="rotate-icon">📱</div>
+    <div data-i18n="rotate_device">Поверните телефон горизонтально</div>
+  </div>
+
+  <!-- Описание награды -->
+  <div id="reward-desc" class="hidden" data-i18n="reward_desc"></div>
+
+  <script src="game.js"></script>
+</body>
+</html>
