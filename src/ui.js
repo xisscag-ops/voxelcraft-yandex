@@ -130,6 +130,11 @@ export class UI {
     document.getElementById('btn-pause-hud')?.classList.toggle('hidden', !v);
   }
 
+  /** Кнопка полёта есть только в креативе */
+  setFlyButton(v) {
+    document.getElementById('btn-fly')?.classList.toggle('hidden', !v);
+  }
+
   setLoading(p, text) {
     const bar = document.getElementById('loading-bar');
     if (bar) bar.style.width = Math.round(p * 100) + '%';

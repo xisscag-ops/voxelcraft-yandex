@@ -520,6 +520,7 @@ function applyMode() {
   player.canFly = creative;
   if (!creative) player.stopFly();
   ui.setHealthVisible(!creative);
+  ui.setFlyButton(creative);
   ui.setApples(inventory.count(ITEM.APPLE), mode);
   if (creative) player.hp = player.maxHp;
 }
@@ -839,9 +840,17 @@ input.handlers.onPause = () => {
   else if (state === 'pause') resumeGame();
 };
 input.handlers.onToggleInventory = () => toggleInventory();
+let flyHintT = 0;
 input.handlers.onToggleFly = () => {
   if (state !== 'game') return;
-  if (!isCreative()) { ui.toast(i18n.t('fly_creative_only'), 1600); return; }
+  if (!isCreative()) {
+    // не спамим подсказкой, если игрок просто прыгает
+    if (performance.now() - flyHintT > 20000) {
+      flyHintT = performance.now();
+      ui.toast(i18n.t('fly_creative_only'), 1600);
+    }
+    return;
+  }
   const on = player.toggleFly();
   ui.toast(i18n.t(on ? 'fly_on' : 'fly_off'), 1500);
   sfx.uiClick();
