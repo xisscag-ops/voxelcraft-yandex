@@ -159,11 +159,11 @@ function buildBird(mat, geoCache, ci) {
 // Хмарь — ночной охотник: парящая тень с горящими глазами (своя, процедурная модель)
 function buildGloom(mat, geoCache, eyeMat) {
   const g = new THREE.Group();
-  const body = fixedPart(mat, geoCache, 'gl-body', 0.5, 0.5, 0.38, [0.11, 0.08, 0.18]);
+  const body = fixedPart(mat, geoCache, 'gl-body', 0.5, 0.5, 0.38, [0.03, 0.02, 0.05]);
   body.position.set(0, 0.45, 0);
-  const head = fixedPart(mat, geoCache, 'gl-head', 0.4, 0.3, 0.36, [0.14, 0.11, 0.22]);
+  const head = fixedPart(mat, geoCache, 'gl-head', 0.4, 0.3, 0.36, [0.04, 0.03, 0.07]);
   head.position.set(0, 0.82, 0);
-  const wisp = fixedPart(mat, geoCache, 'gl-wisp', 0.2, 0.55, 0.2, [0.07, 0.05, 0.12]);
+  const wisp = fixedPart(mat, geoCache, 'gl-wisp', 0.2, 0.55, 0.2, [0.015, 0.01, 0.03]);
   wisp.position.set(0, -0.05, 0);
   const eyeL = fixedPart(eyeMat, geoCache, 'gl-eye', 0.09, 0.09, 0.06, [1, 1, 1]);
   eyeL.position.set(-0.1, 0.85, 0.18);
@@ -216,7 +216,7 @@ export class Mob {
 
     const hover = Math.sin(this.animT * 2.6) * 0.09;
     v.group.position.set(this.pos.x, this.pos.y + hover, this.pos.z);
-    v.group.rotation.y = this.heading + Math.PI;
+    v.group.rotation.y = this.heading;
     v.group.rotation.z = Math.sin(this.animT * 2) * 0.05;
     if (this.flashT > 0) {
       this.flashT -= dt;
