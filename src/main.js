@@ -2,10 +2,11 @@
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 import { BLOCK, BLOCKS, STARTER_PALETTE, BUILDER_PALETTE, breakKind, isSolid, isDecor } from './blocks.js';
-import { ITEM, blockItem, blockIdOf, blockDropItem, breakTime, itemDamage, itemName, placeBlockId, isBlockItem } from './items.js';
+import { ITEM, blockItem, blockIdOf, blockDropItem, breakTime, itemDamage, itemName, placeBlockId, isBlockItem, itemDef } from './items.js';
 import { Inventory, HOTBAR_SIZE } from './inventory.js';
-import { craft } from './crafts.js';
-import { InventoryUI } from './inventory-ui.js';
+import { craft, needsTable } from './crafts.js';
+import { InventoryUI, setFullToast } from './inventory-ui.js';
+import { itemIconCanvas } from './icons.js';
 import { buildAtlas, tileColor, tileTexture, CRACK_TILES } from './textures.js';
 import { World } from './world.js';
 import { meshChunk } from './mesher.js';
@@ -49,6 +50,7 @@ let sessionStart = 0;
 let interstitialShown = 0;
 let debugVisible = false;
 let pickToastT = 0;              // чтобы не спамить тостами о подобранных блоках
+let tableClosedT = 0;            // когда закрыли верстак (защита от повторного открытия)
 
 function isCreative() { return mode === 'creative'; }
 function isSurvival() { return mode === 'survival'; }
@@ -89,6 +91,7 @@ let gloomWarned = false;
 mobManager.onSound = (kind, dist, type) => {
   const vol = 1 / (1 + dist * 0.35);
   if (kind === 'hurt') sfx.mobHurt(type);
+  else if (kind === 'growl') sfx.gloomGrowl(vol);
   else if (kind === 'hop') sfx.mobHop(vol);
   else if (kind === 'bleat') sfx.bleat(vol);
   else if (kind === 'chirp') sfx.chirp(vol);
@@ -130,8 +133,91 @@ function swingHand(power = 1) {
   handSwing = 1;
   handSwingPow = power;
 }
+
+// ---------------------------------------------------------------- Предмет в руке
+// В руке показывается выбранный предмет: блок — объёмным кубиком с текстурой атласа,
+// инструменты/палка/яблоко — плоской пиксель-арт иконкой.
+const heldGroup = new THREE.Group();
+handPivot.add(heldGroup);
+let heldKey = null;          // какой предмет сейчас в руке
+let _tileMats = null;
+
+function tileMaterial(idx) {
+  if (!_tileMats) _tileMats = new Map();
+  if (!_tileMats.has(idx)) {
+    _tileMats.set(idx, new THREE.MeshBasicMaterial({
+      map: tileTexture(THREE, idx),
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      alphaTest: 0.5,
+    }));
+  }
+  return _tileMats.get(idx);
+}
+
+const SPRITE_MATS = new Map();
+function spriteMaterial(key) {
+  if (!SPRITE_MATS.has(key)) {
+    const canvas = itemIconCanvas(key, 64);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.magFilter = THREE.NearestFilter;
+    tex.minFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    SPRITE_MATS.set(key, new THREE.MeshBasicMaterial({
+      map: tex, transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide,
+    }));
+  }
+  return SPRITE_MATS.get(key);
+}
+
+const heldGeo = {
+  cube: new THREE.BoxGeometry(1, 1, 1),
+  quad: new THREE.PlaneGeometry(1, 1),
+};
+
+function buildHeldMesh(key) {
+  const def = itemDef(key);
+  if (!def) return null;
+  let mesh;
+  if (def.kind === 'block') {
+    const b = BLOCKS[def.block];
+    const [top, bottom, side] = b.tiles;
+    const mats = [
+      tileMaterial(side), tileMaterial(side),
+      tileMaterial(top), tileMaterial(bottom),
+      tileMaterial(side), tileMaterial(side),
+    ];
+    mesh = new THREE.Mesh(heldGeo.cube, mats);
+    mesh.scale.setScalar(0.24);
+    mesh.rotation.set(0.25, -0.75, 0.12);
+    mesh.position.set(0.02, -0.02, -0.32);
+  } else {
+    mesh = new THREE.Mesh(heldGeo.quad, spriteMaterial(key));
+    mesh.scale.setScalar(0.34);
+    mesh.rotation.set(-0.15, -0.45, 0.55);
+    mesh.position.set(0.04, -0.02, -0.3);
+    mesh.userData.isSprite = true;
+  }
+  mesh.renderOrder = 1000;
+  return mesh;
+}
+
+function updateHeldItem() {
+  const key = heldItem();
+  if (key === heldKey) return;
+  heldKey = key;
+  for (const child of [...heldGroup.children]) heldGroup.remove(child);
+  if (!key) return;
+  // блоки в креативе бесконечны — в руке всё равно показываем кубик
+  const mesh = buildHeldMesh(key);
+  if (mesh) heldGroup.add(mesh);
+}
+
 function updateHand(dt, light) {
   handPivot.visible = state === 'game';
+  heldGroup.visible = !!heldKey;
   if (handSwing > 0) handSwing = Math.max(0, handSwing - dt / HAND_SWING_TIME);
   const p = Math.sin((1 - handSwing) * Math.PI) * handSwingPow; // 0 -> 1 -> 0
   const moving = Math.abs(input.move.forward) + Math.abs(input.move.right) > 0.1;
@@ -144,6 +230,19 @@ function updateHand(dt, light) {
     -0.55 - 0.15 * p,
   );
   hand.material.color.setHex(0xd9a27a).multiplyScalar(0.35 + 0.65 * light);
+  for (const child of heldGroup.children) {
+    if (child.userData.isSprite) {
+      if (!child.material.userData.baseColor) child.material.userData.baseColor = 0xffffff;
+      child.material.color.setHex(child.material.userData.baseColor).multiplyScalar(0.5 + 0.5 * light);
+    } else if (Array.isArray(child.material)) {
+      // кубик: палитра материалов общая, поэтому приглушаем весь меш
+      child.visible = true;
+      child.material.forEach((m) => {
+        if (m.userData.baseColor == null) m.userData.baseColor = 0xffffff;
+        m.color.setHex(m.userData.baseColor).multiplyScalar(0.55 + 0.45 * light);
+      });
+    }
+  }
 }
 let handBob = 0;
 
@@ -276,6 +375,7 @@ function refreshHotbar() {
   ui.buildHotbar(inventory.slots.slice(0, HOTBAR_SIZE), i18n.lang, { creative: isCreative() });
   ui.setHotbarSelection(hotbarIndex);
   ui.setApples(inventory.count(ITEM.APPLE), mode);
+  updateHeldItem();
 }
 
 /** Выдать предмет в инвентарь; лишнее — не влезло */
@@ -289,6 +389,7 @@ function giveItem(key, n = 1, quiet = false) {
 function selectHotbar(i) {
   hotbarIndex = Math.max(0, Math.min(HOTBAR_SIZE - 1, i));
   ui.setHotbarSelection(hotbarIndex);
+  updateHeldItem();
   if (invUI.isOpen()) {
     invUI.hotbarIndex = hotbarIndex;
     invUI.render();
@@ -316,7 +417,7 @@ function findMobTarget() {
   let best = null;
   for (const m of mobManager.mobs) {
     if (!m.hittable()) continue;
-    const cx = m.pos.x - eye.x, cy = m.pos.y + 0.5 - eye.y, cz = m.pos.z - eye.z;
+    const cx = m.pos.x - eye.x, cy = m.pos.y + m.centerY() - eye.y, cz = m.pos.z - eye.z;
     const t = cx * d.x + cy * d.y + cz * d.z;
     if (t < 0.25 || t > bestT) continue;
     const px = cx - d.x * t, py = cy - d.y * t, pz = cz - d.z * t;
@@ -335,7 +436,7 @@ function hitMob(m) {
   const killed = m.hurt(dmg);
   m.squeak();
   sfx.hitMob();
-  particles.burst(m.pos.x, m.pos.y + 0.5, m.pos.z, 0xd03232, 12);
+  particles.burst(m.pos.x, m.pos.y + m.centerY(), m.pos.z, 0xd03232, 12);
   const kx = m.pos.x - player.pos.x, kz = m.pos.z - player.pos.z;
   m.knockback(kx, kz, 4.2);
   // Зайцы и овцы убегают
@@ -407,6 +508,11 @@ function tryEat() {
 function doPlace(hit) {
   if (!hit) return;
   swingHand(0.6);
+  // Верстак: использование открывает крафт 3×3 (с паузой, чтобы не открывался повторно)
+  if (hit.id === BLOCK.TABLE) {
+    if (performance.now() - tableClosedT > 400) openTable();
+    return;
+  }
   // Прицел на траве/цветке — ставим блок на её место
   const onDecor = isDecor(hit.id);
   const x = onDecor ? hit.x : hit.x + hit.nx;
@@ -487,7 +593,7 @@ function attachPlayerEvents() {
   mobManager.onDeath = (mob) => {
     sfx.mobDie();
     const color = mob.type === 'gloom' ? 0x2a2140 : 0xd03232;
-    particles.burst(mob.pos.x, mob.pos.y + 0.5, mob.pos.z, color, 14);
+    particles.burst(mob.pos.x, mob.pos.y + mob.centerY(), mob.pos.z, color, 16);
   };
   items.onPickup = (kind) => {
     if (kind === 'apple') {
@@ -585,7 +691,7 @@ function showHints() {
   setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_place'), 3500), 4200);
   setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_inventory'), 3500), 7800);
   setTimeout(() => state === 'game'
-    && ui.toast(i18n.t(isCreative() ? 'hint_fly' : 'hint_eat'), 3500), 11400);
+    && ui.toast(i18n.t(isCreative() ? 'hint_fly' : 'hint_table'), 3500), 11400);
 }
 
 // ---------------------------------------------------------------- Награда за рекламу
@@ -697,8 +803,9 @@ async function startWorld(opts = {}) {
 }
 
 // ---------------------------------------------------------------- Инвентарь: окно
-function openInventory() {
+function openInventory(gridSize = 2) {
   if (state !== 'game' || !world) return;
+  if (gridSize !== invUI.gridSize) invUI.setGridSize(gridSize);
   state = 'inventory';
   input.enabled = false;
   input.keys.clear();
@@ -706,14 +813,20 @@ function openInventory() {
   input.mouse.right = false;
   ysdk.gameplayStop();
   if (document.pointerLockElement) document.exitPointerLock?.();
-  invUI.show({ inv: inventory, mode, hotbarIndex, catalog: catalogEntries() });
+  invUI.show({ inv: inventory, mode, hotbarIndex, catalog: catalogEntries(), gridSize });
   ui.showScreen('inventory-screen');
   ui.setTouchVisible(false);
   sfx.uiClick();
 }
 
+function openTable() {
+  sfx.uiOk();
+  openInventory(3);
+}
+
 function closeInventory() {
   if (state !== 'inventory') return;
+  if (invUI.gridSize === 3) tableClosedT = performance.now();
   invUI.hide();
   state = 'game';
   input.enabled = true;
@@ -747,6 +860,7 @@ invUI.handlers.onSelect = (i) => {
 invUI.handlers.onSound = (kind) => {
   if (kind === 'pickup') sfx.pickup();
   else if (kind === 'place') sfx.place();
+  else if (kind === 'craft') sfx.craft();
   else sfx.uiClick();
 };
 invUI.handlers.onPickCatalog = (key) => {
@@ -760,7 +874,7 @@ invUI.handlers.onLocked = () => {
   ui.toast(i18n.t('catalog_locked'), 2600);
   requestReward();
 };
-invUI.handlers.onCraft = (recipe) => {
+invUI.handlers.onQuickCraft = (recipe) => {
   const res = craft(inventory, recipe);
   if (res === 'ok') {
     sfx.uiOk();
@@ -774,6 +888,7 @@ invUI.handlers.onCraft = (recipe) => {
   refreshHotbar();
   invUI.render();
 };
+setFullToast(() => ui.toast(i18n.t('craft_no_room'), 1600));
 
 // ---------------------------------------------------------------- Обработчики UI
 ui.handlers.onPlay = () => {
@@ -1174,6 +1289,15 @@ window.VoxelCraft = {
   get mode() { return mode; },
   get inventory() { return inventory; },
   get invUI() { return invUI; },
+  /** Что сейчас в руке (для тестов и отладки) */
+  get hand() {
+    const mesh = heldGroup.children[0];
+    return {
+      held: heldKey,
+      meshKind: mesh ? (mesh.userData.isSprite ? 'sprite' : 'cube') : null,
+      visible: heldGroup.visible,
+    };
+  },
   get world() { return world; },
   get player() { return player; },
   get scene() { return scene; },

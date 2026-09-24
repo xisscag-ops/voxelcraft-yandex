@@ -1,9 +1,9 @@
-// Окно инвентаря: сетка 27+9 ячеек, предмет «в руке» за курсором,
-// каталог блоков (креатив) и список рецептов (выживание)
+// Окно инвентаря: сетка 27+9 ячеек, сетка крафта (2×2 / 3×3 на верстаке),
+// предмет «в руке» за курсором, каталог блоков (креатив) и список рецептов
 import { HOTBAR_SIZE } from './inventory.js';
 import { itemIconEl } from './icons.js';
 import { itemDef, itemName, maxStack } from './items.js';
-import { RECIPES, canCraft, ingredients } from './crafts.js';
+import { RECIPES, canCraft, ingredients, emptyGrid, gridResult, craftFromGrid, needsTable } from './crafts.js';
 
 export class InventoryUI {
   constructor(i18n) {
@@ -15,19 +15,26 @@ export class InventoryUI {
     this.catalog = [];        // [{ key, locked }]
     this.carry = null;        // { key, count } — стопка «в руке»
     this.open_ = false;
+    this.tab = 'craft';       // 'craft' | 'catalog'
+    this.gridSize = 2;        // 2 — инвентарь, 3 — верстак
+    this.grid = emptyGrid(2);
     this.handlers = {
-      onChange: null, onCraft: null, onPickCatalog: null,
-      onLocked: null, onClose: null, onSelect: null, onSound: null,
+      onChange: null, onCraft: null, onPickCatalog: null, onLocked: null,
+      onClose: null, onSelect: null, onSound: null, onQuickCraft: null,
     };
     this._els = {
       screen: document.getElementById('inventory-screen'),
       grid: document.getElementById('inv-main-grid'),
       hotbar: document.getElementById('inv-hotbar-row'),
+      craftGrid: document.getElementById('inv-craft-grid'),
+      craftResult: document.getElementById('inv-craft-result'),
+      craftTitle: document.getElementById('inv-craft-title'),
       sideTitle: document.getElementById('inv-side-title'),
       sideList: document.getElementById('inv-side-list'),
       modeLabel: document.getElementById('inv-mode-label'),
       tip: document.getElementById('inv-tip'),
       cursor: document.getElementById('cursor-item'),
+      tabs: document.getElementById('inv-tabs'),
     };
     this._bind();
   }
@@ -37,10 +44,16 @@ export class InventoryUI {
       e.stopPropagation();
       this.handlers.onClose?.();
     });
-    // Клик по фону окна — вернуть стопку из «руки» в инвентарь
+    // Клик по фону — вернуть стопку из «руки» в инвентарь
     this._els.screen?.addEventListener('pointerdown', (e) => {
       if (e.target === this._els.screen) this.stashCarry();
     });
+    for (const btn of this._els.tabs?.querySelectorAll('.inv-tab') || []) {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._setTab(btn.dataset.tab);
+      });
+    }
     const move = (e) => this._moveCursor(e.clientX, e.clientY);
     document.addEventListener('mousemove', move);
     document.addEventListener('touchmove', (e) => {
@@ -51,8 +64,8 @@ export class InventoryUI {
 
   isOpen() { return this.open_; }
 
-  /** Открыть окно; mode — 'survival' | 'creative' */
-  show({ inv, mode, hotbarIndex, catalog }) {
+  /** Открыть окно; mode — 'survival' | 'creative', gridSize — 2 (инвентарь) или 3 (верстак) */
+  show({ inv, mode, hotbarIndex, catalog, gridSize = 2, tab = null }) {
     this.inv = inv;
     this.mode = mode;
     this.creative = mode === 'creative';
@@ -60,6 +73,9 @@ export class InventoryUI {
     this.catalog = catalog || [];
     this.open_ = true;
     this.carry = null;
+    this.setGridSize(gridSize, false);
+    // В креативе слева по умолчанию каталог, в выживании — рецепты
+    this.tab = tab || (this.creative ? (this._userTab || 'catalog') : 'craft');
     this._els.screen?.classList.remove('hidden');
     this.render();
     this._moveCursor(this._lastX ?? window.innerWidth / 2, this._lastY ?? window.innerHeight / 2);
@@ -67,24 +83,53 @@ export class InventoryUI {
 
   hide() {
     this.stashCarry();
+    this.dumpGrid();
     this.open_ = false;
     this._els.screen?.classList.add('hidden');
     this._els.cursor?.classList.add('hidden');
+  }
+
+  /** Сменить размер сетки крафта; содержимое возвращается в инвентарь */
+  setGridSize(size, dump = true) {
+    if (dump && size !== this.gridSize) this.dumpGrid();
+    this.gridSize = size;
+    this.grid = emptyGrid(size);
+    if (this._els.craftTitle) {
+      this._els.craftTitle.textContent = size === 3 ? this.i18n.t('table_title') : this.i18n.t('craft_grid');
+    }
+  }
+
+  _setTab(tab) {
+    if (tab === 'catalog' && !this.creative) return;
+    this.tab = tab;
+    this._userTab = tab;
+    this.render();
+    this.handlers.onSound?.('click');
   }
 
   /** Вернуть стопку из «руки» в инвентарь */
   stashCarry() {
     if (!this.carry || !this.inv) { this.carry = null; this._renderCursor(); return; }
     const left = this.inv.add(this.carry.key, this.carry.count);
-    if (left > 0) {
-      // места нет — оставляем в руке, чтобы игрок разложил сам
-      this.carry.count = left;
-    } else {
-      this.carry = null;
-    }
+    if (left > 0) this.carry.count = left;
+    else this.carry = null;
     this._renderCursor();
     this.render();
     this.handlers.onChange?.();
+  }
+
+  /** Вернуть содержимое сетки крафта в инвентарь */
+  dumpGrid() {
+    if (!this.inv || !this.grid) return;
+    let moved = false;
+    for (let i = 0; i < this.grid.length; i++) {
+      const s = this.grid[i];
+      if (!s) continue;
+      const left = this.inv.add(s.key, s.count);
+      this.grid[i] = left > 0 ? { key: s.key, count: left } : null;
+      moved = true;
+    }
+    if (moved) this.handlers.onChange?.();
   }
 
   // ---------------------------------------------------------------- Отрисовка
@@ -95,15 +140,95 @@ export class InventoryUI {
       els.modeLabel.textContent = this.i18n.t(this.creative ? 'mode_creative' : 'mode_survival');
     }
     if (els.tip) {
-      els.tip.textContent = this.creative
+      els.tip.textContent = this.tab === 'catalog'
         ? this.i18n.t('catalog_hint')
-        : this.i18n.t('inv_hint');
+        : this.i18n.t('craft_hint');
     }
-    // Основная сетка — 27 ячеек (слоты 9..35), затем хотбар 9 ячеек
+    // Вкладки: каталог есть только в креативе
+    els.tabs?.querySelectorAll('.inv-tab').forEach((btn) => {
+      const isCatalog = btn.dataset.tab === 'catalog';
+      btn.classList.toggle('hidden', isCatalog && !this.creative);
+      btn.classList.toggle('active', btn.dataset.tab === this.tab);
+    });
+    this._renderCraft();
     this._renderGrid(els.grid, 9, 36);
     this._renderGrid(els.hotbar, 0, 9);
     this._renderSide();
     this._renderCursor();
+  }
+
+  /** Сетка крафта и слот результата */
+  _renderCraft() {
+    const els = this._els;
+    if (!els.craftGrid) return;
+    const size = this.gridSize;
+    els.craftGrid.className = 'craft-grid size' + size;
+    els.craftGrid.innerHTML = '';
+    for (let i = 0; i < size * size; i++) {
+      const slot = document.createElement('div');
+      slot.className = 'islot craft-cell';
+      slot.dataset.index = String(i);
+      const s = this.grid[i];
+      if (s) {
+        const icon = itemIconEl(s.key, 36);
+        if (icon) slot.appendChild(icon);
+        if (s.count > 1) {
+          const cnt = document.createElement('span');
+          cnt.className = 'islot-count';
+          cnt.textContent = String(s.count);
+          slot.appendChild(cnt);
+        }
+      }
+      slot.addEventListener('pointerdown', (e) => this._onGridCell(e, i));
+      slot.addEventListener('contextmenu', (e) => e.preventDefault());
+      els.craftGrid.appendChild(slot);
+    }
+    // Результат
+    const res = gridResult(this.grid, size);
+    const out = els.craftResult;
+    if (!out) return;
+    out.innerHTML = '';
+    out.classList.toggle('ready', !!res);
+    if (res) {
+      const icon = itemIconEl(res.out.key, 40);
+      if (icon) out.appendChild(icon);
+      if (res.out.count > 1) {
+        const cnt = document.createElement('span');
+        cnt.className = 'islot-count';
+        cnt.textContent = String(res.out.count);
+        out.appendChild(cnt);
+      }
+      const tip = document.createElement('div');
+      tip.className = 'slot-tip';
+      tip.textContent = itemName(res.out.key, this.i18n.lang);
+      out.appendChild(tip);
+    }
+    out.onpointerdown = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this._takeResult(e.button === 2);
+    };
+    out.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+
+  _takeResult(all = false) {
+    const before = this.carry ? { ...this.carry } : null;
+    const res = gridResult(this.grid, this.gridSize);
+    if (!res) return;
+    if (this.carry && this.carry.key !== res.out.key) return;
+    if (this.carry && this.carry.count + res.out.count > maxStack(res.out.key)) return;
+    const out = craftFromGrid(this.grid, this.gridSize, this.inv, all);
+    if (out === 'full') { ui_toast_full(this); return; }
+    if (out !== 'ok') return;
+    // результат — в руку (если рука свободна) иначе сразу в инвентарь
+    if (before || this.carry) {
+      if (!this.carry) this.carry = { key: res.out.key, count: 0 };
+      this.carry.count += res.out.count;
+      if (this.carry.count <= 0) this.carry = null;
+    }
+    this.handlers.onSound?.('craft');
+    this.render();
+    this.handlers.onChange?.();
   }
 
   _renderGrid(container, from, to) {
@@ -137,7 +262,7 @@ export class InventoryUI {
     const els = this._els;
     if (!els.sideList) return;
     els.sideList.innerHTML = '';
-    if (this.creative) {
+    if (this.tab === 'catalog') {
       if (els.sideTitle) els.sideTitle.textContent = this.i18n.t('catalog_title');
       els.sideList.className = 'inv-side-list catalog';
       for (const entry of this.catalog) {
@@ -159,34 +284,36 @@ export class InventoryUI {
         });
         els.sideList.appendChild(cell);
       }
-    } else {
-      if (els.sideTitle) els.sideTitle.textContent = this.i18n.t('craft_title');
-      els.sideList.className = 'inv-side-list recipes';
-      for (const recipe of RECIPES) {
-        const ok = canCraft(this.inv, recipe);
-        const row = document.createElement('div');
-        row.className = 'recipe' + (ok ? ' ok' : '');
-        row.dataset.id = recipe.id;
-        const icon = itemIconEl(recipe.out.key, 36);
-        if (icon) row.appendChild(icon);
-        const info = document.createElement('div');
-        info.className = 'recipe-info';
-        const name = document.createElement('div');
-        name.className = 'recipe-name';
-        name.textContent = `${itemName(recipe.out.key, this.i18n.lang)} ×${recipe.out.count}`;
-        const ing = document.createElement('div');
-        ing.className = 'recipe-ing';
-        ing.textContent = ingredients(this.inv, recipe)
-          .map((x) => `${itemName(x.key, this.i18n.lang)} ${x.have}/${x.need}`)
-          .join(' · ');
-        info.append(name, ing);
-        row.appendChild(info);
-        row.addEventListener('pointerdown', (e) => {
-          e.preventDefault();
-          this.handlers.onCraft?.(recipe);
-        });
-        els.sideList.appendChild(row);
-      }
+      return;
+    }
+    // Список рецептов (клик — быстрый крафт)
+    if (els.sideTitle) els.sideTitle.textContent = this.i18n.t('craft_title');
+    els.sideList.className = 'inv-side-list recipes';
+    for (const recipe of RECIPES) {
+      const ok = canCraft(this.inv, recipe);
+      const row = document.createElement('div');
+      row.className = 'recipe' + (ok ? ' ok' : '');
+      row.dataset.id = recipe.id;
+      const icon = itemIconEl(recipe.out.key, 36);
+      if (icon) row.appendChild(icon);
+      const info = document.createElement('div');
+      info.className = 'recipe-info';
+      const name = document.createElement('div');
+      name.className = 'recipe-name';
+      name.textContent = `${itemName(recipe.out.key, this.i18n.lang)} ×${recipe.out.count}`
+        + (needsTable(recipe) ? ' · ' + this.i18n.t('need_table_short') : '');
+      const ing = document.createElement('div');
+      ing.className = 'recipe-ing';
+      ing.textContent = ingredients(this.inv, recipe)
+        .map((x) => `${itemName(x.key, this.i18n.lang)} ${x.have}/${x.need}`)
+        .join(' · ');
+      info.append(name, ing);
+      row.appendChild(info);
+      row.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        this.handlers.onQuickCraft?.(recipe);
+      });
+      els.sideList.appendChild(row);
     }
   }
 
@@ -222,71 +349,76 @@ export class InventoryUI {
     e.preventDefault();
     e.stopPropagation();
     if (!this.inv) return;
-    // Клик по хотбару с пустой рукой — ещё и выбор активного слота
     if (i < HOTBAR_SIZE && e.button === 0 && !this.carry) {
       this.hotbarIndex = i;
       this.handlers.onSelect?.(i);
     }
-    if (e.button === 2) this._rightClick(i);
-    else this._leftClick(i);
+    this._mutate(this.inv, i, e.button === 2);
     this.render();
     this.handlers.onChange?.();
   }
 
-  _leftClick(i) {
-    const cur = this.inv.get(i);
+  /** Ячейка сетки крафта: кладём/забираем предметы как в инвентаре */
+  _onGridCell(e, i) {
+    e.preventDefault();
+    e.stopPropagation();
+    const grid = {
+      get: (k) => this.grid[k],
+      setStack: (k, stack) => { this.grid[k] = stack ? { key: stack.key, count: stack.count } : null; },
+      clearSlot: (k) => { this.grid[k] = null; },
+    };
+    this._mutate(grid, i, e.button === 2, true);
+    this.render();
+    this.handlers.onChange?.();
+  }
+
+  /**
+   * Общая логика ЛКМ/ПКМ для контейнера (инвентарь или сетка крафта).
+   * @param {boolean} singleOnly ПКМ: положить один предмет
+   * @param {boolean} gridMode сетка крафта (нельзя забирать половину в руку, только по одному)
+   */
+  _mutate(container, i, rightButton, gridMode = false) {
+    const cur = container.get(i);
     if (!this.carry) {
       if (!cur) return;
-      this.carry = { key: cur.key, count: cur.count };
-      this.inv.clearSlot(i);
+      if (rightButton) {
+        const half = gridMode ? 1 : Math.ceil(cur.count / 2);
+        this.carry = { key: cur.key, count: half };
+        cur.count -= half;
+        if (cur.count <= 0) container.clearSlot(i);
+      } else {
+        this.carry = { key: cur.key, count: cur.count };
+        container.clearSlot(i);
+      }
       this.handlers.onSound?.('pickup');
       return;
     }
     if (!cur) {
-      this.inv.setStack(i, this.carry);
-      this.carry = null;
+      const place = rightButton ? 1 : this.carry.count;
+      container.setStack(i, { key: this.carry.key, count: place });
+      this.carry.count -= place;
+      if (this.carry.count <= 0) this.carry = null;
       this.handlers.onSound?.('place');
       return;
     }
     if (cur.key === this.carry.key && cur.count < maxStack(cur.key)) {
-      // докладываем в стопку
       const room = maxStack(cur.key) - cur.count;
-      const take = Math.min(room, this.carry.count);
+      const take = Math.min(room, rightButton ? 1 : this.carry.count);
       cur.count += take;
       this.carry.count -= take;
       if (this.carry.count <= 0) this.carry = null;
       this.handlers.onSound?.('place');
       return;
     }
-    // обмен стопками
+    if (rightButton) return;     // ПКМ по другому предмету — ничего
     const tmp = { key: cur.key, count: cur.count };
-    this.inv.setStack(i, this.carry);
+    container.setStack(i, this.carry);
     this.carry = tmp;
     this.handlers.onSound?.('click');
   }
-
-  _rightClick(i) {
-    const cur = this.inv.get(i);
-    if (!this.carry) {
-      if (!cur) return;
-      const half = Math.ceil(cur.count / 2);
-      this.carry = { key: cur.key, count: half };
-      cur.count -= half;
-      if (cur.count <= 0) this.inv.clearSlot(i);
-      this.handlers.onSound?.('pickup');
-      return;
-    }
-    // кладём по одному
-    if (!cur) {
-      this.inv.setStack(i, { key: this.carry.key, count: 1 });
-      this.carry.count -= 1;
-    } else if (cur.key === this.carry.key && cur.count < maxStack(cur.key)) {
-      cur.count += 1;
-      this.carry.count -= 1;
-    } else {
-      return;
-    }
-    if (this.carry.count <= 0) this.carry = null;
-    this.handlers.onSound?.('place');
-  }
 }
+
+// Подсказка «нет места» — выносим в отдельную функцию, чтобы не тянуть ui внутрь класса
+let _fullToast = null;
+export function setFullToast(fn) { _fullToast = fn; }
+function ui_toast_full() { _fullToast?.(); }

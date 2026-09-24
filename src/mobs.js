@@ -38,6 +38,64 @@ function fixedPart(mat, geoCache, key, w, h, d, color) {
   return new THREE.Mesh(geoCache.get(key), mat);
 }
 
+// Материал «полностью красного» моба на время вспышки урона
+const HURT_MAT = new THREE.MeshBasicMaterial({ color: 0xff3a2e });
+
+// ---------------------------------------------------------------- Лица: глаза, зрачки, рты, зубы
+const EYE_WHITE = [0.98, 0.98, 0.99];
+const EYE_PUPIL = [0.06, 0.05, 0.08];
+const MOUTH_DARK = [0.14, 0.08, 0.1];
+const TOOTH = [0.96, 0.96, 0.9];
+
+/** Пара глаз с белками и зрачками */
+function addEyes(g, mat, geoCache, key, { y, z, dx, size = 0.09, sclera = EYE_WHITE, pupil = EYE_PUPIL, pupilScale = 0.5, glow = null }) {
+  const eyes = [];
+  for (const s of [-1, 1]) {
+    const white = fixedPart(mat, geoCache, `${key}-eye`, size, size, size * 0.45, sclera);
+    white.position.set(s * dx, y, z);
+    g.add(white);
+    eyes.push(white);
+    if (pupil) {
+      const p = fixedPart(mat, geoCache, `${key}-pup`, size * pupilScale, size * pupilScale, size * 0.5, pupil);
+      p.position.set(s * dx, y - size * 0.06, z + size * 0.26);
+      g.add(p);
+      eyes.push(p);
+    }
+    if (glow) {
+      const gl = fixedPart(glow.mat, geoCache, `${key}-glow`, size * 0.9, size * 0.9, size * 0.3, glow.color);
+      gl.position.set(s * dx, y, z + size * 0.3);
+      g.add(gl);
+      eyes.push(gl);
+    }
+  }
+  return eyes;
+}
+
+/** Рот: тёмная полоса (или оскал) + зубы */
+function addMouth(g, mat, geoCache, key, { y, z, w = 0.16, h = 0.05, color = MOUTH_DARK, teeth = 0, tooth = TOOTH, grin = false }) {
+  const mouth = fixedPart(mat, geoCache, `${key}-mouth`, w, h, 0.05, color);
+  mouth.position.set(0, y, z);
+  g.add(mouth);
+  const parts = [mouth];
+  if (teeth > 0) {
+    const tw = w / (teeth * 1.7);
+    for (let i = 0; i < teeth; i++) {
+      const x = (i - (teeth - 1) / 2) * (w / Math.max(1, teeth - 0.4));
+      const up = fixedPart(mat, geoCache, `${key}-tooth`, tw, grin ? 0.06 : 0.04, 0.04, tooth);
+      up.position.set(x, y + h * 0.6, z + 0.01);
+      g.add(up);
+      parts.push(up);
+      if (grin) {
+        const down = fixedPart(mat, geoCache, `${key}-tooth`, tw, 0.05, 0.04, tooth);
+        down.position.set(x, y - h * 0.6, z + 0.01);
+        g.add(down);
+        parts.push(down);
+      }
+    }
+  }
+  return parts;
+}
+
 const BUNNY_COLORS = [
   [0.93, 0.91, 0.88], // белый
   [0.62, 0.52, 0.42], // коричневый
@@ -53,75 +111,97 @@ function buildBunny(mat, geoCache, ci) {
   const c = BUNNY_COLORS[ci % BUNNY_COLORS.length];
   const dark = [c[0] * 0.75, c[1] * 0.75, c[2] * 0.75];
   const g = new THREE.Group();
-  const body = fixedPart(mat, geoCache, `bn-body-${ci}`, 0.42, 0.34, 0.58, c);
-  body.position.set(0, 0.38, 0);
-  const head = fixedPart(mat, geoCache, `bn-head-${ci}`, 0.3, 0.28, 0.26, c);
-  head.position.set(0, 0.58, 0.32);
-  const tail = fixedPart(mat, geoCache, `bn-tail-${ci}`, 0.14, 0.14, 0.12, [0.98, 0.97, 0.96]);
-  tail.position.set(0, 0.45, -0.34);
+  const body = fixedPart(mat, geoCache, `bn-body-${ci}`, 0.46, 0.38, 0.62, c);
+  body.position.set(0, 0.42, 0);
+  const head = fixedPart(mat, geoCache, `bn-head-${ci}`, 0.34, 0.32, 0.3, c);
+  head.position.set(0, 0.66, 0.34);
+  const tail = fixedPart(mat, geoCache, `bn-tail-${ci}`, 0.16, 0.16, 0.14, [0.98, 0.97, 0.96]);
+  tail.position.set(0, 0.5, -0.36);
   const ears = [];
   for (const s of [-1, 1]) {
-    const ear = pendulumPart(mat, geoCache, `bn-ear-${ci}`, 0.09, 0.34, 0.1, c);
-    ear.position.set(s * 0.09, 0.86, 0.28);
+    const ear = pendulumPart(mat, geoCache, `bn-ear-${ci}`, 0.1, 0.42, 0.11, c);
+    ear.position.set(s * 0.1, 0.98, 0.3);
     ear.rotation.x = -0.15;
+    const inner = fixedPart(mat, geoCache, `bn-earin-${ci}`, 0.05, 0.26, 0.02, [0.95, 0.68, 0.72]);
+    inner.position.set(0, -0.14, 0.06);
+    ear.add(inner);
     ears.push(ear);
     g.add(ear);
   }
   const legs = [];
   for (const [sx, sz] of [[-1, 1], [1, 1], [-1, -1], [1, -1]]) {
-    const leg = pendulumPart(mat, geoCache, `bn-leg-${ci}`, 0.1, 0.22, 0.1, dark);
-    leg.position.set(sx * 0.14, 0.24, sz * 0.2);
+    const leg = pendulumPart(mat, geoCache, `bn-leg-${ci}`, 0.11, 0.26, 0.11, dark);
+    leg.position.set(sx * 0.15, 0.28, sz * 0.22);
     legs.push(leg);
     g.add(leg);
   }
+  // Морда: глаза с зрачками, нос и рот с двумя зубками
+  const face = addEyes(g, mat, geoCache, `bn-${ci}`, { y: 0.71, z: 0.5, dx: 0.1, size: 0.1 });
+  const nose = fixedPart(mat, geoCache, `bn-nose-${ci}`, 0.06, 0.05, 0.04, [0.95, 0.6, 0.66]);
+  nose.position.set(0, 0.65, 0.51);
+  g.add(nose);
+  const mouth = addMouth(g, mat, geoCache, `bn-${ci}`, { y: 0.59, z: 0.51, w: 0.12, h: 0.045, teeth: 2, grin: false });
   g.add(body, head, tail);
-  return { group: g, legs, head, ears, hop: true };
+  return { group: g, legs, head, ears, hop: true, face, mouth, scale: 1.3 };
 }
 
 function buildSheep(mat, geoCache, ci) {
   const wool = SHEEP_WOOL[ci % SHEEP_WOOL.length];
-  const skin = [0.48, 0.42, 0.38];
-  const dark = [wool[0] * 0.7, wool[1] * 0.7, wool[2] * 0.7];
+  const skin = [0.46, 0.4, 0.36];
+  const dark = [wool[0] * 0.68, wool[1] * 0.68, wool[2] * 0.68];
   const g = new THREE.Group();
-  const body = fixedPart(mat, geoCache, `sh-body-${ci}`, 0.68, 0.52, 0.88, wool);
-  body.position.set(0, 0.52, 0);
-  // «Кудряшки» — второй блок шерсти сверху
-  const puff = fixedPart(mat, geoCache, `sh-puff-${ci}`, 0.56, 0.2, 0.7, [Math.min(1, wool[0] * 1.05), Math.min(1, wool[1] * 1.05), Math.min(1, wool[2] * 1.05)]);
-  puff.position.set(0, 0.82, -0.03);
-  const head = fixedPart(mat, geoCache, `sh-head-${ci}`, 0.3, 0.3, 0.26, skin);
-  head.position.set(0, 0.62, 0.52);
+  const body = fixedPart(mat, geoCache, `sh-body-${ci}`, 0.78, 0.58, 0.98, wool);
+  body.position.set(0, 0.6, 0);
+  const puff = fixedPart(mat, geoCache, `sh-puff-${ci}`, 0.66, 0.24, 0.8, [Math.min(1, wool[0] * 1.05), Math.min(1, wool[1] * 1.05), Math.min(1, wool[2] * 1.05)]);
+  puff.position.set(0, 0.94, -0.03);
+  const head = fixedPart(mat, geoCache, `sh-head-${ci}`, 0.36, 0.34, 0.32, skin);
+  head.position.set(0, 0.68, 0.6);
+  const snout = fixedPart(mat, geoCache, `sh-snout-${ci}`, 0.24, 0.18, 0.12, [0.36, 0.3, 0.27]);
+  snout.position.set(0, 0.6, 0.78);
+  // Рога — выглядят суровее
+  const horns = [];
   for (const s of [-1, 1]) {
-    const ear = fixedPart(mat, geoCache, `sh-ear-${ci}`, 0.1, 0.08, 0.14, skin);
-    ear.position.set(s * 0.2, 0.68, 0.48);
+    const horn = fixedPart(mat, geoCache, `sh-horn-${ci}`, 0.11, 0.1, 0.2, [0.32, 0.29, 0.26]);
+    horn.position.set(s * 0.24, 0.88, 0.5);
+    horn.rotation.z = s * 0.35;
+    g.add(horn);
+    horns.push(horn);
+    const ear = fixedPart(mat, geoCache, `sh-ear-${ci}`, 0.12, 0.09, 0.16, skin);
+    ear.position.set(s * 0.24, 0.74, 0.52);
     g.add(ear);
   }
   const legs = [];
   for (const [sx, sz] of [[-1, 1], [1, 1], [-1, -1], [1, -1]]) {
-    const leg = pendulumPart(mat, geoCache, `sh-leg-${ci}`, 0.13, 0.3, 0.13, dark);
-    leg.position.set(sx * 0.2, 0.3, sz * 0.28);
+    const leg = pendulumPart(mat, geoCache, `sh-leg-${ci}`, 0.14, 0.34, 0.14, dark);
+    leg.position.set(sx * 0.22, 0.34, sz * 0.3);
     legs.push(leg);
     g.add(leg);
   }
-  g.add(body, puff, head);
-  return { group: g, legs, head, ears: [], hop: false };
+  // Морда: глаза с горизонтальными зрачками и жующий рот
+  const face = addEyes(g, mat, geoCache, `sh-${ci}`, { y: 0.74, z: 0.78, dx: 0.13, size: 0.1, pupilScale: 0.42 });
+  const mouth = addMouth(g, mat, geoCache, `sh-${ci}`, { y: 0.53, z: 0.78, w: 0.18, h: 0.05, teeth: 0, grin: false });
+  g.add(body, puff, head, snout);
+  return { group: g, legs, head, ears: horns, hop: false, face, mouth, scale: 1.35 };
 }
 
 function buildSlime(mat, geoCache) {
   const g = new THREE.Group();
-  const body = fixedPart(mat, geoCache, 'sl-body', 0.55, 0.5, 0.55, [0.38, 0.78, 0.36]);
-  body.position.set(0, 0.28, 0);
-  // Глазки
+  const body = fixedPart(mat, geoCache, 'sl-body', 0.62, 0.56, 0.62, [0.38, 0.78, 0.36]);
+  body.position.set(0, 0.3, 0);
+  const inner = fixedPart(mat, geoCache, 'sl-core', 0.3, 0.26, 0.3, [0.24, 0.6, 0.26]);
+  inner.position.set(0, 0.24, 0);
+  // Глаза с зрачками + широкий рот с зубами
+  const face = addEyes(g, mat, geoCache, 'sl', { y: 0.42, z: 0.32, dx: 0.15, size: 0.11, pupilScale: 0.45 });
+  const mouth = addMouth(g, mat, geoCache, 'sl', { y: 0.24, z: 0.33, w: 0.3, h: 0.08, teeth: 4, grin: false });
+  // Капли по бокам
   for (const s of [-1, 1]) {
-    const eye = fixedPart(mat, geoCache, 'sl-eye', 0.09, 0.09, 0.05, [0.1, 0.12, 0.1]);
-    eye.position.set(s * 0.13, 0.34, 0.29);
-    g.add(eye);
+    const drip = fixedPart(mat, geoCache, 'sl-drip', 0.12, 0.12, 0.12, [0.32, 0.68, 0.32]);
+    drip.position.set(s * 0.36, 0.16, 0.1);
+    g.add(drip);
   }
-  g.add(body);
-  return { group: g, legs: [], head: null, ears: [], hop: true, slime: body };
+  g.add(body, inner);
+  return { group: g, legs: [], head: null, ears: [], hop: true, slime: body, face, mouth, scale: 1.45 };
 }
-
-// Материал «полностью красного» моба на время вспышки урона
-const HURT_MAT = new THREE.MeshBasicMaterial({ color: 0xff3a2e });
 
 const BIRD_COLORS = [
   [0.9, 0.9, 0.93],   // белая
@@ -141,39 +221,104 @@ function wingPart(mat, geoCache, key, w, h, d, color, side) {
 function buildBird(mat, geoCache, ci) {
   const c = BIRD_COLORS[ci % BIRD_COLORS.length];
   const g = new THREE.Group();
-  const body = fixedPart(mat, geoCache, `bd-body-${ci}`, 0.22, 0.18, 0.34, c);
-  const head = fixedPart(mat, geoCache, `bd-head-${ci}`, 0.14, 0.13, 0.13, c);
-  head.position.set(0, 0.1, 0.22);
-  const beak = fixedPart(mat, geoCache, `bd-beak-${ci}`, 0.05, 0.04, 0.09, [0.95, 0.7, 0.25]);
-  beak.position.set(0, 0.08, 0.32);
-  const tail = fixedPart(mat, geoCache, `bd-tail-${ci}`, 0.09, 0.03, 0.16, c);
-  tail.position.set(0, 0.02, -0.24);
+  const body = fixedPart(mat, geoCache, `bd-body-${ci}`, 0.26, 0.22, 0.4, c);
+  const head = fixedPart(mat, geoCache, `bd-head-${ci}`, 0.17, 0.16, 0.16, c);
+  head.position.set(0, 0.12, 0.26);
+  const beak = fixedPart(mat, geoCache, `bd-beak-${ci}`, 0.07, 0.05, 0.12, [0.95, 0.7, 0.25]);
+  beak.position.set(0, 0.1, 0.4);
+  const tail = fixedPart(mat, geoCache, `bd-tail-${ci}`, 0.11, 0.04, 0.2, c);
+  tail.position.set(0, 0.02, -0.28);
   const wings = [];
   for (const s of [-1, 1]) {
-    const wing = wingPart(mat, geoCache, `bd-wing-${s}-${ci}`, 0.3, 0.03, 0.2, c, s);
-    wing.position.set(s * 0.08, 0.05, 0.02);
+    const wing = wingPart(mat, geoCache, `bd-wing-${s}-${ci}`, 0.36, 0.04, 0.24, c, s);
+    wing.position.set(s * 0.09, 0.06, 0.02);
     wings.push(wing);
     g.add(wing);
   }
+  const face = addEyes(g, mat, geoCache, `bd-${ci}`, { y: 0.16, z: 0.32, dx: 0.07, size: 0.06, pupilScale: 0.55 });
   g.add(body, head, beak, tail);
-  return { group: g, legs: [], head: null, ears: [], wings, hop: false, bird: true };
+  return { group: g, legs: [], head: null, ears: [], wings, hop: false, bird: true, face, scale: 1.25 };
 }
 
-// Хмарь — ночной охотник: парящая тень с горящими глазами (своя, процедурная модель)
+// Хмарь — большой ночной охотник: балахон с капюшоном, светящиеся глаза,
+// оскал с зубами, когтистые лапы и рваный хвост из теней
 function buildGloom(mat, geoCache, eyeMat) {
   const g = new THREE.Group();
-  const body = fixedPart(mat, geoCache, 'gl-body', 0.5, 0.5, 0.38, [0.03, 0.02, 0.05]);
-  body.position.set(0, 0.45, 0);
-  const head = fixedPart(mat, geoCache, 'gl-head', 0.4, 0.3, 0.36, [0.04, 0.03, 0.07]);
-  head.position.set(0, 0.82, 0);
-  const wisp = fixedPart(mat, geoCache, 'gl-wisp', 0.2, 0.55, 0.2, [0.015, 0.01, 0.03]);
-  wisp.position.set(0, -0.05, 0);
-  const eyeL = fixedPart(eyeMat, geoCache, 'gl-eye', 0.09, 0.09, 0.06, [1, 1, 1]);
-  eyeL.position.set(-0.1, 0.85, 0.18);
-  const eyeR = fixedPart(eyeMat, geoCache, 'gl-eye', 0.09, 0.09, 0.06, [1, 1, 1]);
-  eyeR.position.set(0.1, 0.85, 0.18);
-  g.add(body, head, wisp, eyeL, eyeR);
-  return { group: g, legs: [], head: null, ears: [], hop: false, gloom: true };
+  const cloth = [0.035, 0.03, 0.055];
+  const clothDark = [0.02, 0.017, 0.032];
+  const glow = { mat: eyeMat, color: [1, 1, 1] };
+
+  // Тело-балахон (расширяется книзу) + горб сверху
+  const body = fixedPart(mat, geoCache, 'gl-body', 0.66, 0.72, 0.5, cloth);
+  body.position.set(0, 0.5, 0);
+  const hem = fixedPart(mat, geoCache, 'gl-hem', 0.86, 0.2, 0.66, clothDark);
+  hem.position.set(0, 0.14, 0);
+  const hunch = fixedPart(mat, geoCache, 'gl-hunch', 0.54, 0.28, 0.44, clothDark);
+  hunch.position.set(0, 1.02, -0.06);
+
+  // Голова под капюшоном
+  const head = fixedPart(mat, geoCache, 'gl-head', 0.5, 0.4, 0.44, cloth);
+  head.position.set(0, 1.16, 0.02);
+  const hood = fixedPart(mat, geoCache, 'gl-hood', 0.62, 0.2, 0.56, clothDark);
+  hood.position.set(0, 1.34, -0.04);
+  const hoodTip = fixedPart(mat, geoCache, 'gl-hoodtip', 0.18, 0.24, 0.18, clothDark);
+  hoodTip.position.set(0, 1.44, -0.22);
+  hoodTip.rotation.x = 0.5;
+
+  // Светящиеся глаза (по два с каждой стороны — жутко), под ними оскал с зубами
+  const eyes = [];
+  for (const s of [-1, 1]) {
+    const big = fixedPart(eyeMat, geoCache, 'gl-eye-big', 0.16, 0.12, 0.06, [1, 1, 1]);
+    big.position.set(s * 0.15, 1.22, 0.22);
+    const small = fixedPart(eyeMat, geoCache, 'gl-eye-small', 0.09, 0.07, 0.05, [1, 1, 1]);
+    small.position.set(s * 0.16, 1.06, 0.23);
+    const pupil = fixedPart(mat, geoCache, 'gl-pupil', 0.06, 0.09, 0.04, [0.02, 0.02, 0.03]);
+    pupil.position.set(s * 0.15, 1.22, 0.26);
+    g.add(big, small, pupil);
+    eyes.push(big, small, pupil);
+  }
+  const mouth = addMouth(g, mat, geoCache, 'gl', { y: 0.9, z: 0.25, w: 0.42, h: 0.1, teeth: 5, grin: true });
+
+  // Когтистые руки (качаются при полёте)
+  const arms = [];
+  for (const s of [-1, 1]) {
+    const arm = pendulumPart(mat, geoCache, 'gl-arm', 0.14, 0.5, 0.14, cloth);
+    arm.position.set(s * 0.36, 0.86, 0.04);
+    arm.rotation.z = s * 0.25;
+    for (let i = -1; i <= 1; i++) {
+      const claw = fixedPart(mat, geoCache, 'gl-claw', 0.035, 0.16, 0.035, [0.62, 0.6, 0.68]);
+      claw.position.set(i * 0.06, -0.56, 0.03);
+      claw.rotation.z = i * 0.25;
+      arm.add(claw);
+    }
+    arms.push(arm);
+    g.add(arm);
+  }
+
+  // Шипы на спине
+  const spikes = [];
+  for (let i = 0; i < 4; i++) {
+    const sp = fixedPart(mat, geoCache, 'gl-spike', 0.09, 0.22 - i * 0.03, 0.09, clothDark);
+    sp.position.set(0, 1.02 + i * 0.02, -0.3 - i * 0.02);
+    sp.rotation.x = -0.4 - i * 0.1;
+    spikes.push(sp);
+    g.add(sp);
+  }
+
+  // Рваный хвост-дымка из трёх сегментов
+  const wisps = [];
+  for (let i = 0; i < 3; i++) {
+    const seg = fixedPart(mat, geoCache, `gl-wisp${i}`, 0.3 - i * 0.07, 0.34, 0.3 - i * 0.07, clothDark);
+    seg.position.set(Math.sin(i) * 0.08, -0.02 - i * 0.28, 0);
+    wisps.push(seg);
+    g.add(seg);
+  }
+
+  g.add(body, hem, hunch, head, hood, hoodTip);
+  return {
+    group: g, legs: [], head: null, ears: [], hop: false, gloom: true,
+    face: eyes, mouth, arms, spikes, wisps, scale: 1.7,
+  };
 }
 
 export class Mob {
@@ -201,6 +346,8 @@ export class Mob {
     this.fleeT = 0;
     this.kbX = 0; this.kbZ = 0; this.kbT = 0;
     this.dead = false;
+    this.baseScale = visuals.scale || 1;
+    visuals.group.scale.setScalar(this.baseScale);
     visuals.group.position.set(x, y, z);
     this.yBase = y;
   }
@@ -233,27 +380,46 @@ export class Mob {
       const pulse = Math.sin((1 - k) * Math.PI);        // 0 -> 1 -> 0
       v.group.rotation.x = -0.55 * pulse;               // отклоняется назад
       v.group.rotation.z += Math.sin(this.animT * 60) * 0.12 * k;
-      v.group.scale.set(1 + 0.25 * pulse, 1 - 0.22 * pulse, 1 + 0.25 * pulse);
+      const sc = this.baseScale;
+      v.group.scale.set(sc * (1 + 0.25 * pulse), sc * (1 - 0.22 * pulse), sc * (1 + 0.25 * pulse));
       v.group.position.y += 0.12 * pulse;
     } else {
       v.group.rotation.x = 0;
-      v.group.scale.setScalar(1);
+      v.group.scale.setScalar(this.baseScale);
     }
     // Плавный отброс после удара (не сквозь блоки)
     this.applyKnockback(dt);
 
-    // Атака
+    // Лапы тянутся к игроку, шипы и хвост шевелятся
+    if (v.arms) {
+      for (let i = 0; i < v.arms.length; i++) {
+        const s = i === 0 ? -1 : 1;
+        const reach = dist < 6 ? 0.7 : 0.25;
+        v.arms[i].rotation.x = -reach * 0.6 + Math.sin(this.animT * 2.2 + i) * 0.18;
+        v.arms[i].rotation.z = s * (0.25 + Math.sin(this.animT * 1.7 + i) * 0.08);
+      }
+    }
+    if (v.wisps) {
+      for (let i = 0; i < v.wisps.length; i++) {
+        v.wisps[i].position.x = Math.sin(this.animT * 2 + i * 0.9) * (0.08 + i * 0.05);
+        v.wisps[i].rotation.z = Math.sin(this.animT * 1.6 + i) * 0.25;
+      }
+    }
+
+    // Атака с рычанием
     this.attackT -= dt;
-    if (dist < 1.6 && this.attackT <= 0) {
+    if (dist < 1.9 && this.attackT <= 0) {
       this.attackT = 1.1;
+      if (this.onSound) this.onSound('growl', dist);
       if (this.onAttack) this.onAttack(this, playerPos);
     }
 
-    // Шёпот
+    // Шёпот и рык при приближении
     this.soundT -= dt;
     if (this.soundT <= 0) {
-      this.soundT = 3 + Math.random() * 4;
-      if (this.onSound && dist < 18) this.onSound('gloom', dist);
+      const near = dist < 10;
+      this.soundT = near ? 2.4 + Math.random() * 2.6 : 3.5 + Math.random() * 4;
+      if (this.onSound && dist < 20) this.onSound(near && Math.random() < 0.45 ? 'growl' : 'gloom', dist);
     }
   }
 
@@ -271,7 +437,16 @@ export class Mob {
 
   /** Радиус попадания по мобу (для удара игрока) */
   hitRadius() {
-    return this.type === 'sheep' ? 0.85 : this.type === 'slime' ? 0.62 : 0.6;
+    const base = this.type === 'sheep' ? 0.8 : this.type === 'slime' ? 0.62
+      : this.type === 'gloom' ? 0.62 : this.type === 'bunny' ? 0.58 : 0.4;
+    return base * this.baseScale;
+  }
+
+  /** Высота центра модели — по ней целимся и бьём частицами */
+  centerY() {
+    const base = this.type === 'sheep' ? 0.6 : this.type === 'gloom' ? 0.95
+      : this.type === 'bird' ? 0.1 : 0.4;
+    return base * this.baseScale;
   }
 
   /** Можно ли бить этого моба (птиц — нельзя) */
@@ -462,14 +637,15 @@ export class Mob {
     if (this.flashT > 0) {
       const k = this.flashT / 0.3;
       const pulse = Math.sin((1 - k) * Math.PI);
+      const sc = this.baseScale;
       v.group.rotation.x = -0.5 * pulse;
       v.group.rotation.z = Math.sin(this.animT * 60) * 0.14 * k;
-      v.group.scale.set(1 + 0.2 * pulse, 1 - 0.18 * pulse, 1 + 0.2 * pulse);
+      v.group.scale.set(sc * (1 + 0.2 * pulse), sc * (1 - 0.18 * pulse), sc * (1 + 0.2 * pulse));
       v.group.position.y += 0.1 * pulse;
     } else {
       v.group.rotation.x = 0;
       v.group.rotation.z = 0;
-      v.group.scale.setScalar(1);
+      v.group.scale.setScalar(this.baseScale);
     }
 
     // Ноги

@@ -540,3 +540,54 @@ img, canvas { -webkit-user-drag: none; user-drag: none; }
   pointer-events: none;
 }
 .slot:has(.slot-count) .slot-num { opacity: 0.75; }
+
+/* ================= Сетка крафта и вкладки ================= */
+.inv-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 8px 0;
+}
+.inv-tab {
+  flex: 1;
+  padding: 7px 4px;
+  font: 700 11px/1 'Segoe UI', sans-serif;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: #c8d0e4;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.inv-tab.active { color: #0d1220; background: #9be064; border-color: #b6ef86; }
+.inv-tab:hover:not(.active) { background: rgba(255,255,255,0.14); }
+
+.craft-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 4px 4px;
+}
+.craft-block { display: flex; flex-direction: column; gap: 6px; }
+.craft-title {
+  font: 700 11px/1 'Segoe UI', sans-serif;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #9be064;
+}
+.craft-grid { display: grid; gap: 4px; }
+.craft-grid.size2 { grid-template-columns: repeat(2, 46px); }
+.craft-grid.size3 { grid-template-columns: repeat(3, 46px); }
+.craft-cell { width: 46px; height: 46px; }
+.craft-cell { max-width: none; }
+.craft-arrow { font-size: 22px; color: #9be064; opacity: 0.8; }
+.craft-result {
+  width: 56px; height: 56px;
+  max-width: none;
+  position: relative;
+}
+.craft-result.ready { border-color: #9be064; box-shadow: 0 0 12px rgba(155, 224, 100, 0.45); }
+.craft-result .slot-tip { bottom: 120%; }
+
+#inv-craft-grid .slot-icon { width: 36px; height: 36px; }
+.inv-tab .hidden { display: none !important; }

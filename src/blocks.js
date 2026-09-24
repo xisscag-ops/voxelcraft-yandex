@@ -22,6 +22,7 @@ export const BLOCK = {
   FLOWER_YELLOW: 17,
   FERN: 18,
   CLOVER: 19,
+  TABLE: 20,        // верстак — крафт 3x3
 };
 
 // tiles: [top, bottom, side] — индексы тайлов атласа
@@ -47,6 +48,7 @@ export const BLOCKS = [
   { id: 17, name: 'flower_yellow', solid: false, tiles: [24, 24, 24], break: 'fast', transparent: true, decor: true },
   { id: 18, name: 'fern', solid: false, tiles: [25, 25, 25], break: 'fast', transparent: true, decor: true },
   { id: 19, name: 'clover', solid: false, tiles: [26, 26, 26], break: 'fast', transparent: true, decor: true },
+  { id: 20, name: 'table', solid: true, tiles: [27, 8, 28], break: 'default', tool: 'wood', interactive: 'crafting' },
 ];
 
 // Названия для UI
@@ -56,14 +58,14 @@ export const BLOCK_NAMES = {
     6: 'Бревно', 7: 'Доски', 8: 'Листва', 9: 'Стекло', 10: 'Кирпич',
     11: 'Светокамень', 12: 'Снег', 13: 'Вода', 14: 'Сланец',
     15: 'Трава', 16: 'Красный цветок', 17: 'Жёлтый цветок',
-    18: 'Папоротник', 19: 'Клевер',
+    18: 'Папоротник', 19: 'Клевер', 20: 'Верстак',
   },
   en: {
     1: 'Grass', 2: 'Dirt', 3: 'Stone', 4: 'Cobblestone', 5: 'Sand',
     6: 'Log', 7: 'Planks', 8: 'Leaves', 9: 'Glass', 10: 'Brick',
     11: 'Glowstone', 12: 'Snow', 13: 'Water', 14: 'Slate',
     15: 'Tall grass', 16: 'Red flower', 17: 'Yellow flower',
-    18: 'Fern', 19: 'Clover',
+    18: 'Fern', 19: 'Clover', 20: 'Crafting table',
   },
 };
 
@@ -89,6 +91,11 @@ export function isFoliage(id) {
 export function isLiquid(id) {
   return !!(id !== 0 && BLOCKS[id] && BLOCKS[id].liquid);
 }
+/** Блок открывает свой интерфейс при использовании (верстак — крафт 3x3) */
+export function interactiveKind(id) {
+  return (id !== 0 && BLOCKS[id] && BLOCKS[id].interactive) || null;
+}
+
 export function breakKind(id) {
   return (BLOCKS[id] && BLOCKS[id].break) || 'default';
 }

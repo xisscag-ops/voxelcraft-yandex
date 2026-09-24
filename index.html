@@ -140,7 +140,10 @@
   <div id="inventory-screen" class="screen inv-screen hidden">
     <div class="inv-window">
       <div class="inv-side">
-        <div class="inv-side-title" id="inv-side-title">Крафт</div>
+        <div class="inv-tabs" id="inv-tabs">
+          <button class="inv-tab active" data-tab="craft" data-i18n="craft_title">Крафт</button>
+          <button class="inv-tab" data-tab="catalog" data-i18n="catalog_title">Каталог</button>
+        </div>
         <div class="inv-side-list" id="inv-side-list"></div>
       </div>
       <div class="inv-main">
@@ -148,6 +151,14 @@
           <span class="inv-mode" id="inv-mode-label">Выживание</span>
           <span class="inv-tip" id="inv-tip"></span>
           <button id="btn-inv-close" class="inv-close" aria-label="Закрыть">✕</button>
+        </div>
+        <div class="craft-row">
+          <div class="craft-block">
+            <div class="craft-title" id="inv-craft-title">Крафт 2×2</div>
+            <div class="craft-grid size2" id="inv-craft-grid"></div>
+          </div>
+          <div class="craft-arrow">➜</div>
+          <div class="islot craft-result" id="inv-craft-result"></div>
         </div>
         <div class="inv-grid" id="inv-main-grid"></div>
         <div class="inv-grid inv-hotbar" id="inv-hotbar-row"></div>

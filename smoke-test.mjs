@@ -4,7 +4,10 @@ import { meshChunk } from './src/mesher.js';
 import { raycastVoxel } from './src/raycast.js';
 import { isSolid, isOpaque, isDecor, BLOCK } from './src/blocks.js';
 import { Inventory } from './src/inventory.js';
-import { RECIPES, craft, canCraft, validateRecipes } from './src/crafts.js';
+import {
+  RECIPES, craft, canCraft, validateRecipes, emptyGrid, matchRecipe, gridResult,
+  craftFromGrid, needsTable, recipeGridSize,
+} from './src/crafts.js';
 import { ITEM, blockItem, blockDropItem, breakTime, itemDamage, maxStack, placeBlockId, toolKind } from './src/items.js';
 import { CONFIG } from './src/config.js';
 
@@ -205,7 +208,7 @@ check('инвентарь полон → лишнее не влезает', (() 
 
 // ---- Крафт ----
 check('рецепты без ошибок', validateRecipes().length === 0, validateRecipes().join('; '));
-check('13 рецептов', RECIPES.length === 13, 'их ' + RECIPES.length);
+check('14 рецептов (включая верстак)', RECIPES.length === 14, 'их ' + RECIPES.length);
 function craftWith(input, id) {
   const i = new Inventory(CONFIG.INV_SIZE);
   for (const [k, n] of Object.entries(input)) i.add(k, n);
@@ -242,6 +245,61 @@ check('ресурсы не списываются при нехватке', (() 
 check('недоступный рецепт не проходит проверку доступности', (() => {
   const i = new Inventory(CONFIG.INV_SIZE);
   return !canCraft(i, RECIPES.find((r) => r.id === 'stone_pickaxe'));
+})());
+
+// ---- Сетка крафта ----
+function grid2(pairs) {
+  const g = emptyGrid(2);
+  for (const [i, key, n] of pairs) g[i] = { key, count: n ?? 1 };
+  return g;
+}
+function grid3(pairs) {
+  const g = emptyGrid(3);
+  for (const [i, key, n] of pairs) g[i] = { key, count: n ?? 1 };
+  return g;
+}
+check('сетка 2×2: бревно → доски', gridResult(grid2([[0, blockItem(BLOCK.LOG)]]), 2)?.out.key === blockItem(BLOCK.PLANKS));
+check('сетка 2×2: 2 доски столбиком → палки',
+  gridResult(grid2([[0, blockItem(BLOCK.PLANKS)], [2, blockItem(BLOCK.PLANKS)]]), 2)?.out.key === ITEM.STICK);
+check('сетка 2×2: 2 доски в ряд — не рецепт',
+  gridResult(grid2([[0, blockItem(BLOCK.PLANKS)], [1, blockItem(BLOCK.PLANKS)]]), 2) === null);
+check('сетка 2×2: 4 доски → верстак',
+  gridResult(grid2([[0, blockItem(BLOCK.PLANKS)], [1, blockItem(BLOCK.PLANKS)],
+    [2, blockItem(BLOCK.PLANKS)], [3, blockItem(BLOCK.PLANKS)]]), 2)?.out.key === blockItem(BLOCK.TABLE));
+check('верстак нужен для 3×3 рецептов', needsTable(RECIPES.find((r) => r.id === 'wood_pickaxe'))
+  && recipeGridSize(RECIPES.find((r) => r.id === 'wood_pickaxe')) === 3
+  && !needsTable(RECIPES.find((r) => r.id === 'planks')));
+check('сетка 3×3: кирка (3 доски + 2 палки)',
+  gridResult(grid3([[0, blockItem(BLOCK.PLANKS)], [1, blockItem(BLOCK.PLANKS)], [2, blockItem(BLOCK.PLANKS)],
+    [4, ITEM.STICK], [7, ITEM.STICK]]), 3)?.out.key === ITEM.WOOD_PICKAXE);
+check('сетка 2×2 не собирает кирку (нужен верстак)',
+  gridResult(grid3([[0, blockItem(BLOCK.PLANKS)], [1, blockItem(BLOCK.PLANKS)], [2, blockItem(BLOCK.PLANKS)],
+    [4, ITEM.STICK], [7, ITEM.STICK]]).slice(0, 4), 2) === null);
+check('сетка 3×3: топор', gridResult(grid3([[0, blockItem(BLOCK.PLANKS)], [1, blockItem(BLOCK.PLANKS)],
+  [3, blockItem(BLOCK.PLANKS)], [4, ITEM.STICK], [7, ITEM.STICK]]), 3)?.out.key === ITEM.WOOD_AXE);
+check('сетка 3×3: меч', gridResult(grid3([[0, blockItem(BLOCK.PLANKS)], [3, blockItem(BLOCK.PLANKS)],
+  [6, ITEM.STICK]]), 3)?.out.key === ITEM.WOOD_SWORD);
+check('сетка 3×3: кирка из булыжника', gridResult(grid3([[0, blockItem(BLOCK.COBBLE)], [1, blockItem(BLOCK.COBBLE)],
+  [2, blockItem(BLOCK.COBBLE)], [4, ITEM.STICK], [7, ITEM.STICK]]), 3)?.out.key === ITEM.STONE_PICKAXE);
+check('лишний предмет в сетке ломает рецепт',
+  gridResult(grid2([[0, blockItem(BLOCK.LOG)], [3, blockItem(BLOCK.SAND)]]), 2) === null);
+check('бесформенные рецепты (светокамень)', gridResult(grid2([
+  [0, blockItem(BLOCK.COBBLE)], [1, ITEM.STICK], [2, blockItem(BLOCK.LEAVES)]]), 2)?.out.count === 2);
+check('крафт из сетки тратит по одному предмету', (() => {
+  const i = new Inventory(CONFIG.INV_SIZE);
+  const g = grid2([[0, blockItem(BLOCK.LOG), 3]]);
+  const res = craftFromGrid(g, 2, i);
+  return res === 'ok' && i.count(blockItem(BLOCK.PLANKS)) === 4 && g[0].count === 2;
+})());
+check('крафт из сетки «всё сразу» (ПКМ по результату)', (() => {
+  const i = new Inventory(CONFIG.INV_SIZE);
+  const g = grid2([[0, blockItem(BLOCK.LOG), 3]]);
+  const res = craftFromGrid(g, 2, i, true);
+  return res === 'ok' && i.count(blockItem(BLOCK.PLANKS)) === 12 && g[0] === null;
+})());
+check('крафт из сетки: пустая сетка', (() => {
+  const i = new Inventory(CONFIG.INV_SIZE);
+  return craftFromGrid(emptyGrid(2), 2, i) === 'nothing';
 })());
 
 // Разметка: кнопка «К спавну» и слой молний

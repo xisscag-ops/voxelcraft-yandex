@@ -228,6 +228,32 @@ export class Sfx {
     this._burst({ freq: 380, dur: 0.25, gain: 0.25, type: 'bandpass', q: 2, pitchDrop: 0.6 });
   }
 
+  gloomGrowl(vol = 1) {
+    // Низкое рычание: дрожащий низкий тон + шумовой хрип
+    if (!this.enabled || !this._ensure() || this.ctx.state === 'suspended') return;
+    const t0 = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(88, t0);
+    osc.frequency.linearRampToValueAtTime(62, t0 + 0.85);
+    const trem = this.ctx.createOscillator();
+    trem.type = 'sine';
+    trem.frequency.value = 17;
+    const tremGain = this.ctx.createGain();
+    tremGain.gain.value = 0.4;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.linearRampToValueAtTime(0.17 * vol, t0 + 0.12);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.9);
+    trem.connect(tremGain);
+    tremGain.connect(g.gain);
+    osc.connect(g);
+    g.connect(this.master);
+    osc.start(t0); trem.start(t0);
+    osc.stop(t0 + 0.95); trem.stop(t0 + 0.95);
+    this._burst({ freq: 220, dur: 0.7, gain: 0.09 * vol, type: 'bandpass', q: 4, pitchDrop: 0.4 });
+  }
+
   gloom(vol = 1) {
     // Шёпот Хмари
     this._burst({ freq: 300, dur: 0.45, gain: 0.1 * vol, type: 'bandpass', q: 7 });
@@ -242,6 +268,13 @@ export class Sfx {
     // Хруст яблока: два быстрых треска
     this._burst({ freq: 900, dur: 0.06, gain: 0.3, pitchDrop: 0.25 });
     setTimeout(() => this._burst({ freq: 700, dur: 0.07, gain: 0.28, pitchDrop: 0.3 }), 110);
+  }
+
+  craft() {
+    // «Молоток по верстаку»: два коротких стука и звон
+    this._burst({ freq: 700, dur: 0.05, gain: 0.3, pitchDrop: 0.6 });
+    setTimeout(() => this._burst({ freq: 520, dur: 0.06, gain: 0.26, pitchDrop: 0.5 }), 70);
+    setTimeout(() => this._tone({ freq: 1180, dur: 0.09, gain: 0.09, type: 'triangle', slide: 260 }), 130);
   }
 
   pickup() {
