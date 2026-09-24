@@ -189,9 +189,11 @@ export class Sfx {
   }
 
   hurt() {
-    // Боль: короткий низкий стон
-    this._tone({ freq: 190, dur: 0.2, gain: 0.16, type: 'sawtooth', slide: -70 });
-    this._burst({ freq: 320, dur: 0.1, gain: 0.14, pitchDrop: 0.5 });
+    // Боль: заметный низкий стон + резкий удар (громче прежнего)
+    this._tone({ freq: 210, dur: 0.3, gain: 0.3, type: 'sawtooth', slide: -95 });
+    this._tone({ freq: 120, dur: 0.22, gain: 0.22, type: 'square', slide: -40 });
+    this._burst({ freq: 420, dur: 0.16, gain: 0.32, pitchDrop: 0.4 });
+    this._burst({ freq: 1500, dur: 0.07, gain: 0.2, type: 'bandpass', q: 1.5 });
   }
 
   die() {
@@ -202,6 +204,24 @@ export class Sfx {
 
   hitMob() {
     this._burst({ freq: 520, dur: 0.08, gain: 0.3, pitchDrop: 0.5 });
+  }
+
+  // Писк/блеяние раненого моба
+  mobHurt(type = 'bunny') {
+    if (type === 'bunny') {
+      this._tone({ freq: 1700, dur: 0.11, gain: 0.13, type: 'sine', slide: 900 });
+      setTimeout(() => this._tone({ freq: 2100, dur: 0.07, gain: 0.09, type: 'sine', slide: 500 }), 70);
+    } else if (type === 'sheep') {
+      this._tone({ freq: 340, dur: 0.28, gain: 0.13, type: 'sawtooth', slide: -120 });
+      setTimeout(() => this._tone({ freq: 280, dur: 0.2, gain: 0.1, type: 'sawtooth', slide: -80 }), 130);
+    } else if (type === 'slime') {
+      this._burst({ freq: 260, dur: 0.18, gain: 0.22, pitchDrop: 0.35, q: 3 });
+      setTimeout(() => this._burst({ freq: 900, dur: 0.09, gain: 0.16, type: 'bandpass', q: 2 }), 90);
+    } else if (type === 'gloom') {
+      this._burst({ freq: 620, dur: 0.3, gain: 0.16, type: 'bandpass', q: 8, pitchDrop: 0.5 });
+    } else {
+      this._tone({ freq: 900, dur: 0.1, gain: 0.1, type: 'triangle', slide: 300 });
+    }
   }
 
   mobDie() {

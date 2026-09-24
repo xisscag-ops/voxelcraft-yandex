@@ -25,22 +25,23 @@ export const BLOCK = {
 };
 
 // tiles: [top, bottom, side] — индексы тайлов атласа
+// tool: класс инструмента, ускоряющего ломание ('stone' — кирка, 'wood' — топор)
 export const BLOCKS = [
   { id: 0, name: 'air', solid: false, tiles: null },
   { id: 1, name: 'grass', solid: true, tiles: [0, 2, 1], break: 'fast' },
   { id: 2, name: 'dirt', solid: true, tiles: [2, 2, 2], break: 'fast' },
-  { id: 3, name: 'stone', solid: true, tiles: [3, 3, 3], break: 'slow' },
-  { id: 4, name: 'cobble', solid: true, tiles: [4, 4, 4], break: 'slow' },
+  { id: 3, name: 'stone', solid: true, tiles: [3, 3, 3], break: 'slow', tool: 'stone' },
+  { id: 4, name: 'cobble', solid: true, tiles: [4, 4, 4], break: 'slow', tool: 'stone' },
   { id: 5, name: 'sand', solid: true, tiles: [5, 5, 5], break: 'fast' },
-  { id: 6, name: 'log', solid: true, tiles: [7, 7, 6], break: 'default' },
-  { id: 7, name: 'planks', solid: true, tiles: [8, 8, 8], break: 'default' },
+  { id: 6, name: 'log', solid: true, tiles: [7, 7, 6], break: 'default', tool: 'wood' },
+  { id: 7, name: 'planks', solid: true, tiles: [8, 8, 8], break: 'default', tool: 'wood' },
   { id: 8, name: 'leaves', solid: true, tiles: [9, 9, 9], break: 'fast', foliage: true },
   { id: 9, name: 'glass', solid: true, tiles: [10, 10, 10], break: 'slow', transparent: true },
-  { id: 10, name: 'brick', solid: true, tiles: [11, 11, 11], break: 'slow' },
+  { id: 10, name: 'brick', solid: true, tiles: [11, 11, 11], break: 'slow', tool: 'stone' },
   { id: 11, name: 'glow', solid: true, tiles: [12, 12, 12], break: 'default', emissive: true },
   { id: 12, name: 'snow', solid: true, tiles: [13, 2, 14], break: 'fast' },
   { id: 13, name: 'water', solid: false, tiles: [15, 15, 15], break: 'default', liquid: true, transparent: true },
-  { id: 14, name: 'slate', solid: true, tiles: [16, 16, 16], break: 'slow' },
+  { id: 14, name: 'slate', solid: true, tiles: [16, 16, 16], break: 'slow', tool: 'stone' },
   { id: 15, name: 'tall_grass', solid: false, tiles: [22, 22, 22], break: 'fast', transparent: true, decor: true },
   { id: 16, name: 'flower_red', solid: false, tiles: [23, 23, 23], break: 'fast', transparent: true, decor: true },
   { id: 17, name: 'flower_yellow', solid: false, tiles: [24, 24, 24], break: 'fast', transparent: true, decor: true },

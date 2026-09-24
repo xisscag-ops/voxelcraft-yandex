@@ -120,6 +120,9 @@ function buildSlime(mat, geoCache) {
   return { group: g, legs: [], head: null, ears: [], hop: true, slime: body };
 }
 
+// Материал «полностью красного» моба на время вспышки урона
+const HURT_MAT = new THREE.MeshBasicMaterial({ color: 0xff3a2e });
+
 const BIRD_COLORS = [
   [0.9, 0.9, 0.93],   // белая
   [0.55, 0.42, 0.32], // воробей
@@ -189,10 +192,14 @@ export class Mob {
     this.onSound = null;         // (kind, dist) => void
     this.onAttack = null;        // (mob, playerPos) => void
     this.speed = type === 'bunny' ? 2.2 : type === 'slime' ? 1.6 : type === 'gloom' ? 2.0 : 1.1;
-    this.hp = type === 'gloom' ? 3 : 1;
+    // Зайцы и овцы выдерживают 2–3 удара рукой
+    this.hp = type === 'sheep' ? 3 : type === 'bunny' ? 2 : type === 'slime' ? 2 : type === 'gloom' ? 3 : 1;
+    this.maxHp = this.hp;
     this.attackT = 0;
     this.flashT = 0;
     this.burnT = 0;
+    this.fleeT = 0;
+    this.kbX = 0; this.kbZ = 0; this.kbT = 0;
     this.dead = false;
     visuals.group.position.set(x, y, z);
     this.yBase = y;
@@ -202,6 +209,7 @@ export class Mob {
   updateGloom(dt, playerPos) {
     const v = this.v;
     this.animT += dt;
+    this.tickFlash(dt);
     const dx = playerPos.x - this.pos.x;
     const dz = playerPos.z - this.pos.z;
     const dist = Math.hypot(dx, dz) || 0.001;
@@ -231,13 +239,8 @@ export class Mob {
       v.group.rotation.x = 0;
       v.group.scale.setScalar(1);
     }
-    // Плавный отброс после удара
-    if (this.kbT > 0) {
-      const step = Math.min(this.kbT, dt);
-      this.kbT -= dt;
-      this.pos.x += this.kbX * step;
-      this.pos.z += this.kbZ * step;
-    }
+    // Плавный отброс после удара (не сквозь блоки)
+    this.applyKnockback(dt);
 
     // Атака
     this.attackT -= dt;
@@ -258,14 +261,89 @@ export class Mob {
     const l = Math.hypot(dx, dz) || 1;
     this.kbX = (dx / l) * power;
     this.kbZ = (dz / l) * power;
-    this.kbT = 0.18;
+    this.kbT = 0.22;
+  }
+
+  /** Звук удара (писк/блеяние/чавканье) */
+  squeak() {
+    if (this.onSound) this.onSound('hurt', 0, this.type);
+  }
+
+  /** Радиус попадания по мобу (для удара игрока) */
+  hitRadius() {
+    return this.type === 'sheep' ? 0.85 : this.type === 'slime' ? 0.62 : 0.6;
+  }
+
+  /** Можно ли бить этого моба (птиц — нельзя) */
+  hittable() {
+    return this.type !== 'bird';
+  }
+
+  /** Полностью красный моб на время вспышки */
+  setHurtTint(on) {
+    const walk = (o) => {
+      if (o.isMesh) {
+        if (on) {
+          if (!o.userData._baseMat) o.userData._baseMat = o.material;
+          o.material = HURT_MAT;
+        } else if (o.userData._baseMat) {
+          o.material = o.userData._baseMat;
+          o.userData._baseMat = null;
+        }
+      }
+      for (const c of o.children) walk(c);
+    };
+    walk(this.v.group);
+  }
+
+  /** Тик вспышки урона: 0.3 с красный, затем обратно */
+  tickFlash(dt) {
+    if (this.flashT <= 0) return;
+    this.flashT = Math.max(0, this.flashT - dt);
+    if (this.flashT === 0) this.setHurtTint(false);
+  }
+
+  /** Отброс после удара — с проверкой блоков, чтобы не пролететь сквозь стену */
+  applyKnockback(dt) {
+    if (this.kbT <= 0) return;
+    const step = Math.min(this.kbT, dt);
+    this.kbT -= dt;
+    const nx = this.pos.x + this.kbX * step;
+    const nz = this.pos.z + this.kbZ * step;
+    if (!this.blockedAt(nx, this.pos.z)) this.pos.x = nx;
+    else this.kbX = 0;
+    if (!this.blockedAt(this.pos.x, nz)) this.pos.z = nz;
+    else this.kbZ = 0;
+    if (!this.v.gloom) {
+      // наземные мобы не залетают в воздух — только скользят по земле
+      const g = this.groundAt(this.pos.x, this.pos.z, this.pos.y + 1);
+      if (g !== null && Math.abs(g - this.pos.y) <= 1.5) this.yBase = g;
+    }
+  }
+
+  blockedAt(x, z) {
+    for (const dy of [0.3, 1.0]) {
+      if (isSolid(this.world.getBlock(Math.floor(x), Math.floor(this.pos.y + dy), Math.floor(z)))) return true;
+    }
+    return false;
+  }
+
+  /** Убегает от точки (после удара) */
+  fleeFrom(pos, time = 4.5) {
+    const dx = this.pos.x - pos.x, dz = this.pos.z - pos.z;
+    this.heading = Math.atan2(dx, dz);
+    this.state = 'flee';
+    this.fleeT = time;
+    this.stateT = time;
   }
 
   hurt(n) {
     this.hp -= n;
-    this.flashT = 0.35;
+    this.flashT = 0.3;
+    this.setHurtTint(true);
     if (this.hp <= 0) {
       this.dead = true;
+      this.setHurtTint(false);
       return true;
     }
     return false;
@@ -282,6 +360,12 @@ export class Mob {
     const dist = Math.hypot(dx, dz);
     this.stateT -= 0.6;
 
+    // После удара заяц и барашек убегают довольно долго
+    if (this.fleeT > 0) {
+      this.state = 'flee';
+      this.heading = Math.atan2(dx, dz);
+      return;
+    }
     if (this.type === 'bunny' && dist < 4.5) {
       this.state = 'flee';
       this.heading = Math.atan2(dx, dz);
@@ -321,11 +405,14 @@ export class Mob {
     if (this.type === 'gloom') return this.updateGloom(dt, playerPos);
 
     this.thinkT -= dt;
+    this.fleeT = Math.max(0, this.fleeT - dt);
     if (this.thinkT <= 0) {
       this.thinkT = 0.5 + Math.random() * 0.4;
       this.think(playerPos);
     }
     this.animT += dt;
+    this.tickFlash(dt);
+    this.applyKnockback(dt);
 
     const v = this.v;
     let moveSpeed = 0;
@@ -370,6 +457,20 @@ export class Mob {
 
     v.group.position.set(this.pos.x, this.pos.y + yOff, this.pos.z);
     v.group.rotation.y = this.heading + Math.PI;
+
+    // Отдача от удара: тряска и сплющивание
+    if (this.flashT > 0) {
+      const k = this.flashT / 0.3;
+      const pulse = Math.sin((1 - k) * Math.PI);
+      v.group.rotation.x = -0.5 * pulse;
+      v.group.rotation.z = Math.sin(this.animT * 60) * 0.14 * k;
+      v.group.scale.set(1 + 0.2 * pulse, 1 - 0.18 * pulse, 1 + 0.2 * pulse);
+      v.group.position.y += 0.1 * pulse;
+    } else {
+      v.group.rotation.x = 0;
+      v.group.rotation.z = 0;
+      v.group.scale.setScalar(1);
+    }
 
     // Ноги
     for (let i = 0; i < v.legs.length; i++) {

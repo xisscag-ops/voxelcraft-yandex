@@ -380,10 +380,11 @@ export function tileIcon(idx, size = 48) {
 }
 
 let _atlasCanvas = null;
-function buildAtlasOnce() {
+export function atlasCanvas() {
   if (!_atlasCanvas) _atlasCanvas = buildAtlas();
   return _atlasCanvas;
 }
+const buildAtlasOnce = atlasCanvas;
 
 // Отдельный канвас одного тайла (для оверлея трещин)
 export function tileCanvas(idx) {

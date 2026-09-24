@@ -24,6 +24,7 @@
     <div id="break-bar" class="hidden"><div id="break-fill"></div></div>
     <div id="debug" class="hidden"></div>
     <div id="hotbar"></div>
+    <button id="btn-bag" class="icon-btn bag-btn" aria-label="Inventory">🎒</button>
     <button id="btn-pause-hud" class="icon-btn hidden" aria-label="Pause">⏸</button>
   </div>
 
@@ -64,9 +65,28 @@
     </div>
   </div>
 
+  <div id="mode-screen" class="screen hidden">
+    <div class="panel">
+      <h2 data-i18n="mode_title">Выберите режим</h2>
+      <div class="tagline" data-i18n="mode_sub">Режим сохранится в этом мире</div>
+      <div class="menu-buttons">
+        <button id="btn-mode-survival" class="btn primary mode-btn">
+          <span class="mode-btn-title" data-i18n="mode_survival">Выживание</span>
+          <span class="mode-btn-sub" data-i18n="mode_survival_sub">Инвентарь, крафт, мобы наносят урон</span>
+        </button>
+        <button id="btn-mode-creative" class="btn mode-btn">
+          <span class="mode-btn-title" data-i18n="mode_creative">Креатив</span>
+          <span class="mode-btn-sub" data-i18n="mode_creative_sub">Бесконечные блоки, полёт, бессмертие</span>
+        </button>
+        <button id="btn-mode-back" class="btn" data-i18n="back">Назад</button>
+      </div>
+    </div>
+  </div>
+
   <div id="pause-screen" class="screen hidden">
     <div class="panel">
       <h2 data-i18n="pause">Пауза</h2>
+      <div class="tagline" id="pause-mode"></div>
       <div class="menu-buttons">
         <button id="btn-resume" class="btn primary" data-i18n="resume">Продолжить игру</button>
         <button id="btn-home" class="btn" data-i18n="to_spawn">К спавну</button>
@@ -114,6 +134,26 @@
         <button id="btn-settings-back" class="btn primary" data-i18n="back">Назад</button>
       </div>
     </div>
+  </div>
+
+  <!-- ===================== Инвентарь ===================== -->
+  <div id="inventory-screen" class="screen inv-screen hidden">
+    <div class="inv-window">
+      <div class="inv-side">
+        <div class="inv-side-title" id="inv-side-title">Крафт</div>
+        <div class="inv-side-list" id="inv-side-list"></div>
+      </div>
+      <div class="inv-main">
+        <div class="inv-head">
+          <span class="inv-mode" id="inv-mode-label">Выживание</span>
+          <span class="inv-tip" id="inv-tip"></span>
+          <button id="btn-inv-close" class="inv-close" aria-label="Закрыть">✕</button>
+        </div>
+        <div class="inv-grid" id="inv-main-grid"></div>
+        <div class="inv-grid inv-hotbar" id="inv-hotbar-row"></div>
+      </div>
+    </div>
+    <div id="cursor-item" class="hidden"></div>
   </div>
 
   <!-- Тосты -->

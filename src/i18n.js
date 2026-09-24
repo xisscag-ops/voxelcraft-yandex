@@ -27,11 +27,16 @@ export const STRINGS = {
     ready: 'Мир готов!',
     howto_text: `
       <b>ПК:</b> WASD — движение, мышь — обзор, ЛКМ — сломать (удерживать), ПКМ — поставить,
-      колесо/1-9 — выбор блока, пробел — прыжок, Ctrl — бег, Shift — вниз в полёте,
-      двойной пробел или F — режим полёта, Esc — пауза.<br><br>
+      колесо/1-9 — выбор слота, пробел — прыжок, Ctrl — бег, Shift — вниз в полёте,
+      <b>E</b> — инвентарь и крафт, <b>F</b> — съесть яблоко, Esc — пауза.<br><br>
+      <b>Режимы:</b> в «Выживании» сломанные блоки попадают в инвентарь, блоки тратятся при
+      установке, инструменты ускоряют работу, а мобы наносят урон. В «Креативе» все блоки
+      бесконечны, блоки ломаются почти мгновенно, полёт — двойным пробелом, а игрок бессмертен.<br><br>
+      <b>Крафт:</b> откройте инвентарь (E) — слева список рецептов, доступные подсвечены зелёным.
+      Клик по рецепту создаёт предмет.<br><br>
       <b>Телефон:</b> слева — джойстик, справа — обзор; короткий тап — сломать блок.
-      Кнопки: прыжок, поставить, полёт, вниз/вверх.<br><br>
-      Ставьте и ломайте блоки, стройте что угодно. Прогресс сохраняется автоматически.`,
+      Кнопки: прыжок, поставить, копать, слот «🎒» — инвентарь.<br><br>
+      Прогресс (мир, инвентарь, яблоки) сохраняется автоматически.`,
     howto_title: 'Как играть',
     pause_hint: 'Esc — пауза и освобождение мыши',
     unlocked_blocks: 'Открыты новые блоки в панели!',
@@ -49,7 +54,7 @@ export const STRINGS = {
     fly_off: 'Режим полёта: выключен',
     hint_break: 'Удерживайте ЛКМ, чтобы сломать блок',
     hint_place: 'ПКМ — поставить блок',
-    hint_fly: 'Дважды пробел — полёт',
+    hint_fly: 'Дважды пробел — полёт (креатив)',
     to_spawn: 'К спавну',
     to_spawn_ok: 'Вы у дома!',
     rain_start: 'Пошёл дождь…',
@@ -61,6 +66,29 @@ export const STRINGS = {
     eat_ok: 'Хрусть! +2 сердца',
     eat_none: 'Яблок нет',
     gloom_warn: 'Ночью опасно: Хмари рядом!',
+    mode_title: 'Выберите режим',
+    mode_sub: 'Режим сохранится вместе с миром',
+    mode_survival: 'Выживание',
+    mode_survival_sub: 'Ломайте блоки, собирайте ресурсы и крафтите — мобы опасны',
+    mode_creative: 'Креатив',
+    mode_creative_sub: 'Все блоки бесконечны, полёт двойным пробелом, бессмертие',
+    mode_now: 'Режим',
+    inv_title: 'Инвентарь',
+    inv_hint: 'ЛКМ — взять/положить стопку, ПКМ — по одному или половину',
+    craft_title: 'Крафт',
+    craft_ok: 'Скрафчено',
+    craft_missing: 'Не хватает материалов',
+    craft_no_room: 'Нет места в инвентаре',
+    catalog_title: 'Каталог',
+    catalog_hint: 'Клик — положить в выбранный слот хотбара',
+    catalog_locked: 'Набор строителя закрыт — посмотрите рекламу',
+    inv_full: 'Инвентарь полон',
+    bag_hint: 'E — инвентарь',
+    eat_hint: 'F  🍎',
+    fly_creative_only: 'Полёт доступен только в креативе',
+    block_drop: 'Подобрано',
+    hint_inventory: 'E — инвентарь и крафт',
+    hint_eat: 'Яблоко съедается клавишей F',
   },
   en: {
     title: 'VoxelCraft',
@@ -89,11 +117,16 @@ export const STRINGS = {
     ready: 'World ready!',
     howto_text: `
       <b>Desktop:</b> WASD — move, mouse — look, LMB — break (hold), RMB — place,
-      wheel/1-9 — pick block, Space — jump, Ctrl — sprint, Shift — down while flying,
-      double-tap Space or F — fly mode, Esc — pause.<br><br>
+      wheel/1-9 — pick slot, Space — jump, Ctrl — sprint, Shift — down while flying,
+      <b>E</b> — inventory & crafting, <b>F</b> — eat an apple, Esc — pause.<br><br>
+      <b>Modes:</b> in <b>Survival</b> broken blocks go to your inventory, placing consumes them,
+      tools make work faster and mobs can hurt you. In <b>Creative</b> every block is infinite,
+      blocks break almost instantly, double-tap Space flies and you cannot die.<br><br>
+      <b>Crafting:</b> open the inventory (E) — the recipe list is on the left, available recipes
+      are highlighted green, click one to craft.<br><br>
       <b>Mobile:</b> joystick on the left, look on the right; quick tap — break a block.
-      Buttons: jump, place, fly, up/down.<br><br>
-      Break and place blocks, build anything. Progress saves automatically.`,
+      Buttons: jump, place, dig, «🎒» — inventory.<br><br>
+      Progress (world, inventory, apples) saves automatically.`,
     howto_title: 'How to play',
     pause_hint: 'Esc — pause & release mouse',
     unlocked_blocks: 'New blocks unlocked in the hotbar!',
@@ -111,7 +144,7 @@ export const STRINGS = {
     fly_off: 'Fly mode: off',
     hint_break: 'Hold LMB to break a block',
     hint_place: 'RMB — place a block',
-    hint_fly: 'Double-tap Space to fly',
+    hint_fly: 'Double-tap Space to fly (Creative)',
     to_spawn: 'To spawn',
     to_spawn_ok: 'Welcome home!',
     rain_start: 'It starts raining…',
@@ -123,6 +156,29 @@ export const STRINGS = {
     eat_ok: 'Crunch! +2 hearts',
     eat_none: 'No apples',
     gloom_warn: 'Night is dangerous: Gloom is near!',
+    mode_title: 'Choose a mode',
+    mode_sub: 'The mode is stored in this world',
+    mode_survival: 'Survival',
+    mode_survival_sub: 'Break blocks, gather resources and craft — mobs are dangerous',
+    mode_creative: 'Creative',
+    mode_creative_sub: 'Infinite blocks, double-tap space to fly, immortal',
+    mode_now: 'Mode',
+    inv_title: 'Inventory',
+    inv_hint: 'LMB — take/put a stack, RMB — one item or half',
+    craft_title: 'Crafting',
+    craft_ok: 'Crafted',
+    craft_missing: 'Not enough materials',
+    craft_no_room: 'No room in inventory',
+    catalog_title: 'Catalog',
+    catalog_hint: 'Click to put an item into the selected hotbar slot',
+    catalog_locked: 'Builder Pack is locked — watch an ad',
+    inv_full: 'Inventory is full',
+    bag_hint: 'E — inventory',
+    eat_hint: 'F  🍎',
+    fly_creative_only: 'Flying is available in Creative only',
+    block_drop: 'Picked up',
+    hint_inventory: 'E — inventory & crafting',
+    hint_eat: 'Press F to eat an apple',
   },
 };
 

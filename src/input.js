@@ -2,6 +2,7 @@
 export class Input {
   constructor() {
     this.keys = new Set();
+    this.pressed = new Set();   // одиночные нажатия (съедаются в игровом кадре)
     this.mouse = { dx: 0, dy: 0, left: false, right: false };
     this.move = { forward: 0, right: 0 };       // -1..1
     this.jump = false;
@@ -11,7 +12,7 @@ export class Input {
     this.isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
     this.handlers = {
       onToggleFly: null, onDigit: null, onScroll: null, onPause: null,
-      onActionBreak: null, onActionPlace: null,
+      onActionBreak: null, onActionPlace: null, onToggleInventory: null,
     };
     this._flyTapT = 0;
     this._swallowLook = 0;
@@ -86,8 +87,10 @@ export class Input {
     window.addEventListener('keydown', (e) => {
       if (e.repeat) return;
       this.keys.add(e.code);
+      this.pressed.add(e.code);
       if (e.code === 'Escape') this.handlers.onPause?.();
-      if (e.code === 'KeyF') this.handlers.onToggleFly?.();
+      if (e.code === 'KeyE') this.handlers.onToggleInventory?.();
+      if (e.code === 'KeyI') this.handlers.onToggleInventory?.();
       if (e.code === 'F1') e.preventDefault();
       if (e.code.startsWith('Digit')) {
         const n = Number(e.code.slice(5));
@@ -276,6 +279,15 @@ export class Input {
     this.breakHeld = this.mouse.left || this._buttons.has('break');
     this.placeHeld = this.mouse.right;
   }
+
+  /** Нажатие, которое нужно обработать ровно один раз */
+  consumePress(code) {
+    if (!this.pressed.has(code)) return false;
+    this.pressed.delete(code);
+    return true;
+  }
+
+  clearPresses() { this.pressed.clear(); }
 
   consumeLook() {
     const dx = this.mouse.dx, dy = this.mouse.dy;

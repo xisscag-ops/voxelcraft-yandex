@@ -1,6 +1,6 @@
 // HTML-интерфейс: экраны, хотбар, HUD, тосты, настройки
-import { BLOCKS, BLOCK_NAMES } from './blocks.js';
-import { tileIcon } from './textures.js';
+import { itemIconEl } from './icons.js';
+import { itemName, itemDef } from './items.js';
 
 export class UI {
   constructor(i18n) {
@@ -8,9 +8,10 @@ export class UI {
     this.handlers = {
       onPlay: null, onResume: null, onSaveQuit: null, onNewWorld: null,
       onSettingsChange: null, onReward: null, onSlot: null, onPauseBtn: null,
-      onToSpawn: null,
+      onToSpawn: null, onMode: null, onModeBack: null, onBag: null,
     };
-    this._screens = ['loading-screen', 'menu-screen', 'pause-screen', 'howto-screen', 'settings-screen'];
+    this._screens = ['loading-screen', 'menu-screen', 'mode-screen', 'pause-screen',
+      'howto-screen', 'settings-screen', 'inventory-screen'];
     this._bind();
   }
 
@@ -34,6 +35,10 @@ export class UI {
     click('btn-reward2', () => this.handlers.onReward?.());
     click('btn-home', () => this.handlers.onToSpawn?.());
     click('btn-pause-hud', () => this.handlers.onPauseBtn?.());
+    click('btn-bag', () => this.handlers.onBag?.());
+    click('btn-mode-survival', () => this.handlers.onMode?.('survival'));
+    click('btn-mode-creative', () => this.handlers.onMode?.('creative'));
+    click('btn-mode-back', () => this.handlers.onModeBack?.());
 
     // Настройки
     const vol = document.getElementById('set-volume');
@@ -88,8 +93,18 @@ export class UI {
     document.title = `${t('title')} — ${t('tagline')}`;
   }
 
+  /** Подпись режима («Выживание» / «Креатив») на экране паузы */
+  showModeLabel(mode) {
+    const el = document.getElementById('pause-mode');
+    if (!el) return;
+    el.textContent = this.i18n.t('mode_now') + ': ' + this.i18n.t(mode === 'survival' ? 'mode_survival' : 'mode_creative');
+  }
+
   setHasSave(v) {
     this._hasSave = v;
+    const btnPlay = document.getElementById('btn-play');
+    if (btnPlay) btnPlay.textContent = this.i18n.t(v ? 'continue' : 'play');
+    document.getElementById('btn-new-world')?.classList.toggle('hidden', !v);
   }
 
   showScreen(id, overlay = false) {
@@ -122,32 +137,41 @@ export class UI {
     if (label && text) label.textContent = text;
   }
 
-  // Хотбар: по списку id блоков
-  buildHotbar(ids, lang) {
+  // Хотбар: 9 ячеек инвентаря (слоты 0..8) с иконками и счётчиками
+  buildHotbar(slots, lang, opts = {}) {
     const bar = document.getElementById('hotbar');
     if (!bar) return;
+    this._hotbarSlots = slots;
     bar.innerHTML = '';
-    ids.forEach((id, i) => {
+    for (let i = 0; i < slots.length; i++) {
+      const stack = slots[i];
       const slot = document.createElement('div');
       slot.className = 'slot';
       slot.dataset.index = i;
-      const def = BLOCKS[id];
-      if (def?.tiles) {
-        const icon = tileIcon(def.tiles[2], 44);
-        icon.className = 'slot-icon';
-        slot.appendChild(icon);
+      let title = '';
+      if (stack) {
+        const icon = itemIconEl(stack.key, 44);
+        if (icon) slot.appendChild(icon);
+        title = itemName(stack.key, lang);
+        const inf = opts.creative && itemDef(stack.key)?.kind === 'block';
+        if (inf || stack.count > 1) {
+          const count = document.createElement('span');
+          count.className = 'slot-count';
+          count.textContent = inf ? '∞' : String(stack.count);
+          slot.appendChild(count);
+        }
       }
       const num = document.createElement('span');
       num.className = 'slot-num';
-      num.textContent = (i < 9 ? i + 1 : '·');
+      num.textContent = String(i + 1);
       slot.appendChild(num);
       const tip = document.createElement('div');
       tip.className = 'slot-tip';
-      tip.textContent = BLOCK_NAMES[lang]?.[id] || BLOCK_NAMES.ru[id] || '';
+      tip.textContent = title;
       slot.appendChild(tip);
       slot.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.handlers.onSlot?.(i); });
       bar.appendChild(slot);
-    });
+    }
   }
 
   setHotbarSelection(i) {
@@ -210,6 +234,27 @@ export class UI {
     document.getElementById('ad-overlay')?.classList.toggle('hidden', !on);
   }
 
+  setHealthVisible(v) {
+    const el = document.getElementById('hearts');
+    if (el) el.classList.toggle('hidden', !v);
+  }
+
+  blinkHearts() {
+    const el = document.getElementById('hearts');
+    if (!el) return;
+    el.classList.remove('blink');
+    void el.offsetWidth;
+    el.classList.add('blink');
+  }
+
+  shake() {
+    const el = document.getElementById('hud');
+    if (!el) return;
+    el.classList.remove('shake');
+    void el.offsetWidth;
+    el.classList.add('shake');
+  }
+
   setHealth(hp, max = 20) {
     const el = document.getElementById('hearts');
     if (!el) return;
@@ -228,11 +273,12 @@ export class UI {
     }
   }
 
-  setApples(n) {
+  setApples(n, mode = 'survival') {
     const el = document.getElementById('apples');
     if (!el) return;
-    el.classList.toggle('hidden', n <= 0);
-    el.textContent = 'F  🍎 ×' + n;
+    if (n <= 0 || mode === 'creative') { el.classList.add('hidden'); return; }
+    el.classList.remove('hidden');
+    el.textContent = this.i18n.t('eat_hint') + ' ×' + n;
   }
 
   flashHurt() {
