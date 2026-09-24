@@ -2,8 +2,7 @@
 import { World } from './src/world.js';
 import { meshChunk } from './src/mesher.js';
 import { raycastVoxel } from './src/raycast.js';
-import { Mobs } from './src/mobs.js';
-import { BLOCK, isSolid, isPlant, BLOCKS } from './src/blocks.js';
+import { isSolid, isOpaque, isDecor } from './src/blocks.js';
 
 // Заглушка THREE — достаточно для toGeometry
 const calls = { geom: 0, verts: 0, idx: 0 };
@@ -124,107 +123,29 @@ check('raycast misses up to sky', (() => {
   return raycastVoxel(world2, 2.5, h + 3.5, 2.5, 0, 1, 0, 6) === null;
 })());
 
-// ---------------- Растения ----------------
-check('plants: non-solid, flagged', (() => {
-  return !isSolid(BLOCK.GRASS_TALL) && isPlant(BLOCK.GRASS_TALL) &&
-    isPlant(BLOCK.FLOWER_RED) && isPlant(BLOCK.FLOWER_YELLOW) &&
-    !isPlant(BLOCK.GRASS) && BLOCKS[BLOCK.GRASS_TALL].break === 'instant';
+// ---- Декоративная трава ----
+const wd = new World(987654);
+let decorCount = 0;
+for (let cz = -2; cz <= 2; cz++) {
+  for (let cx = -2; cx <= 2; cx++) {
+    const c = wd.getChunk(cx, cz);
+    for (const v of c.blocks) if (v === 15 || v === 16 || v === 17) decorCount++;
+  }
+}
+check('decor (grass/flowers) generated', decorCount > 5);
+
+// Крестовый меш: +8 вершин и +24 индекса на один декор-блок
+const meshA = meshChunk(THREE, wd, 0, 0).opaque;
+wd.setBlock(2, 60, 2, 15); // трава гарантированно в воздухе
+const meshB = meshChunk(THREE, wd, 0, 0).opaque;
+check('decor meshed as cross quads', (() => {
+  const dv = meshB.pos.length - meshA.pos.length;
+  const di = meshB.idx.length - meshA.idx.length;
+  return dv === 8 * 3 && di === 24;
 })());
 
-check('plants generate on grass', (() => {
-  let plants = 0;
-  for (let cz = -3; cz <= 3; cz++) {
-    for (let cx = -3; cx <= 3; cx++) {
-      const c = world2.getChunk(cx, cz);
-      for (const v of c.blocks) if (v === BLOCK.GRASS_TALL || v === BLOCK.FLOWER_RED || v === BLOCK.FLOWER_YELLOW) plants++;
-    }
-  }
-  return plants > 20;
-})());
-
-check('plants produce cross geometry', (() => {
-  // Ставим растение в воздух и замешиваем чанк
-  const h = world2.heightAt(4, 4);
-  world2.setBlock(4, h + 2, 4, BLOCK.GRASS_TALL);
-  const { opaque } = meshChunk(THREE, world2, 0, 0);
-  const beforeVerts = opaque.pos.length / 3;
-  const beforeIdx = opaque.idx.length;
-  world2.setBlock(4, h + 2, 4, BLOCK.AIR);
-  const after = meshChunk(THREE, world2, 0, 0).opaque;
-  // Крест: 2 плоскости × 4 вершины = 8 вершин; индексы ×2 стороны ×2 диагонали-пары = 24
-  return beforeVerts - after.pos.length / 3 === 8 && beforeIdx - after.idx.length === 24;
-})());
-
-// ---------------- Мобы ----------------
-check('mobs: spawn, hit detection, flee', (() => {
-  // Минимальная заглушка THREE для работы моделей
-  class Color {
-    constructor(h) { this.h = h; }
-    copy() { return this; }
-    multiplyScalar() { return this; }
-  }
-  class Obj3d {
-    constructor() {
-      this.children = [];
-      this.position = { x: 0, y: 0, z: 0, set: (x, y, z) => { this.position.x = x; this.position.y = y; this.position.z = z; } };
-      this.rotation = { x: 0, y: 0, z: 0 };
-    }
-    add(o) { this.children.push(o); }
-    remove(o) { this.children = this.children.filter((c) => c !== o); }
-    traverse(fn) { fn(this); for (const c of this.children) c.traverse ? c.traverse(fn) : fn(c); }
-  }
-  class Mesh extends Obj3d {
-    constructor(g, m) { super(); this.geometry = g; this.material = m; this.isMesh = true; }
-  }
-  class Material {
-    constructor(o = {}) { this.color = new Color(o.color); }
-    dispose() {}
-  }
-  class Geometry { dispose() {} }
-  const T3 = {
-    Group: Obj3d, Mesh, BoxGeometry: Geometry,
-    MeshBasicMaterial: Material, Color,
-  };
-
-  const scene = { add() {}, remove() {} };
-  const mobs = new Mobs(T3, scene, world2);
-  const sea = world2.seaLevel;
-
-  // Ищем сушу и спавним кабана там
-  const spawn = world2.findSpawn();
-  const mob = mobs.add('boar', spawn.x, spawn.y, spawn.z);
-  if (!mob || mobs.list.length !== 1) return false;
-
-  // columnInfo под ним: земля
-  const info = mobs.columnInfo(spawn.x, spawn.z);
-  if (info.water || info.groundY < sea) return false;
-
-  // Попадание сверху по мобу
-  const eye = { x: spawn.x, y: spawn.y + 2, z: spawn.z + 0.01 };
-  const hitDown = mobs.tryHit(eye, { x: 0, y: -1, z: 0 }, 6);
-  if (!hitDown || hitDown.mob !== mob) return false;
-
-  // Промах в небо
-  const miss = mobs.tryHit(eye, { x: 0, y: 1, z: 0 }, 6);
-  if (miss) return false;
-
-  // Удар — испуг
-  mobs.hit(mob, { x: spawn.x, y: spawn.y, z: spawn.z + 3 }, null);
-  if (mob.flee <= 0 || mob.mode !== 'flee') return false;
-
-  // Обновление двигает кабана при испуге
-  const x0 = mob.pos.x, z0 = mob.pos.z;
-  mobs.update(0.1, { x: spawn.x, y: spawn.y, z: spawn.z + 3 }, 1);
-  const moved = Math.hypot(mob.pos.x - x0, mob.pos.z - z0) > 0.01;
-  if (!moved) return false;
-
-  // Птица летает
-  const bird = mobs.add('bird', spawn.x, spawn.y + 6, spawn.z);
-  const by0 = bird.pos.y;
-  bird.flee = 1;
-  mobs.update(0.2, spawn, 1);
-  return mobs.list.length === 2;
-})());
+// Декор непроходим и не непрозрачен
+check('decor is walk-through', isDecor(15) && !isSolid(15) && !isOpaque(15));
 
 console.log(failed === 0 ? '\nВсе проверки пройдены' : `\nПровалено проверок: ${failed}`);
 process.exit(failed ? 1 : 0);

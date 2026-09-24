@@ -17,7 +17,7 @@ export const BLOCK = {
   SNOW: 12,
   WATER: 13,
   SLATE: 14,
-  GRASS_TALL: 15,
+  TALL_GRASS: 15,
   FLOWER_RED: 16,
   FLOWER_YELLOW: 17,
 };
@@ -39,10 +39,9 @@ export const BLOCKS = [
   { id: 12, name: 'snow', solid: true, tiles: [13, 2, 14], break: 'fast' },
   { id: 13, name: 'water', solid: false, tiles: [15, 15, 15], break: 'default', liquid: true, transparent: true },
   { id: 14, name: 'slate', solid: true, tiles: [16, 16, 16], break: 'slow' },
-  // Растения: не твердые, ломаются мгновенно, ставятся как крест из плоскостей
-  { id: 15, name: 'grass_tall', solid: false, tiles: [17, 17, 17], break: 'instant', plant: true, transparent: true },
-  { id: 16, name: 'flower_red', solid: false, tiles: [18, 18, 18], break: 'instant', plant: true, transparent: true },
-  { id: 17, name: 'flower_yellow', solid: false, tiles: [19, 19, 19], break: 'instant', plant: true, transparent: true },
+  { id: 15, name: 'tall_grass', solid: false, tiles: [22, 22, 22], break: 'fast', transparent: true, decor: true },
+  { id: 16, name: 'flower_red', solid: false, tiles: [23, 23, 23], break: 'fast', transparent: true, decor: true },
+  { id: 17, name: 'flower_yellow', solid: false, tiles: [24, 24, 24], break: 'fast', transparent: true, decor: true },
 ];
 
 // Названия для UI
@@ -64,8 +63,8 @@ export const BLOCK_NAMES = {
 // Базовый набор (открыт сразу) и «набор строителя» (после рекламы за вознаграждение)
 export const STARTER_PALETTE = [BLOCK.GRASS, BLOCK.DIRT, BLOCK.STONE, BLOCK.SAND, BLOCK.LOG, BLOCK.PLANKS];
 export const BUILDER_PALETTE = [
-  BLOCK.COBBLE, BLOCK.LEAVES, BLOCK.GLASS, BLOCK.BRICK, BLOCK.GLOW,
-  BLOCK.SNOW, BLOCK.SLATE, BLOCK.GRASS_TALL, BLOCK.FLOWER_RED, BLOCK.FLOWER_YELLOW,
+  BLOCK.COBBLE, BLOCK.LEAVES, BLOCK.GLASS, BLOCK.BRICK, BLOCK.GLOW, BLOCK.SNOW, BLOCK.SLATE,
+  BLOCK.TALL_GRASS, BLOCK.FLOWER_RED, BLOCK.FLOWER_YELLOW,
 ];
 
 export function isSolid(id) {
@@ -74,14 +73,14 @@ export function isSolid(id) {
 export function isOpaque(id) {
   return id !== 0 && BLOCKS[id] && !BLOCKS[id].transparent && !BLOCKS[id].foliage;
 }
+export function isDecor(id) {
+  return !!(id !== 0 && BLOCKS[id] && BLOCKS[id].decor);
+}
 export function isFoliage(id) {
   return !!(id !== 0 && BLOCKS[id] && BLOCKS[id].foliage);
 }
 export function isLiquid(id) {
   return !!(id !== 0 && BLOCKS[id] && BLOCKS[id].liquid);
-}
-export function isPlant(id) {
-  return !!(id !== 0 && BLOCKS[id] && BLOCKS[id].plant);
 }
 export function breakKind(id) {
   return (BLOCKS[id] && BLOCKS[id].break) || 'default';

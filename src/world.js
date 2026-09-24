@@ -124,18 +124,18 @@ export class World {
       }
     }
 
-    // Трава и цветы на дёрне
+    // Декоративная трава и цветы — на травяных вершинах
     for (let z = 0; z < S; z++) {
       for (let x = 0; x < S; x++) {
         const wx = ox + x, wz = oz + z;
         const h = this.heightAt(wx, wz);
-        if (h <= SEA + 1 || h > 38) continue;
+        if (h <= SEA + 1 || h >= H - 1) continue;
         if (chunk.get(x, h, z) !== BLOCK.GRASS) continue;
         if (chunk.get(x, h + 1, z) !== BLOCK.AIR) continue;
-        const r = hash3(wx, h + 7, wz, seed + 313);
-        if (r < 0.11) chunk.set(x, h + 1, z, BLOCK.GRASS_TALL);
-        else if (r < 0.125) chunk.set(x, h + 1, z, BLOCK.FLOWER_RED);
-        else if (r < 0.14) chunk.set(x, h + 1, z, BLOCK.FLOWER_YELLOW);
+        const r = rng();
+        if (r < 0.12) chunk.set(x, h + 1, z, BLOCK.TALL_GRASS);
+        else if (r < 0.145) chunk.set(x, h + 1, z, BLOCK.FLOWER_RED);
+        else if (r < 0.165) chunk.set(x, h + 1, z, BLOCK.FLOWER_YELLOW);
       }
     }
 

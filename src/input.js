@@ -185,8 +185,7 @@ export class Input {
         this._buttons.add(action);
         if (action === 'fly') this.handlers.onToggleFly?.();
         if (action === 'place') this.handlers.onActionPlace?.();
-        // «break» — удерживаемое действие: работает через breakHeld (как ЛКМ),
-        // поэтому по нажатию ничего не делаем
+        if (action === 'break') this.handlers.onActionBreak?.();
       };
       const up = (e) => { e.preventDefault(); this._buttons.delete(action); };
       el.addEventListener('touchstart', down, { passive: false });

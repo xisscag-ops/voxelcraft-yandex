@@ -1,5 +1,5 @@
 // Меширование вокселей: только видимые грани + ambient occlusion на вершинах
-import { BLOCKS, isOpaque, isLiquid, BLOCK } from './blocks.js';
+import { BLOCKS, isOpaque, isLiquid, isDecor } from './blocks.js';
 import { tileUV } from './textures.js';
 
 // Яркость граней (классический «мультипликационный» свет)
@@ -55,25 +55,6 @@ function aoOf(side1, side2, corner) {
   return 3 - ((side1 ? 1 : 0) + (side2 ? 1 : 0) + (corner ? 1 : 0));
 }
 
-// Растения — две пересекающиеся плоскости («крест») с двусторонним обходом
-function emitPlant(builder, wx, wy, wz, tileIdx, height = 0.95) {
-  const [u0, v0, u1, v1] = tileUV(tileIdx);
-  const a = 0.0625, b = 0.9375;
-  const quads = [
-    [[a, 0, a], [b, 0, b], [b, height, b], [a, height, a]],
-    [[b, 0, a], [a, 0, b], [a, height, b], [b, height, a]],
-  ];
-  const uvs = [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
-  for (const q of quads) {
-    const vi = [];
-    for (let i = 0; i < 4; i++) {
-      vi.push(builder.vertex([wx + q[i][0], wy + q[i][1], wz + q[i][2]], uvs[i][0], uvs[i][1], 0.98));
-    }
-    builder.idx.push(vi[0], vi[1], vi[2], vi[0], vi[2], vi[3]); // лицевая
-    builder.idx.push(vi[0], vi[2], vi[1], vi[0], vi[3], vi[2]); // изнаночная
-  }
-}
-
 class MeshBuilder {
   constructor() {
     this.pos = [];
@@ -119,14 +100,14 @@ export function meshChunk(THREE, world, cx, cz) {
         const id = world.getBlock(wx, y, wz);
         if (!id) continue;
         const def = BLOCKS[id];
+        const liquid = isLiquid(id);
 
-        // Растения — отдельная геометрия-крест
-        if (def.plant) {
-          emitPlant(opaque, wx, y, wz, def.tiles[0], id === BLOCK.GRASS_TALL ? 0.95 : 1.0);
+        // Декоративная растительность — два перекрёстных спрайта
+        if (isDecor(id)) {
+          addDecorQuads(opaque, world, wx, y, wz, def);
           continue;
         }
 
-        const liquid = isLiquid(id);
         const builder = liquid ? water : opaque;
 
         for (const face of FACE_PRECOMP) {
@@ -195,6 +176,39 @@ export function meshChunk(THREE, world, cx, cz) {
   }
 
   return { opaque, water };
+}
+
+/**
+ * Крестовые спрайты декора (трава, цветы): две диагональные плоскости,
+ * каждая рисуется с двух сторон (материал односторонний).
+ */
+function addDecorQuads(builder, world, wx, y, wz, def) {
+  const [u0, v0, u1, v1] = tileUV(def.tiles[2]);
+  // Чем свободнее вокруг, тем ярче трава
+  let open = 0;
+  if (!isOpaque(world.getBlock(wx + 1, y, wz))) open++;
+  if (!isOpaque(world.getBlock(wx - 1, y, wz))) open++;
+  if (!isOpaque(world.getBlock(wx, y, wz + 1))) open++;
+  if (!isOpaque(world.getBlock(wx, y, wz - 1))) open++;
+  const shade = 0.72 + 0.07 * open;
+
+  const y0 = 0.02, y1 = 0.92, m = 0.15;
+  // Две плоскости: (m,m)-(1-m,1-m) и (1-m,m)-(m,1-m)
+  const planes = [
+    [[m, m], [1 - m, 1 - m]],
+    [[1 - m, m], [m, 1 - m]],
+  ];
+  for (const [[ax, az], [bx, bz]] of planes) {
+    const vi = [];
+    // Кольцо: нижний А, нижний Б, верхний Б, верхний А
+    vi.push(builder.vertex([wx + ax, y + y0, wz + az], u0, v0, shade));
+    vi.push(builder.vertex([wx + bx, y + y0, wz + bz], u1, v0, shade));
+    vi.push(builder.vertex([wx + bx, y + y1, wz + bz], u1, v1, shade));
+    vi.push(builder.vertex([wx + ax, y + y1, wz + az], u0, v1, shade));
+    // Обе стороны плоскости (обход/против обхода)
+    builder.idx.push(vi[0], vi[1], vi[2], vi[0], vi[2], vi[3]);
+    builder.idx.push(vi[2], vi[1], vi[0], vi[3], vi[2], vi[0]);
+  }
 }
 
 

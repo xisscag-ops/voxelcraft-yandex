@@ -82,8 +82,7 @@ export const STRINGS = {
       double-tap Space or F — fly mode, Esc — pause.<br><br>
       <b>Mobile:</b> joystick on the left, look on the right; quick tap — break a block.
       Buttons: jump, place, fly, up/down.<br><br>
-      Break and place blocks, build anything. Click a mob to scare it away.
-      Progress saves automatically.`,
+      Break and place blocks, build anything. Progress saves automatically.`,
     howto_title: 'How to play',
     pause_hint: 'Esc — pause & release mouse',
     unlocked_blocks: 'New blocks unlocked in the hotbar!',
