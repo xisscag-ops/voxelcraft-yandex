@@ -6,6 +6,18 @@ export const STRINGS = {
     play: 'Играть',
     new_world: 'Новый мир',
     continue: 'Продолжить',
+    mode_title: 'Выберите режим',
+    mode_survival: 'Выживание',
+    mode_creative: 'Креатив',
+    mode_survival_desc: 'Собирайте ресурсы, крафтите инструменты. Мобы опасны, полёта нет.',
+    mode_creative_desc: 'Бесконечные блоки, мгновенное ломание, полёт. Стройте что угодно!',
+    inv_title: 'Инвентарь',
+    inv_catalog: 'Каталог',
+    inv_recipes: 'Крафт',
+    inv_hint: 'ЛКМ — взять/положить · ПКМ — по одному',
+    inv_full: 'Инвентарь полон!',
+    reward_lock_hint: 'Эти блоки доступны после просмотра рекламы',
+    fly_locked: 'Полёт доступен только в режиме «Креатив»',
     settings: 'Настройки',
     howto: 'Как играть',
     back: 'Назад',
@@ -26,12 +38,15 @@ export const STRINGS = {
     loading: 'Генерация мира…',
     ready: 'Мир готов!',
     howto_text: `
-      <b>ПК:</b> WASD — движение, мышь — обзор, ЛКМ — сломать (удерживать), ПКМ — поставить,
-      колесо/1-9 — выбор блока, пробел — прыжок, Ctrl — бег, Shift — вниз в полёте,
-      двойной пробел или F — режим полёта, Esc — пауза.<br><br>
-      <b>Телефон:</b> слева — джойстик, справа — обзор; короткий тап — сломать блок.
-      Кнопки: прыжок, поставить, полёт, вниз/вверх.<br><br>
-      Ставьте и ломайте блоки, стройте что угодно. Прогресс сохраняется автоматически.`,
+      <b>ПК:</b> WASD — движение, мышь — обзор, ЛКМ — сломать/ударить (удерживать),
+      ПКМ — поставить, E — инвентарь, колесо/1-9 — выбор слота, пробел — прыжок,
+      Ctrl — бег, F — съесть яблоко, двойной пробел — полёт (только креатив), Esc — пауза.<br><br>
+      <b>Телефон:</b> слева — джойстик, справа — обзор; тап — сломать/ударить.
+      Кнопки: прыжок, поставить, полёт, инвентарь 🎒 (в инвентаре: тап — взять,
+      долгое нажатие — по одному).<br><br>
+      <b>Выживание:</b> сломанные блоки падают в инвентарь (трава → земля, камень → булыжник),
+      крафтите инструменты в окне инвентаря (E). <b>Креатив:</b> бесконечные блоки,
+      ломание ~0.1 с, полёт, бессмертие. Прогресс сохраняется автоматически.`,
     howto_title: 'Как играть',
     pause_hint: 'Esc — пауза и освобождение мыши',
     unlocked_blocks: 'Открыты новые блоки в панели!',
@@ -50,6 +65,7 @@ export const STRINGS = {
     hint_break: 'Удерживайте ЛКМ, чтобы сломать блок',
     hint_place: 'ПКМ — поставить блок',
     hint_fly: 'Дважды пробел — полёт',
+    hint_inv: 'E — инвентарь и крафт, F — съесть яблоко',
     to_spawn: 'К спавну',
     to_spawn_ok: 'Вы у дома!',
     rain_start: 'Пошёл дождь…',
@@ -68,6 +84,18 @@ export const STRINGS = {
     play: 'Play',
     new_world: 'New world',
     continue: 'Continue',
+    mode_title: 'Choose a mode',
+    mode_survival: 'Survival',
+    mode_creative: 'Creative',
+    mode_survival_desc: 'Gather resources, craft tools. Mobs are dangerous, no flight.',
+    mode_creative_desc: 'Infinite blocks, instant breaking, flight. Build anything!',
+    inv_title: 'Inventory',
+    inv_catalog: 'Catalog',
+    inv_recipes: 'Crafting',
+    inv_hint: 'LMB — take/place · RMB — one by one',
+    inv_full: 'Inventory is full!',
+    reward_lock_hint: 'These blocks unlock after watching an ad',
+    fly_locked: 'Flight is available in Creative mode only',
     settings: 'Settings',
     howto: 'How to play',
     back: 'Back',
@@ -88,12 +116,14 @@ export const STRINGS = {
     loading: 'Generating world…',
     ready: 'World ready!',
     howto_text: `
-      <b>Desktop:</b> WASD — move, mouse — look, LMB — break (hold), RMB — place,
-      wheel/1-9 — pick block, Space — jump, Ctrl — sprint, Shift — down while flying,
-      double-tap Space or F — fly mode, Esc — pause.<br><br>
-      <b>Mobile:</b> joystick on the left, look on the right; quick tap — break a block.
-      Buttons: jump, place, fly, up/down.<br><br>
-      Break and place blocks, build anything. Progress saves automatically.`,
+      <b>Desktop:</b> WASD — move, mouse — look, LMB — break/attack (hold), RMB — place,
+      E — inventory, wheel/1-9 — pick slot, Space — jump, Ctrl — sprint, F — eat an apple,
+      double-tap Space — fly (creative only), Esc — pause.<br><br>
+      <b>Mobile:</b> joystick on the left, look on the right; tap — break/attack.
+      Buttons: jump, place, fly, inventory 🎒 (in inventory: tap — take, hold — one by one).<br><br>
+      <b>Survival:</b> broken blocks drop into your inventory (grass → dirt, stone → cobble),
+      craft tools in the inventory window (E). <b>Creative:</b> infinite blocks, ~0.1 s
+      breaking, flight, immortality. Progress saves automatically.`,
     howto_title: 'How to play',
     pause_hint: 'Esc — pause & release mouse',
     unlocked_blocks: 'New blocks unlocked in the hotbar!',
@@ -112,6 +142,7 @@ export const STRINGS = {
     hint_break: 'Hold LMB to break a block',
     hint_place: 'RMB — place a block',
     hint_fly: 'Double-tap Space to fly',
+    hint_inv: 'E — inventory & crafting, F — eat an apple',
     to_spawn: 'To spawn',
     to_spawn_ok: 'Welcome home!',
     rain_start: 'It starts raining…',

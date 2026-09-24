@@ -2,7 +2,9 @@
 import { World } from './src/world.js';
 import { meshChunk } from './src/mesher.js';
 import { raycastVoxel } from './src/raycast.js';
-import { isSolid, isOpaque, isDecor } from './src/blocks.js';
+import { isSolid, isOpaque, isDecor, BLOCK } from './src/blocks.js';
+import { Inventory, ITEM, maxStack, dropFor, breakMult, defaultMode } from './src/inventory.js';
+import { RECIPES, canCraft, craft } from './src/crafting.js';
 
 // Заглушка THREE — достаточно для toGeometry
 const calls = { geom: 0, verts: 0, idx: 0 };
@@ -147,9 +149,113 @@ check('decor meshed as cross quads', (() => {
 // Декор непроходим и не непрозрачен
 check('decor is walk-through', isDecor(15) && !isSolid(15) && !isOpaque(15));
 
-// Разметка: кнопка «К спавну» и слой молний
+// ---- Инвентарь ----
+{
+  check('inv: stack up to 64', (() => {
+    const t = new Inventory();
+    t.add(2, 40);
+    t.add(2, 24);
+    return t.count(2) === 64 && t.slots.filter((s) => s && s.id === 2).length === 1;
+  })());
+  check('inv: overflow goes to 2nd slot', (() => {
+    const t = new Inventory();
+    t.add(2, 64);
+    t.add(2, 30);
+    return t.slots.filter((s) => s && s.id === 2).length === 2 && t.count(2) === 94;
+  })());
+  check('inv: tools cannot stack in one slot', (() => {
+    const t = new Inventory();
+    t.add(ITEM.WOOD_PICK);
+    t.add(ITEM.WOOD_PICK);
+    return t.slots.filter((s) => s && s.id === ITEM.WOOD_PICK).every((s) => s.n === 1)
+      && t.slots.filter((s) => s && s.id === ITEM.WOOD_PICK).length === 2;
+  })());
+  check('inv: remove across stacks', (() => {
+    const t = new Inventory();
+    t.add(2, 64);
+    t.add(2, 30);
+    t.remove(2, 65);
+    return t.count(2) === 29;
+  })());
+  check('inv: serialize/load roundtrip', (() => {
+    const a = new Inventory();
+    a.add(6, 5); a.add(ITEM.STICK, 10); a.add(ITEM.WOOD_SWORD);
+    const b = new Inventory();
+    b.load(a.serialize());
+    return b.count(6) === 5 && b.count(ITEM.STICK) === 10 && b.count(ITEM.WOOD_SWORD) === 1;
+  })());
+  check('inv: full inventory rejects', (() => {
+    const t = new Inventory(2);
+    t.add(ITEM.WOOD_PICK);
+    t.add(ITEM.STONE_PICK);
+    return t.add(ITEM.STONE_PICK) === false;
+  })());
+  check('maxStack: blocks 64, tools 1', maxStack(2) === 64 && maxStack(ITEM.WOOD_PICK) === 1 && maxStack(ITEM.APPLE) === 64);
+}
+
+// ---- Дропы выживания ----
+check('drop: grass -> dirt', dropFor(BLOCK.GRASS) === BLOCK.DIRT);
+check('drop: stone -> cobble', dropFor(BLOCK.STONE) === BLOCK.COBBLE);
+check('drop: glass -> nothing', dropFor(BLOCK.GLASS) === null);
+check('drop: leaves sometimes -> leaves', (() => {
+  let got = 0;
+  for (let i = 0; i < 300; i++) if (dropFor(BLOCK.LEAVES) === BLOCK.LEAVES) got++;
+  return got > 0 && got < 300;
+})());
+check('drop: other blocks drop themselves', dropFor(BLOCK.SAND) === BLOCK.SAND && dropFor(BLOCK.BRICK) === BLOCK.BRICK);
+
+// ---- Инструменты: множители ломания ----
+check('tool: stone no pick x2.6', breakMult(null, BLOCK.STONE) === 2.6);
+check('tool: stone wood pick x0.85', breakMult(ITEM.WOOD_PICK, BLOCK.STONE) === 0.85);
+check('tool: stone stone pick x0.55', breakMult(ITEM.STONE_PICK, BLOCK.STONE) === 0.55);
+check('tool: log axe x0.5', breakMult(ITEM.WOOD_AXE, BLOCK.LOG) === 0.5);
+check('tool: log no axe x1.6', breakMult(null, BLOCK.LOG) === 1.6);
+check('tool: sword gives no speed', breakMult(ITEM.STONE_SWORD, BLOCK.LOG) === 1.6);
+check('tool: dirt unaffected', breakMult(ITEM.STONE_PICK, BLOCK.DIRT) === 1);
+
+// ---- Режим по сохранению ----
+check('mode: old save (no mode) -> creative', defaultMode({ v: 1 }) === 'creative');
+check('mode: survival kept', defaultMode({ mode: 'survival' }) === 'survival');
+check('mode: creative kept', defaultMode({ mode: 'creative' }) === 'creative');
+check('mode: null save -> creative', defaultMode(null) === 'creative');
+
+// ---- Крафт ----
+{
+  const inv = new Inventory();
+  const planks = RECIPES.find((r) => r.out.id === BLOCK.PLANKS);
+  const sticks = RECIPES.find((r) => r.out.id === ITEM.STICK);
+  const woodPick = RECIPES.find((r) => r.out.id === ITEM.WOOD_PICK);
+  const stonePick = RECIPES.find((r) => r.out.id === ITEM.STONE_PICK);
+  const glow = RECIPES.find((r) => r.out.id === BLOCK.GLOW);
+  check('craft: recipe list complete', RECIPES.length === 13);
+  check('craft: locked without mats', !canCraft(inv, planks));
+  inv.add(BLOCK.LOG, 1);
+  check('craft: log -> 4 planks', canCraft(inv, planks) && craft(inv, planks)
+    && inv.count(BLOCK.PLANKS) === 4 && inv.count(BLOCK.LOG) === 0);
+  check('craft: 2 planks -> 4 sticks', craft(inv, sticks) && inv.count(ITEM.STICK) === 4 && inv.count(BLOCK.PLANKS) === 2);
+  inv.add(BLOCK.PLANKS, 3);
+  check('craft: 3 planks + 2 sticks -> wood pick', craft(inv, woodPick) && inv.count(ITEM.WOOD_PICK) === 1);
+  inv.add(BLOCK.COBBLE, 3);
+  check('craft: 3 cobble + 2 sticks -> stone pick', craft(inv, stonePick) && inv.count(ITEM.STONE_PICK) === 1);
+  inv.add(BLOCK.COBBLE, 1); inv.add(BLOCK.LEAVES, 1); inv.add(ITEM.STICK, 1);
+  check('craft: cobble + stick + leaves -> 2 glow', craft(inv, glow) && inv.count(BLOCK.GLOW) === 2);
+  check('craft: not twice without mats', !canCraft(inv, glow));
+  // Крафт при полном инвентаре не должен терять ингредиенты
+  const tiny = new Inventory(1);
+  tiny.add(BLOCK.LOG, 64);
+  const r2 = { out: { id: BLOCK.PLANKS, n: 4 }, in: [{ id: BLOCK.LOG, n: 1 }] };
+  check('craft: full inv keeps materials', craft(tiny, r2) === false && tiny.count(BLOCK.LOG) === 64);
+}
+
+// Разметка: кнопка «К спавну», слой молний, экраны режимов и инвентарь
 const html = await (await import('node:fs/promises')).readFile(new URL('./index.html', import.meta.url), 'utf8');
 check('btn-home + lightning in markup', html.includes('id="btn-home"') && html.includes('id="lightning"'));
+check('mode screen + buttons in markup', html.includes('id="mode-screen"')
+  && html.includes('id="btn-mode-survival"') && html.includes('id="btn-mode-creative"')
+  && html.includes('id="btn-mode-back"'));
+check('inventory screen in markup', html.includes('id="inventory-screen"')
+  && html.includes('id="inv-grid"') && html.includes('id="inv-list"') && html.includes('id="item-cursor"'));
+check('mobile inventory button', html.includes('id="btn-inventory"'));
 
 console.log(failed === 0 ? '\nВсе проверки пройдены' : `\nПровалено проверок: ${failed}`);
 process.exit(failed ? 1 : 0);

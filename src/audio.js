@@ -189,9 +189,10 @@ export class Sfx {
   }
 
   hurt() {
-    // Боль: короткий низкий стон
-    this._tone({ freq: 190, dur: 0.2, gain: 0.16, type: 'sawtooth', slide: -70 });
-    this._burst({ freq: 320, dur: 0.1, gain: 0.14, pitchDrop: 0.5 });
+    // Боль: заметный удар + низкий стон
+    this._tone({ freq: 160, dur: 0.22, gain: 0.34, type: 'sawtooth', slide: -80 });
+    this._tone({ freq: 75, dur: 0.18, gain: 0.3, type: 'sine', slide: -25 });
+    this._burst({ freq: 300, dur: 0.12, gain: 0.24, pitchDrop: 0.5 });
   }
 
   die() {
@@ -202,6 +203,12 @@ export class Sfx {
 
   hitMob() {
     this._burst({ freq: 520, dur: 0.08, gain: 0.3, pitchDrop: 0.5 });
+  }
+
+  // Писк моба при ударе (vol затухает с расстоянием)
+  mobHurt(vol = 1) {
+    this._tone({ freq: 1000, dur: 0.16, gain: 0.14 * vol, type: 'square', slide: -550 });
+    this._burst({ freq: 1900, dur: 0.09, gain: 0.09 * vol, type: 'bandpass', q: 3, pitchDrop: 0.5 });
   }
 
   mobDie() {

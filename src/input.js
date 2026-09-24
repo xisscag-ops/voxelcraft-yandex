@@ -12,6 +12,7 @@ export class Input {
     this.handlers = {
       onToggleFly: null, onDigit: null, onScroll: null, onPause: null,
       onActionBreak: null, onActionPlace: null,
+      onInventory: null, onEat: null,
     };
     this._flyTapT = 0;
     this._swallowLook = 0;
@@ -87,7 +88,8 @@ export class Input {
       if (e.repeat) return;
       this.keys.add(e.code);
       if (e.code === 'Escape') this.handlers.onPause?.();
-      if (e.code === 'KeyF') this.handlers.onToggleFly?.();
+      if (e.code === 'KeyF') this.handlers.onEat?.();        // F — съесть яблоко (не полёт)
+      if (e.code === 'KeyE') this.handlers.onInventory?.();  // E — инвентарь
       if (e.code === 'F1') e.preventDefault();
       if (e.code.startsWith('Digit')) {
         const n = Number(e.code.slice(5));
@@ -237,6 +239,8 @@ export class Input {
       if (!el) continue;
       const down = (e) => {
         e.preventDefault();
+        // Жест не должен «просочиться» в обзор (иначе тап по кнопке ломал блок)
+        e.stopPropagation();
         this._buttons.add(action);
         if (action === 'fly') this.handlers.onToggleFly?.();
         if (action === 'place') this.handlers.onActionPlace?.();
