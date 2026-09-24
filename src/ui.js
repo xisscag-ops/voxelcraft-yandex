@@ -8,6 +8,7 @@ export class UI {
     this.handlers = {
       onPlay: null, onResume: null, onSaveQuit: null, onNewWorld: null,
       onSettingsChange: null, onReward: null, onSlot: null, onPauseBtn: null,
+      onToSpawn: null,
     };
     this._screens = ['loading-screen', 'menu-screen', 'pause-screen', 'howto-screen', 'settings-screen'];
     this._bind();
@@ -31,6 +32,7 @@ export class UI {
     click('btn-howto-back', () => this.showScreen(this._lastMain || 'menu-screen'));
     click('btn-reward', () => this.handlers.onReward?.());
     click('btn-reward2', () => this.handlers.onReward?.());
+    click('btn-home', () => this.handlers.onToSpawn?.());
     click('btn-pause-hud', () => this.handlers.onPauseBtn?.());
 
     // Настройки
@@ -179,7 +181,12 @@ export class UI {
     if (!visible) return;
     el.textContent =
       `FPS: ${fps.toFixed(0)}  |  XYZ: ${pos.x.toFixed(1)} / ${pos.y.toFixed(1)} / ${pos.z.toFixed(1)}` +
-      `  |  ${light > 0.5 ? this.i18n.t('day') : this.i18n.t('night')}`;
+      `  |  ${light > 0.5 ? this.i18n.t('day') : this.i18n.t('night')}` +
+      (this._built != null ? `  |  ${this.i18n.t('blocks_built')}: ${this._built}` : '');
+  }
+
+  setBlocksBuilt(n) {
+    this._built = n;
   }
 
   setUnderwater(on) {
@@ -201,5 +208,13 @@ export class UI {
 
   showAdOverlay(on) {
     document.getElementById('ad-overlay')?.classList.toggle('hidden', !on);
+  }
+
+  flashLightning() {
+    const el = document.getElementById('lightning');
+    if (!el) return;
+    el.classList.remove('flash');
+    void el.offsetWidth; // рестарт анимации
+    el.classList.add('flash');
   }
 }

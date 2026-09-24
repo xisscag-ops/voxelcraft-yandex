@@ -130,8 +130,12 @@ export class Ysdk {
     }
   }
 
-  // Лучшие результаты / геймплей-достижения (необязательно, безопасно)
+  // Лучшие результаты / достижения (безопасно: без настроенного лидерборда молча пропускает)
   setStats(map) {
-    try { this.ysdk?.getLeaderboards?.().then((lb) => lb.setLeaderboardScore('blocks', map.blocks || 0)).catch(() => {}); } catch (e) { /* noop */ }
+    try {
+      this.ysdk?.getLeaderboards?.()
+        .then((lb) => lb.setLeaderboardScore('blocks_built', map.blocksBuilt || 0))
+        .catch(() => {});
+    } catch (e) { /* noop */ }
   }
 }

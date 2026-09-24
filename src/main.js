@@ -9,6 +9,7 @@ import { MobManager } from './mobs.js';
 import { Player } from './physics.js';
 import { raycastVoxel } from './raycast.js';
 import { Particles } from './particles.js';
+import { Weather } from './weather.js';
 import { Sky } from './sky.js';
 import { Sfx } from './audio.js';
 import { Input } from './input.js';
@@ -66,6 +67,7 @@ const sky = new Sky(THREE, scene);
 sky.viewDistance = settings.viewDistance;
 const particles = new Particles(THREE, scene);
 const mobManager = new MobManager(scene, null);
+const weather = new Weather(THREE, scene);
 // Звуки мобов с затуханием по расстоянию
 mobManager.onSound = (kind, dist) => {
   const vol = 1 / (1 + dist * 0.35);
@@ -73,6 +75,10 @@ mobManager.onSound = (kind, dist) => {
   else if (kind === 'bleat') sfx.bleat(vol);
   else if (kind === 'chirp') sfx.chirp(vol);
 };
+
+// Счётчик построенных блоков (лидерборд Яндекса)
+let blocksBuilt = 0;
+let cricketsT = 3;
 
 // Контур выбранного блока
 const highlight = new THREE.LineSegments(
@@ -238,6 +244,9 @@ function doPlace(hit) {
   if (world.setBlock(x, y, z, id)) {
     sfx.place();
     particles.burst(x, y, z, tileColor(BLOCKS[id].tiles[0]), 5);
+    blocksBuilt++;
+    ui.setBlocksBuilt(blocksBuilt);
+    ysdk.setStats({ blocksBuilt });
   }
 }
 
@@ -249,6 +258,7 @@ function buildSave() {
     edits: world.serializeEdits(),
     player: player.serialize(),
     time: sky.serialize(),
+    blocksBuilt,
     paletteUnlocked: settings.paletteUnlocked,
     settings: {
       volume: settings.volume,
@@ -360,6 +370,8 @@ async function startWorld(newWorld = false) {
   if (data) {
     world.loadEdits(data.edits || []);
     settings.paletteUnlocked = !!data.paletteUnlocked;
+    blocksBuilt = data.blocksBuilt || 0;
+    ui.setBlocksBuilt(blocksBuilt);
     if (data.settings) {
       settings.volume = data.settings.volume ?? settings.volume;
       settings.sound = data.settings.sound !== false;
@@ -426,6 +438,14 @@ ui.handlers.onSlot = (i) => {
   sfx.uiClick();
 };
 ui.handlers.onPauseBtn = () => pauseGame();
+ui.handlers.onToSpawn = () => {
+  if (!world || !player) return;
+  const spawn = world.findSpawn();
+  player.pos.x = spawn.x; player.pos.y = spawn.y; player.pos.z = spawn.z;
+  player.vel = { x: 0, y: 0, z: 0 };
+  sfx.uiOk();
+  ui.toast(i18n.t('to_spawn_ok'));
+};
 ui.handlers.onSettingsChange = (delta) => {
   Object.assign(settings, delta);
   if (delta.volume != null) sfx.setVolume(settings.sound ? delta.volume : 0);
@@ -617,13 +637,29 @@ function frame() {
     camera.rotation.y = player.yaw;
     camera.rotation.x = player.pitch;
 
-    // Небо, свет, вода
+    // Небо, свет, вода, погода
     sky.update(dt, player.pos);
-    const L = sky.lightLevel;
+    const flash = weather.update(dt, player.pos, world, sky.lightLevel, {
+      onFlash: () => ui.flashLightning(),
+      onThunder: () => sfx.thunder(),
+      onChange: (st) => {
+        ui.toast(i18n.t(st === 'rain' ? 'rain_start' : 'rain_stop'));
+        sfx.setRainLevel(st === 'rain' ? 1 : 0);
+      },
+    });
+    sfx.setRainLevel(weather.wetness);
+    const L = Math.min(1, sky.lightLevel + flash * 0.7);
     terrainMat.color.setScalar(0.28 + 0.72 * L);
     waterMat.color.setScalar(0.3 + 0.7 * L);
     mobManager.setLight(L);
     mobManager.update(dt, player.pos, true);
+
+    // Сверчки по ночам в ясную погоду
+    cricketsT -= dt;
+    if (cricketsT <= 0) {
+      cricketsT = 2 + Math.random() * 4;
+      if (sky.lightLevel < 0.35 && weather.wetness < 0.05) sfx.cricket();
+    }
     ui.setUnderwater(player.headInWater);
     if (player.headInWater) {
       scene.fog.near = 2; scene.fog.far = 18;
@@ -648,6 +684,8 @@ function frame() {
     waterMat.color.setScalar(0.3 + 0.7 * L);
     mobManager.setLight(L);
     mobManager.update(dt * 0.5, player.pos, false);
+    if (world) weather.update(dt * 0.5, player.pos, world, L, {});
+    sfx.setRainLevel(weather.wetness);
   }
 
   renderer.render(scene, camera);
@@ -714,4 +752,5 @@ window.VoxelCraft = {
   get renderer() { return renderer; },
   get camera() { return camera; },
   get mobs() { return mobManager; },
+  get weather() { return weather; },
 };

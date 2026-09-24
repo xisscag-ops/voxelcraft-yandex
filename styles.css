@@ -317,6 +317,23 @@ html, body {
   50% { transform: rotate(90deg); }
 }
 
+/* ---------- Вспышка молнии ---------- */
+#lightning {
+  position: fixed; inset: 0;
+  background: linear-gradient(180deg, rgba(230, 240, 255, 0.95), rgba(180, 205, 255, 0.55));
+  opacity: 0;
+  pointer-events: none;
+  z-index: 8;
+}
+#lightning.flash { animation: lightning 0.35s ease-out; }
+@keyframes lightning {
+  0% { opacity: 0; }
+  15% { opacity: 1; }
+  35% { opacity: 0.15; }
+  55% { opacity: 0.8; }
+  100% { opacity: 0; }
+}
+
 /* ---------- Адаптив ---------- */
 @media (max-width: 760px) {
   .logo { font-size: 32px; }

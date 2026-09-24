@@ -142,4 +142,49 @@ export class Sfx {
     this._tone({ freq: 1850, dur: 0.07, gain: 0.035 * vol, type: 'sine', slide: 650 });
     setTimeout(() => this._tone({ freq: 2100, dur: 0.05, gain: 0.03 * vol, type: 'sine', slide: 400 }), 90);
   }
+
+  // ---- Погода и амбиент ----
+  startRainLoop() {
+    if (!this.enabled || !this._ensure() || this._rainGain) return;
+    const src = this.ctx.createBufferSource();
+    src.buffer = this._noiseBuf;
+    src.loop = true;
+    const filt = this.ctx.createBiquadFilter();
+    filt.type = 'lowpass';
+    filt.frequency.value = 1400;
+    const g = this.ctx.createGain();
+    g.gain.value = 0.0001;
+    src.connect(filt); filt.connect(g); g.connect(this.master);
+    src.start(0, Math.random() * 0.5);
+    g.gain.linearRampToValueAtTime(0.11, this.ctx.currentTime + 1.5);
+    this._rainGain = g;
+    this._rainSrc = src;
+  }
+
+  stopRainLoop() {
+    if (!this._rainGain) return;
+    const g = this._rainGain, s = this._rainSrc;
+    this._rainGain = null; this._rainSrc = null;
+    g.gain.linearRampToValueAtTime(0.0001, this.ctx.currentTime + 1.2);
+    setTimeout(() => { try { s.stop(); } catch (e) { /* noop */ } }, 1400);
+  }
+
+  setRainLevel(v) {
+    if (v > 0.02) this.startRainLoop();
+    else this.stopRainLoop();
+    if (this._rainGain) this._rainGain.gain.linearRampToValueAtTime(0.001 + 0.12 * v, this.ctx.currentTime + 0.3);
+  }
+
+  thunder() {
+    // Низкий раскатистый гром
+    this._burst({ freq: 90, dur: 1.6, gain: 0.5, type: 'lowpass', pitchDrop: 0.5 });
+    this._burst({ freq: 220, dur: 0.7, gain: 0.18, pitchDrop: 0.4 });
+  }
+
+  cricket(vol = 0.35) {
+    // Короткий треск сверчка — пара писков
+    this._tone({ freq: 4200, dur: 0.04, gain: 0.015 * vol, type: 'triangle' });
+    setTimeout(() => this._tone({ freq: 4400, dur: 0.04, gain: 0.015 * vol, type: 'triangle' }), 70);
+    setTimeout(() => this._tone({ freq: 4300, dur: 0.04, gain: 0.012 * vol, type: 'triangle' }), 140);
+  }
 }

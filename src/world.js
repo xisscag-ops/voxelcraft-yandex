@@ -57,7 +57,7 @@ export class World {
     const mt = fbm2d(wx * 0.0025, wz * 0.0025, seed + 77, 2);      // горы
     // tanh расширяет «кучу» значений около 0.5 — рельеф контрастнее
     const c = Math.tanh((cont - 0.5) * 5);
-    let h = SEA + 2 + c * 14 + (hills - 0.5) * 10;
+    let h = SEA + 3 + c * 18 + (hills - 0.5) * 12;
     const mountain = Math.max(0, mt - 0.52) / 0.48;
     h += mountain * mountain * 26;
     return Math.max(3, Math.min(H - 6, Math.round(h)));
@@ -81,13 +81,13 @@ export class World {
           } else if (y === h) {
             if (h <= SEA) b = BLOCK.SAND;
             else if (h <= SEA + 1) b = BLOCK.SAND;
-            else if (h > 40 || (cold && h > 34)) b = BLOCK.SNOW;
+            else if (h > 36 || (cold && h > 32)) b = BLOCK.SNOW;
             else b = BLOCK.GRASS;
             // Пляжи чуть шире
             if (h <= SEA + 2 && h > SEA) b = BLOCK.SAND;
           } else if (y >= h - 3) {
             b = (h <= SEA + 1) ? BLOCK.SAND : BLOCK.DIRT;
-            if (y === h && h > 40) b = BLOCK.SNOW;
+            if (y === h && h > 36) b = BLOCK.SNOW;
           } else {
             b = y < 4 ? BLOCK.SLATE : BLOCK.STONE;
           }
@@ -103,7 +103,7 @@ export class World {
       const tx = 3 + ((rng() * (S - 6)) | 0);
       const tz = 3 + ((rng() * (S - 6)) | 0);
       const th = this.heightAt(ox + tx, oz + tz);
-      if (th <= SEA + 1 || th > 38) continue;
+      if (th <= SEA + 1 || th > 36) continue;
       if (chunk.get(tx, th, tz) !== BLOCK.GRASS) continue;
       const trunkH = 4 + ((rng() * 3) | 0);
       // Крона

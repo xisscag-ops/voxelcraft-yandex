@@ -147,5 +147,9 @@ check('decor meshed as cross quads', (() => {
 // Декор непроходим и не непрозрачен
 check('decor is walk-through', isDecor(15) && !isSolid(15) && !isOpaque(15));
 
+// Разметка: кнопка «К спавну» и слой молний
+const html = await (await import('node:fs/promises')).readFile(new URL('./index.html', import.meta.url), 'utf8');
+check('btn-home + lightning in markup', html.includes('id="btn-home"') && html.includes('id="lightning"'));
+
 console.log(failed === 0 ? '\nВсе проверки пройдены' : `\nПровалено проверок: ${failed}`);
 process.exit(failed ? 1 : 0);

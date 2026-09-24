@@ -50,6 +50,11 @@ export const STRINGS = {
     hint_break: 'Удерживайте ЛКМ, чтобы сломать блок',
     hint_place: 'ПКМ — поставить блок',
     hint_fly: 'Дважды пробел — полёт',
+    to_spawn: 'К спавну',
+    to_spawn_ok: 'Вы у дома!',
+    rain_start: 'Пошёл дождь…',
+    rain_stop: 'Небо проясняется',
+    blocks_built: 'Построено блоков',
   },
   en: {
     title: 'VoxelCraft',
@@ -101,6 +106,11 @@ export const STRINGS = {
     hint_break: 'Hold LMB to break a block',
     hint_place: 'RMB — place a block',
     hint_fly: 'Double-tap Space to fly',
+    to_spawn: 'To spawn',
+    to_spawn_ok: 'Welcome home!',
+    rain_start: 'It starts raining…',
+    rain_stop: 'The sky clears up',
+    blocks_built: 'Blocks built',
   },
 };
 
