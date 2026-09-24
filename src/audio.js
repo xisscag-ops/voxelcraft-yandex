@@ -109,6 +109,14 @@ export class Sfx {
   jump() { this._tone({ freq: 260, dur: 0.08, gain: 0.05, type: 'sine', slide: 120 }); }
   land() { this._burst({ freq: 250, dur: 0.09, gain: 0.2, pitchDrop: 0.4 }); }
   splash() { this._burst({ freq: 1100, dur: 0.25, gain: 0.3, type: 'bandpass', q: 1.5, pitchDrop: 0.3 }); }
+  squeak() {
+    this._tone({ freq: 340, dur: 0.09, gain: 0.12, type: 'square', slide: -100 });
+    setTimeout(() => this._tone({ freq: 260, dur: 0.1, gain: 0.1, type: 'square', slide: -60 }), 90);
+  }
+  chirp() {
+    this._tone({ freq: 1900, dur: 0.06, gain: 0.06, type: 'sine', slide: 700 });
+    setTimeout(() => this._tone({ freq: 2300, dur: 0.05, gain: 0.05, type: 'sine', slide: 500 }), 70);
+  }
   uiClick() { this._tone({ freq: 700, dur: 0.05, gain: 0.08, type: 'square' }); }
   uiOk() { this._tone({ freq: 520, dur: 0.08, gain: 0.08, type: 'square', slide: 200 }); }
   reward() {

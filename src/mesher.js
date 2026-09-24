@@ -1,5 +1,5 @@
 // Меширование вокселей: только видимые грани + ambient occlusion на вершинах
-import { BLOCKS, isOpaque, isLiquid } from './blocks.js';
+import { BLOCKS, isOpaque, isLiquid, BLOCK } from './blocks.js';
 import { tileUV } from './textures.js';
 
 // Яркость граней (классический «мультипликационный» свет)
@@ -55,6 +55,25 @@ function aoOf(side1, side2, corner) {
   return 3 - ((side1 ? 1 : 0) + (side2 ? 1 : 0) + (corner ? 1 : 0));
 }
 
+// Растения — две пересекающиеся плоскости («крест») с двусторонним обходом
+function emitPlant(builder, wx, wy, wz, tileIdx, height = 0.95) {
+  const [u0, v0, u1, v1] = tileUV(tileIdx);
+  const a = 0.0625, b = 0.9375;
+  const quads = [
+    [[a, 0, a], [b, 0, b], [b, height, b], [a, height, a]],
+    [[b, 0, a], [a, 0, b], [a, height, b], [b, height, a]],
+  ];
+  const uvs = [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
+  for (const q of quads) {
+    const vi = [];
+    for (let i = 0; i < 4; i++) {
+      vi.push(builder.vertex([wx + q[i][0], wy + q[i][1], wz + q[i][2]], uvs[i][0], uvs[i][1], 0.98));
+    }
+    builder.idx.push(vi[0], vi[1], vi[2], vi[0], vi[2], vi[3]); // лицевая
+    builder.idx.push(vi[0], vi[2], vi[1], vi[0], vi[3], vi[2]); // изнаночная
+  }
+}
+
 class MeshBuilder {
   constructor() {
     this.pos = [];
@@ -100,6 +119,13 @@ export function meshChunk(THREE, world, cx, cz) {
         const id = world.getBlock(wx, y, wz);
         if (!id) continue;
         const def = BLOCKS[id];
+
+        // Растения — отдельная геометрия-крест
+        if (def.plant) {
+          emitPlant(opaque, wx, y, wz, def.tiles[0], id === BLOCK.GRASS_TALL ? 0.95 : 1.0);
+          continue;
+        }
+
         const liquid = isLiquid(id);
         const builder = liquid ? water : opaque;
 

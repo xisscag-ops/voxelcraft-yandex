@@ -1,8 +1,8 @@
 // VoxelCraft — точка входа: игровой цикл, чанки, строительство, сохранения
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
-import { BLOCK, BLOCKS, STARTER_PALETTE, BUILDER_PALETTE, breakKind, isSolid } from './blocks.js';
-import { buildAtlas, tileColor } from './textures.js';
+import { BLOCK, BLOCKS, STARTER_PALETTE, BUILDER_PALETTE, breakKind, isSolid, isPlant } from './blocks.js';
+import { buildAtlas, buildCrackStages, tileColor } from './textures.js';
 import { World } from './world.js';
 import { meshChunk } from './mesher.js';
 import { Player } from './physics.js';
@@ -14,6 +14,7 @@ import { Input } from './input.js';
 import { UI } from './ui.js';
 import { I18n } from './i18n.js';
 import { Ysdk } from './ysdk.js';
+import { Mobs } from './mobs.js';
 
 // ---------------------------------------------------------------- Инициализация
 const i18n = new I18n('ru');
@@ -64,6 +65,7 @@ const waterMat = new THREE.MeshBasicMaterial({
 const sky = new Sky(THREE, scene);
 sky.viewDistance = settings.viewDistance;
 const particles = new Particles(THREE, scene);
+let mobs = null; // создаётся вместе с миром
 
 // Контур выбранного блока
 const highlight = new THREE.LineSegments(
@@ -72,6 +74,22 @@ const highlight = new THREE.LineSegments(
 );
 highlight.visible = false;
 scene.add(highlight);
+
+// Анимация ломания: оверлей с трещинами (5 стадий)
+const crackMats = buildCrackStages(5).map((canvas) => {
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  return new THREE.MeshBasicMaterial({
+    map: tex, transparent: true, depthWrite: false,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+  });
+});
+const crackMesh = new THREE.Mesh(new THREE.BoxGeometry(1.006, 1.006, 1.006), crackMats[0]);
+crackMesh.visible = false;
+crackMesh.renderOrder = 2;
+scene.add(crackMesh);
 
 function resize() {
   const w = window.innerWidth, h = window.innerHeight;
@@ -172,11 +190,45 @@ function rebuildPalette() {
 let breakTarget = null;
 let breakProgress = 0;
 let placeCooldown = 0;
+let mobHoldBlock = false;   // клик пришёлся по мобу — не ломаем блок
+let digTickAcc = 0;
+let breakWasHeld = false;
 
 function pickTarget() {
   const eye = player.eyePos();
   const d = player.lookDir();
   return raycastVoxel(world, eye.x, eye.y, eye.z, d.x, d.y, d.z, CONFIG.REACH);
+}
+
+// Моб перед блоком? (возвращает попадание по мобу ближе блока)
+function pickMob() {
+  if (!mobs) return null;
+  const eye = player.eyePos();
+  const d = player.lookDir();
+  const mobHit = mobs.tryHit(eye, d, CONFIG.REACH);
+  if (!mobHit) return null;
+  const blockHit = pickTarget();
+  if (blockHit) {
+    const bdx = blockHit.x + 0.5 - eye.x, bdy = blockHit.y + 0.5 - eye.y, bdz = blockHit.z + 0.5 - eye.z;
+    const blockDist = Math.sqrt(bdx * bdx + bdy * bdy + bdz * bdz);
+    if (mobHit.dist > blockDist + 0.4) return null;
+  }
+  return mobHit;
+}
+
+function hitMob(mobHit) {
+  mobs.hit(mobHit.mob, player.pos, sfx);
+  particles.burst(mobHit.mob.pos.x, mobHit.mob.pos.y, mobHit.mob.pos.z, [230, 210, 200], 6);
+}
+
+function tryActionBreak() {
+  // Тап (мобильный / одиночное действие): сначала моб, потом мгновенный слом
+  const mobHit = pickMob();
+  if (mobHit) {
+    hitMob(mobHit);
+    return;
+  }
+  doBreak(pickTarget());
 }
 
 function doBreak(hit) {
@@ -188,13 +240,15 @@ function doBreak(hit) {
   sfx.breakBlock(breakKind(id));
   breakTarget = null;
   breakProgress = 0;
+  crackMesh.visible = false;
 }
 
 function doPlace(hit) {
   if (!hit) return;
   const x = hit.x + hit.nx, y = hit.y + hit.ny, z = hit.z + hit.nz;
   const cur = world.getBlock(x, y, z);
-  if (cur !== BLOCK.AIR && cur !== BLOCK.WATER) return;
+  // Ставим в воздух, воду или на место растения
+  if (cur !== BLOCK.AIR && cur !== BLOCK.WATER && !isPlant(cur)) return;
   // Не ставим блок внутрь игрока
   const px = player.pos.x, py = player.pos.y, pz = player.pos.z;
   const HW = CONFIG.PLAYER_WIDTH / 2 + 0.01;
@@ -322,6 +376,11 @@ async function startWorld(newWorld = false) {
   world = new World(seed);
   player = new Player(world);
   attachPlayerEvents();
+  if (mobs) mobs.dispose();
+  mobs = new Mobs(THREE, scene, world);
+  mobs._onChirp = () => sfx.chirp();
+  // Сразу подружим окрестность жизнью
+  for (let i = 0; i < 4; i++) mobs.spawnAround(player.pos, world.seaLevel);
 
   if (data) {
     world.loadEdits(data.edits || []);
@@ -433,7 +492,7 @@ input.handlers.onScroll = (dir) => {
 };
 input.handlers.onActionBreak = () => {
   if (state !== 'game') return;
-  doBreak(pickTarget());
+  tryActionBreak();
 };
 input.handlers.onActionPlace = () => {
   if (state !== 'game') return;
@@ -517,24 +576,49 @@ function frame() {
       highlight.visible = false;
     }
 
-    if (input.breakHeld && hit) {
+    // Нажатие ЛКМ: сначала проверяем моба
+    const wasBreaking = breakWasHeld;
+    breakWasHeld = input.breakHeld;
+    if (input.breakHeld && !wasBreaking) {
+      const mobHit = pickMob();
+      if (mobHit) {
+        hitMob(mobHit);
+        mobHoldBlock = true;
+      }
+    }
+    if (!input.breakHeld) mobHoldBlock = false;
+
+    if (input.breakHeld && !mobHoldBlock && hit) {
       const key = `${hit.x},${hit.y},${hit.z}`;
       if (breakTarget !== key) {
         breakTarget = key;
         breakProgress = 0;
+        digTickAcc = 0;
         sfx.dig(breakKind(hit.id));
       }
       const kind = breakKind(hit.id);
       breakProgress += dt / (CONFIG.BREAK_TIME[kind] ?? CONFIG.BREAK_TIME.default);
+      // Тикание кирки во время ломания
+      digTickAcc += dt;
+      if (digTickAcc > 0.28) {
+        digTickAcc = 0;
+        sfx.dig(kind);
+      }
       if (breakProgress >= 1) {
         doBreak(hit);
       } else {
         ui.setBreakProgress(breakProgress);
+        // Оверлей трещин на блоке
+        crackMesh.visible = true;
+        crackMesh.position.set(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
+        const stage = Math.min(crackMats.length - 1, Math.floor(breakProgress * crackMats.length));
+        crackMesh.material = crackMats[stage];
       }
     } else {
       breakTarget = null;
       breakProgress = 0;
       ui.setBreakProgress(0);
+      crackMesh.visible = false;
     }
 
     placeCooldown -= dt;
@@ -554,6 +638,10 @@ function frame() {
     const L = sky.lightLevel;
     terrainMat.color.setScalar(0.28 + 0.72 * L);
     waterMat.color.setScalar(0.3 + 0.7 * L);
+
+    // Мобы
+    if (mobs) mobs.update(dt, player.pos, L);
+
     ui.setUnderwater(player.headInWater);
     if (player.headInWater) {
       scene.fog.near = 2; scene.fog.far = 18;
@@ -641,4 +729,8 @@ window.VoxelCraft = {
   get scene() { return scene; },
   get renderer() { return renderer; },
   get camera() { return camera; },
+  get mobs() { return mobs; },
+  get crack() { return crackMesh; },
+  get crackMats() { return crackMats; },
+  get sky() { return sky; },
 };

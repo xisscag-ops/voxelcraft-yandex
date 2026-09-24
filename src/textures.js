@@ -10,6 +10,7 @@ export const T = {
   GRASS_TOP: 0, GRASS_SIDE: 1, DIRT: 2, STONE: 3, COBBLE: 4, SAND: 5,
   LOG_SIDE: 6, LOG_TOP: 7, PLANKS: 8, LEAVES: 9, GLASS: 10, BRICK: 11,
   GLOW: 12, SNOW_TOP: 13, SNOW_SIDE: 14, WATER: 15, SLATE: 16,
+  GRASS_TALL: 17, FLOWER_RED: 18, FLOWER_YELLOW: 19,
 };
 
 function px(data, x, y, r, g, b, a = 255) {
@@ -29,6 +30,19 @@ function noisyFill(data, rng, base, vary, alpha = 255) {
         Math.max(0, Math.min(255, base[2] + v)), alpha);
     }
   }
+}
+
+// Стебель для цветов (общий помощник, в атлас не попадает)
+function paintStem(data, rng) {
+  for (let y = 6; y < TILE; y++) {
+    const v = (rng() - 0.5) * 14;
+    px(data, 7, y, 56 + v, 122 + v, 44 + v);
+    if (y > 10 && rng() < 0.6) px(data, 6, y, 56 + v, 122 + v, 44 + v);
+  }
+  px(data, 5, 11, 70, 140, 52);
+  px(data, 6, 10, 70, 140, 52);
+  px(data, 9, 12, 70, 140, 52);
+  px(data, 8, 11, 70, 140, 52);
 }
 
 const painters = {
@@ -213,6 +227,42 @@ const painters = {
       px(data, x, y, 96, 100, 118);
     }
   },
+  [T.GRASS_TALL](data, rng) {
+    // Пучок травинок на прозрачном фоне (рисуется «снизу вверх»)
+    for (let i = 0; i < 10; i++) {
+      let x = 2 + ((rng() * 12) | 0);
+      const h = 7 + ((rng() * 7) | 0);
+      const dark = rng() < 0.5;
+      for (let y = 0; y < h; y++) {
+        const yy = TILE - 1 - y;
+        const v = (rng() - 0.5) * 20;
+        const g = dark ? [58, 120, 42] : [92, 164, 60];
+        px(data, x, yy, g[0] + v, g[1] + v, g[2] + v);
+        if (y < 3 && rng() < 0.5) px(data, x + 1, yy, g[0] + v, g[1] + v, g[2] + v);
+        // лёгкий изгиб
+        if (rng() < 0.25) x += rng() < 0.5 ? 1 : -1;
+        x = Math.max(1, Math.min(TILE - 2, x));
+      }
+    }
+  },
+  [T.FLOWER_RED](data, rng) {
+    paintStem(data, rng);
+    // Лепестки
+    for (const [x, y] of [[7, 3], [8, 3], [6, 4], [9, 4], [7, 5], [8, 5], [7, 4], [8, 4]]) {
+      const v = (rng() - 0.5) * 24;
+      px(data, x, y, 214 + v, 52 + v, 56 + v);
+    }
+    px(data, 7, 4, 250, 220, 90);
+    px(data, 8, 4, 250, 220, 90);
+  },
+  [T.FLOWER_YELLOW](data, rng) {
+    paintStem(data, rng);
+    for (const [x, y] of [[7, 2], [8, 2], [6, 3], [9, 3], [7, 3], [8, 3], [6, 4], [9, 4], [7, 4], [8, 4]]) {
+      const v = (rng() - 0.5) * 18;
+      px(data, x, y, 244 + v, 208 + v, 56 + v);
+    }
+    px(data, 7, 3, 255, 244, 150);
+  },
 };
 
 const tileColors = {};
@@ -280,4 +330,59 @@ let _atlasCanvas = null;
 function buildAtlasOnce() {
   if (!_atlasCanvas) _atlasCanvas = buildAtlas();
   return _atlasCanvas;
+}
+
+// ---------------- Стадии разрушения блока (текстуры трещин) ----------------
+export function buildCrackStages(count = 5, size = 32) {
+  const stages = [];
+  for (let s = 0; s < count; s++) {
+    const c = document.createElement('canvas');
+    c.width = size;
+    c.height = size;
+    const ctx = c.getContext('2d');
+    const rng = makeRng(9001 + s * 977);
+    // Трещины растут от краёв к центру: на каждой стадии их больше и они длиннее
+    const clusters = 1 + s * 2;
+    for (let k = 0; k < clusters; k++) {
+      // Начало — случайная точка на краю
+      let x, y;
+      const edge = (rng() * 4) | 0;
+      if (edge === 0) { x = (rng() * size) | 0; y = 1; }
+      else if (edge === 1) { x = (rng() * size) | 0; y = size - 2; }
+      else if (edge === 2) { x = 1; y = (rng() * size) | 0; }
+      else { x = size - 2; y = (rng() * size) | 0; }
+      // Идём к центру с дрожью
+      let tx = size / 2, ty = size / 2;
+      const steps = 6 + ((rng() * 8) | 0) + s * 2;
+      for (let i = 0; i < steps; i++) {
+        const dark = rng() < 0.3;
+        ctx.fillStyle = dark ? 'rgba(10,8,6,0.95)' : 'rgba(30,24,18,0.8)';
+        ctx.fillRect(x, y, 1, 1);
+        if (rng() < 0.35) ctx.fillRect(x + 1, y, 1, 1);
+        // ветвление
+        if (rng() < 0.18) {
+          let bx = x, by = y;
+          for (let j = 0; j < 3; j++) {
+            bx += rng() < 0.5 ? 1 : -1;
+            by += rng() < 0.5 ? 1 : -1;
+            ctx.fillRect(bx, by, 1, 1);
+          }
+        }
+        x += Math.sign(tx - x) * (rng() < 0.75 ? 1 : 0) + (rng() < 0.2 ? (rng() < 0.5 ? 1 : -1) : 0);
+        y += Math.sign(ty - y) * (rng() < 0.75 ? 1 : 0) + (rng() < 0.2 ? (rng() < 0.5 ? 1 : -1) : 0);
+        x = Math.max(0, Math.min(size - 1, x));
+        y = Math.max(0, Math.min(size - 1, y));
+      }
+    }
+    // Последняя стадия — почти «взбитая»
+    if (s === count - 1) {
+      for (let i = 0; i < 40; i++) {
+        const x = (rng() * size) | 0, y = (rng() * size) | 0;
+        ctx.fillStyle = 'rgba(10,8,6,0.8)';
+        ctx.fillRect(x, y, 1, 1);
+      }
+    }
+    stages.push(c);
+  }
+  return stages;
 }
