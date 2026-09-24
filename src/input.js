@@ -26,7 +26,63 @@ export class Input {
     el.requestPointerLock?.();
   }
 
+  // Защита от браузерных сочетаний клавиш, зума, прокрутки, выделения и жестов,
+  // чтобы игра занимала весь экран и страница никуда не сдвигалась
+  _bindGuards() {
+    const BLOCK_KEYS = new Set([
+      'Tab', 'Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown',
+      'Home', 'End', 'Backspace', 'AltLeft', 'AltRight', 'ContextMenu', 'MetaLeft', 'MetaRight',
+      'F1', 'F3', 'F5', 'F6', 'F7', 'BrowserBack', 'BrowserForward', 'BrowserRefresh', 'BrowserSearch',
+      'Slash', 'Quote',
+    ]);
+    const guardKey = (e) => {
+      const tag = e.target && e.target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      // Ctrl/Cmd/Alt + что угодно (зум, сохранение, печать, поиск, закладки и т.п.)
+      if (e.ctrlKey || e.metaKey || e.altKey || BLOCK_KEYS.has(e.code)) e.preventDefault();
+    };
+    window.addEventListener('keydown', guardKey, { capture: true });
+    window.addEventListener('keyup', guardKey, { capture: true });
+    // Зум колесом с Ctrl и тачпадом (pinch)
+    window.addEventListener('wheel', (e) => { if (e.ctrlKey || e.metaKey || this.locked) e.preventDefault(); },
+      { passive: false, capture: true });
+    // Жесты Safari
+    for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) {
+      document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
+    }
+    // Двойной тап-зум, выделение, перетаскивание, контекстное меню
+    document.addEventListener('dblclick', (e) => e.preventDefault(), { passive: false });
+    document.addEventListener('selectstart', (e) => e.preventDefault());
+    document.addEventListener('dragstart', (e) => e.preventDefault());
+    window.addEventListener('contextmenu', (e) => e.preventDefault());
+    // Средняя кнопка мыши — автопрокрутка; боковые — «назад/вперёд»
+    window.addEventListener('mousedown', (e) => { if (e.button !== 0 && e.button !== 2) e.preventDefault(); });
+    window.addEventListener('auxclick', (e) => e.preventDefault());
+    window.addEventListener('mouseup', (e) => { if (e.button === 3 || e.button === 4) e.preventDefault(); });
+    // Страница не должна прокручиваться ни при каких условиях
+    const pin = () => { if (window.scrollX || window.scrollY) window.scrollTo(0, 0); };
+    window.addEventListener('scroll', pin, { passive: true });
+    window.addEventListener('resize', pin);
+  }
+
+  // Полноэкранный режим + блокировка системных клавиш (Esc оставляем для паузы)
+  async enterFullscreen() {
+    const el = document.documentElement;
+    try {
+      if (!document.fullscreenElement && el.requestFullscreen) {
+        await el.requestFullscreen({ navigationUI: 'hide' });
+      }
+    } catch (e) { /* iframe без allowfullscreen — не критично */ }
+    try {
+      if (document.fullscreenElement && navigator.keyboard?.lock) {
+        await navigator.keyboard.lock(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyN', 'KeyT', 'KeyQ',
+          'Tab', 'AltLeft', 'MetaLeft', 'MetaRight', 'ControlLeft', 'ControlRight']);
+      }
+    } catch (e) { /* не поддерживается */ }
+  }
+
   _bind() {
+    this._bindGuards();
     window.addEventListener('keydown', (e) => {
       if (e.repeat) return;
       this.keys.add(e.code);
@@ -76,7 +132,6 @@ export class Input {
       if (!this.locked) return;
       this.handlers.onScroll?.(e.deltaY > 0 ? 1 : -1);
     }, { passive: true });
-    window.addEventListener('contextmenu', (e) => { if (this.locked) e.preventDefault(); });
 
     if (this.isTouch) this._bindTouch();
     this._bindButtons();
