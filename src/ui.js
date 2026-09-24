@@ -210,6 +210,39 @@ export class UI {
     document.getElementById('ad-overlay')?.classList.toggle('hidden', !on);
   }
 
+  setHealth(hp, max = 20) {
+    const el = document.getElementById('hearts');
+    if (!el) return;
+    const n = Math.ceil(max / 2);
+    if (el.childElementCount !== n) {
+      el.innerHTML = '';
+      for (let i = 0; i < n; i++) {
+        const sp = document.createElement('span');
+        sp.textContent = '♥';
+        el.appendChild(sp);
+      }
+    }
+    for (let i = 0; i < n; i++) {
+      const v = hp - i * 2;
+      el.children[i].className = 'heart' + (v >= 2 ? ' full' : v === 1 ? ' half' : '');
+    }
+  }
+
+  setApples(n) {
+    const el = document.getElementById('apples');
+    if (!el) return;
+    el.classList.toggle('hidden', n <= 0);
+    el.textContent = 'F  🍎 ×' + n;
+  }
+
+  flashHurt() {
+    const el = document.getElementById('hurt-flash');
+    if (!el) return;
+    el.classList.remove('on');
+    void el.offsetWidth;
+    el.classList.add('on');
+  }
+
   flashLightning() {
     const el = document.getElementById('lightning');
     if (!el) return;

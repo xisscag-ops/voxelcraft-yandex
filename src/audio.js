@@ -187,4 +187,44 @@ export class Sfx {
     setTimeout(() => this._tone({ freq: 4400, dur: 0.04, gain: 0.015 * vol, type: 'triangle' }), 70);
     setTimeout(() => this._tone({ freq: 4300, dur: 0.04, gain: 0.012 * vol, type: 'triangle' }), 140);
   }
+
+  hurt() {
+    // Боль: короткий низкий стон
+    this._tone({ freq: 190, dur: 0.2, gain: 0.16, type: 'sawtooth', slide: -70 });
+    this._burst({ freq: 320, dur: 0.1, gain: 0.14, pitchDrop: 0.5 });
+  }
+
+  die() {
+    // Смерть: глубокий вздох
+    this._tone({ freq: 150, dur: 0.55, gain: 0.18, type: 'sawtooth', slide: -95 });
+    this._burst({ freq: 200, dur: 0.4, gain: 0.14, pitchDrop: 0.6 });
+  }
+
+  hitMob() {
+    this._burst({ freq: 520, dur: 0.08, gain: 0.3, pitchDrop: 0.5 });
+  }
+
+  mobDie() {
+    this._burst({ freq: 380, dur: 0.25, gain: 0.25, type: 'bandpass', q: 2, pitchDrop: 0.6 });
+  }
+
+  gloom(vol = 1) {
+    // Шёпот Хмари
+    this._burst({ freq: 300, dur: 0.45, gain: 0.1 * vol, type: 'bandpass', q: 7 });
+  }
+
+  burn() {
+    // Шипение на рассвете
+    this._burst({ freq: 2400, dur: 0.6, gain: 0.16, type: 'highpass', q: 0.8 });
+  }
+
+  crunch() {
+    // Хруст яблока: два быстрых треска
+    this._burst({ freq: 900, dur: 0.06, gain: 0.3, pitchDrop: 0.25 });
+    setTimeout(() => this._burst({ freq: 700, dur: 0.07, gain: 0.28, pitchDrop: 0.3 }), 110);
+  }
+
+  pickup() {
+    this._tone({ freq: 880, dur: 0.07, gain: 0.1, type: 'triangle', slide: 240 });
+  }
 }

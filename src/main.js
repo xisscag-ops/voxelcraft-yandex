@@ -10,6 +10,7 @@ import { Player } from './physics.js';
 import { raycastVoxel } from './raycast.js';
 import { Particles } from './particles.js';
 import { Weather } from './weather.js';
+import { ItemDrops } from './items.js';
 import { Sky } from './sky.js';
 import { Sfx } from './audio.js';
 import { Input } from './input.js';
@@ -68,12 +69,22 @@ sky.viewDistance = settings.viewDistance;
 const particles = new Particles(THREE, scene);
 const mobManager = new MobManager(scene, null);
 const weather = new Weather(THREE, scene);
+const items = new ItemDrops(scene);
+// Выживание
+let apples = 0;
+let attackCd = 0;
+let gloomT = 6;
+let gloomWarned = false;
+let prevEat = false;
 // Звуки мобов с затуханием по расстоянию
 mobManager.onSound = (kind, dist) => {
   const vol = 1 / (1 + dist * 0.35);
   if (kind === 'hop') sfx.mobHop(vol);
   else if (kind === 'bleat') sfx.bleat(vol);
   else if (kind === 'chirp') sfx.chirp(vol);
+  else if (kind === 'gloom') sfx.gloom(vol);
+  else if (kind === 'die') sfx.mobDie();
+  else if (kind === 'burn') sfx.burn();
 };
 
 // Счётчик построенных блоков (лидерборд Яндекса)
@@ -222,10 +233,38 @@ function doBreak(hit) {
   world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
   particles.burst(hit.x, hit.y, hit.z, tileColor(BLOCKS[id].tiles[0]), 16);
   sfx.breakBlock(breakKind(id));
+  // С листвы иногда падает яблоко
+  if (id === BLOCK.LEAVES && Math.random() < 0.14) {
+    items.spawn(hit.x + 0.5, hit.y + 0.8, hit.z + 0.5, 'apple');
+  }
   breakTarget = null;
   breakProgress = 0;
   breakQuick = false;
   crackMesh.visible = false;
+}
+
+function handleDeath() {
+  sfx.die();
+  ui.flashHurt();
+  const s = world.findSpawn();
+  player.pos.x = s.x; player.pos.y = s.y; player.pos.z = s.z;
+  player.vel.x = 0; player.vel.y = 0; player.vel.z = 0;
+  player.hp = player.maxHp;
+  player.hurtT = 2.5;
+  ui.setHealth(player.hp, player.maxHp);
+  ui.toast(i18n.t('died'), 2200);
+  setTimeout(() => state === 'game' && ui.toast(i18n.t('respawned'), 2400), 2300);
+}
+
+function tryEat() {
+  if (apples <= 0) { ui.toast(i18n.t('eat_none'), 1400); return; }
+  if (player.hp >= player.maxHp) return;
+  apples--;
+  ui.setApples(apples);
+  sfx.crunch();
+  player.heal(4);
+  ui.setHealth(player.hp, player.maxHp);
+  ui.toast(i18n.t('eat_ok'), 1600);
 }
 
 function doPlace(hit) {
@@ -276,9 +315,37 @@ async function saveGame(showToast = false) {
 }
 
 function attachPlayerEvents() {
-  player.events.onStep = (inWater) => sfx.step(inWater);
+  mobManager.onAttack = (mob) => {
+  const dx = player.pos.x - mob.pos.x, dz = player.pos.z - mob.pos.z;
+  const dl = Math.hypot(dx, dz) || 1;
+  if (player.hurt(3)) {
+    player.vel.x = (dx / dl) * 5;
+    player.vel.z = (dz / dl) * 5;
+    player.vel.y = 3;
+    ui.setHealth(player.hp, player.maxHp);
+  }
+};
+mobManager.onDeath = (mob) => {
+  sfx.mobDie();
+  particles.burst(mob.pos.x, mob.pos.y + 0.5, mob.pos.z, 0x2a2140, 14);
+};
+items.onPickup = (kind) => {
+  if (kind === 'apple') {
+    apples++;
+    ui.setApples(apples);
+    sfx.pickup();
+    if (apples === 1) ui.toast(i18n.t('apple_get'), 3200);
+  }
+};
+player.events.onStep = (inWater) => sfx.step(inWater);
   player.events.onJump = () => sfx.jump();
   player.events.onLand = () => sfx.land();
+  player.events.onHurt = () => {
+    sfx.hurt();
+    ui.flashHurt();
+    ui.setHealth(player.hp, player.maxHp);
+  };
+  player.events.onDeath = () => handleDeath();
   player.events.onSplash = () => sfx.splash();
 }
 
@@ -364,6 +431,9 @@ async function startWorld(newWorld = false) {
   world = new World(seed);
   player = new Player(world);
   mobManager.clear();
+  items.clear();
+  apples = 0;
+  ui.setApples(0);
   mobManager.world = world;
   attachPlayerEvents();
 
@@ -419,6 +489,8 @@ async function startWorld(newWorld = false) {
 
   // Несколько мобов сразу, чтобы мир был живым
   for (let i = 0; i < 5; i++) mobManager.trySpawn(player.pos);
+  ui.setHealth(player.hp, player.maxHp);
+  ui.setApples(apples);
 
   ysdk.gameplayReady();
   saveData = buildSave(); // «Продолжить» имеет смысл и до первого сохранения
@@ -571,6 +643,57 @@ function frame() {
     }
     processQueue(CONFIG.MAX_MESH_PER_FRAME);
 
+    // --- Выживание: предметы, еда, ночные Хмари ---
+    items.update(dt, world, player.pos);
+    const eatPressed = input.keys.has('KeyF');
+    if (eatPressed && !prevEat) tryEat();
+    prevEat = eatPressed;
+
+    mobManager.setNight(sky.lightLevel < 0.32);
+    if (sky.lightLevel < 0.32) {
+      gloomT -= dt;
+      if (gloomT <= 0) {
+        gloomT = 7 + Math.random() * 7;
+        const spawned = mobManager.trySpawnGloom(player.pos);
+        if (spawned && !gloomWarned) {
+          gloomWarned = true;
+          ui.toast(i18n.t('gloom_warn'), 3200);
+        }
+      }
+    } else {
+      gloomWarned = false;
+    }
+
+    // Удар по Хмари (ЛКМ) вместо ломания блока
+    let mobTarget = null;
+    if (input.breakHeld) {
+      const eye = player.eyePos();
+      const d = player.lookDir();
+      let bestT = 4.5;
+      for (const m of mobManager.mobs) {
+        if (m.type !== 'gloom') continue;
+        const cx = m.pos.x - eye.x, cy = m.pos.y + 0.5 - eye.y, cz = m.pos.z - eye.z;
+        const t = cx * d.x + cy * d.y + cz * d.z;
+        if (t < 0.3 || t > 4.5) continue;
+        const px = cx - d.x * t, py = cy - d.y * t, pz = cz - d.z * t;
+        if (px * px + py * py + pz * pz > 0.72 * 0.72) continue;
+        if (t < bestT) { bestT = t; mobTarget = m; }
+      }
+      attackCd -= dt;
+      if (mobTarget && attackCd <= 0) {
+        attackCd = 0.36;
+        mobTarget.hurt(1);
+        sfx.hitMob();
+        particles.burst(mobTarget.pos.x, mobTarget.pos.y + 0.5, mobTarget.pos.z, 0x2a2140, 8);
+        const kx = mobTarget.pos.x - player.pos.x, kz = mobTarget.pos.z - player.pos.z;
+        const kl = Math.hypot(kx, kz) || 1;
+        mobTarget.pos.x += (kx / kl) * 0.4;
+        mobTarget.pos.z += (kz / kl) * 0.4;
+      }
+    } else {
+      attackCd = 0;
+    }
+
     // Прицел и действия
     const hit = pickTarget();
     if (hit) {
@@ -582,7 +705,7 @@ function frame() {
 
     // Ломание: удержание ЛКМ/кнопки или быстрое по тапу (с анимацией трещин)
     let breaking = null;
-    if (hit) {
+    if (hit && !mobTarget) {
       const same = breakTarget && breakTarget.x === hit.x && breakTarget.y === hit.y && breakTarget.z === hit.z;
       if (breakQuick) {
         if (same) breaking = hit;
@@ -753,4 +876,6 @@ window.VoxelCraft = {
   get camera() { return camera; },
   get mobs() { return mobManager; },
   get weather() { return weather; },
+  get sky() { return sky; },
+  get items() { return items; },
 };

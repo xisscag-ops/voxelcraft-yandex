@@ -156,6 +156,23 @@ function buildBird(mat, geoCache, ci) {
   return { group: g, legs: [], head: null, ears: [], wings, hop: false, bird: true };
 }
 
+// Хмарь — ночной охотник: парящая тень с горящими глазами (своя, процедурная модель)
+function buildGloom(mat, geoCache, eyeMat) {
+  const g = new THREE.Group();
+  const body = fixedPart(mat, geoCache, 'gl-body', 0.5, 0.5, 0.38, [0.11, 0.08, 0.18]);
+  body.position.set(0, 0.45, 0);
+  const head = fixedPart(mat, geoCache, 'gl-head', 0.4, 0.3, 0.36, [0.14, 0.11, 0.22]);
+  head.position.set(0, 0.82, 0);
+  const wisp = fixedPart(mat, geoCache, 'gl-wisp', 0.2, 0.55, 0.2, [0.07, 0.05, 0.12]);
+  wisp.position.set(0, -0.05, 0);
+  const eyeL = fixedPart(eyeMat, geoCache, 'gl-eye', 0.09, 0.09, 0.06, [1, 1, 1]);
+  eyeL.position.set(-0.1, 0.85, 0.18);
+  const eyeR = fixedPart(eyeMat, geoCache, 'gl-eye', 0.09, 0.09, 0.06, [1, 1, 1]);
+  eyeR.position.set(0.1, 0.85, 0.18);
+  g.add(body, head, wisp, eyeL, eyeR);
+  return { group: g, legs: [], head: null, ears: [], hop: false, gloom: true };
+}
+
 export class Mob {
   constructor(world, visuals, type, x, y, z) {
     this.world = world;
@@ -170,9 +187,67 @@ export class Mob {
     this.animT = Math.random() * 10;
     this.soundT = 1 + Math.random() * 3;
     this.onSound = null;         // (kind, dist) => void
-    this.speed = type === 'bunny' ? 2.2 : type === 'slime' ? 1.6 : 1.1;
+    this.onAttack = null;        // (mob, playerPos) => void
+    this.speed = type === 'bunny' ? 2.2 : type === 'slime' ? 1.6 : type === 'gloom' ? 2.0 : 1.1;
+    this.hp = type === 'gloom' ? 3 : 1;
+    this.attackT = 0;
+    this.flashT = 0;
+    this.burnT = 0;
+    this.dead = false;
     visuals.group.position.set(x, y, z);
     this.yBase = y;
+  }
+
+  // Хмарь: подкрадывается к игроку, висит над землёй, бьёт с дистанции 1.6
+  updateGloom(dt, playerPos) {
+    const v = this.v;
+    this.animT += dt;
+    const dx = playerPos.x - this.pos.x;
+    const dz = playerPos.z - this.pos.z;
+    const dist = Math.hypot(dx, dz) || 0.001;
+    this.heading = Math.atan2(dx, dz);
+    if (dist > 1.15 && dist < 24) {
+      this.pos.x += (dx / dist) * this.speed * dt;
+      this.pos.z += (dz / dist) * this.speed * dt;
+    }
+    const g = this.groundAt(this.pos.x, this.pos.z, this.pos.y + 1.5);
+    this.yBase = (g ?? this.pos.y) + 0.3;
+    this.pos.y += (this.yBase - this.pos.y) * Math.min(1, dt * 4);
+
+    const hover = Math.sin(this.animT * 2.6) * 0.09;
+    v.group.position.set(this.pos.x, this.pos.y + hover, this.pos.z);
+    v.group.rotation.y = this.heading + Math.PI;
+    v.group.rotation.z = Math.sin(this.animT * 2) * 0.05;
+    if (this.flashT > 0) {
+      this.flashT -= dt;
+      v.group.scale.setScalar(1 + Math.max(0, this.flashT) * 1.6);
+    } else {
+      v.group.scale.setScalar(1);
+    }
+
+    // Атака
+    this.attackT -= dt;
+    if (dist < 1.6 && this.attackT <= 0) {
+      this.attackT = 1.1;
+      if (this.onAttack) this.onAttack(this, playerPos);
+    }
+
+    // Шёпот
+    this.soundT -= dt;
+    if (this.soundT <= 0) {
+      this.soundT = 3 + Math.random() * 4;
+      if (this.onSound && dist < 18) this.onSound('gloom', dist);
+    }
+  }
+
+  hurt(n) {
+    this.hp -= n;
+    this.flashT = 0.18;
+    if (this.hp <= 0) {
+      this.dead = true;
+      return true;
+    }
+    return false;
   }
 
   dispose(scene) {
@@ -222,6 +297,7 @@ export class Mob {
   update(dt, playerPos) {
     // Птицы летают отдельно — без привязки к земле
     if (this.type === 'bird') return this.updateBird(dt, playerPos);
+    if (this.type === 'gloom') return this.updateGloom(dt, playerPos);
 
     this.thinkT -= dt;
     if (this.thinkT <= 0) {
@@ -362,12 +438,18 @@ export class MobManager {
     this.spawnT = 0;
     this.max = 10;
     this.onHop = null; // (dist) => void — звук
+    this.onAttack = null; // (mob, playerPos) => void — атака Хмари
+    this.onDeath = null;  // (mob) => void
+    this.night = true;
+    this.eyeMat = new THREE.MeshBasicMaterial({ color: 0x8ef6ff });
+    this.gloomMat = new THREE.MeshBasicMaterial({ vertexColors: true });
   }
 
   setLight(level) {
     const s = 0.32 + 0.68 * level;
     this.mat.color.setScalar(s);
     this.slimeMat.color.setScalar(s);
+    this.gloomMat.color.setScalar(0.55 + 0.45 * level);
   }
 
   _randomType() {
@@ -379,6 +461,7 @@ export class MobManager {
     const ci = (Math.random() * 3) | 0;
     if (type === 'bunny') return buildBunny(this.mat, this.geoCache, ci);
     if (type === 'sheep') return buildSheep(this.mat, this.geoCache, ci);
+    if (type === 'gloom') return buildGloom(this.gloomMat, this.geoCache, this.eyeMat);
     if (type === 'bird') return buildBird(this.mat, this.geoCache, ci);
     return buildSlime(this.slimeMat, this.geoCache);
   }
@@ -419,6 +502,35 @@ export class MobManager {
     }
   }
 
+  setNight(n) {
+    this.night = n;
+  }
+
+  // Ночной спавн Хмари (и отдельный хук для тестов)
+  trySpawnGloom(playerPos) {
+    if (this.mobs.filter((m) => m.type === 'gloom').length >= 4) return null;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const ang = Math.random() * Math.PI * 2;
+      const r = 8 + Math.random() * 10;
+      const x = playerPos.x + Math.sin(ang) * r;
+      const z = playerPos.z + Math.cos(ang) * r;
+      const h = this.world.heightAt(Math.floor(x), Math.floor(z));
+      if (h <= this.world.seaLevel) continue;
+      return this.spawnGloomAt(x + 0.5, h + 1, z + 0.5);
+    }
+    return null;
+  }
+
+  spawnGloomAt(x, y, z) {
+    const visuals = buildGloom(this.gloomMat, this.geoCache, this.eyeMat);
+    const mob = new Mob(this.world, visuals, 'gloom', x, y, z);
+    mob.onSound = (k, d) => { if (this.onSound) this.onSound(k, d); };
+    mob.onAttack = (m, pp) => { if (this.onAttack) this.onAttack(m, pp); };
+    this.scene.add(visuals.group);
+    this.mobs.push(mob);
+    return mob;
+  }
+
   update(dt, playerPos, active = true) {
     // Спавн/деспавн
     this.spawnT -= dt;
@@ -428,6 +540,23 @@ export class MobManager {
     }
     for (let i = this.mobs.length - 1; i >= 0; i--) {
       const m = this.mobs[i];
+      if (m.dead) {
+        this.mobs.splice(i, 1);
+        m.dispose(this.scene);
+        if (this.onDeath) this.onDeath(m);
+        continue;
+      }
+      // Рассвет сжигает Хмарь
+      if (m.type === 'gloom' && !this.night) {
+        m.burnT += dt;
+        if (m.burnT <= dt * 1.5 && this.onSound) this.onSound('burn', 3);
+        if (m.burnT > 1.6) {
+          this.mobs.splice(i, 1);
+          m.dispose(this.scene);
+          if (this.onDeath) this.onDeath(m);
+          continue;
+        }
+      }
       const dx = m.pos.x - playerPos.x, dz = m.pos.z - playerPos.z;
       const d2 = dx * dx + dz * dz;
       if (d2 > 64 * 64) {

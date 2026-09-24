@@ -22,6 +22,9 @@ export class Player {
     this._stepAcc = 0;
     this.events = { onStep: null, onJump: null, onLand: null, onSplash: null };
     this._wasFlying = false;
+    // Здоровье и урон от падений
+    this.hp = 20; this.maxHp = 20;
+    this.hurtT = 0; this.regenT = 0; this._fallFrom = null;
   }
 
   lookDir() {
@@ -35,6 +38,22 @@ export class Player {
 
   eyePos() {
     return { x: this.pos.x, y: this.pos.y + CONFIG.PLAYER_EYE, z: this.pos.z };
+  }
+
+  /** Урон с неуязвимостью 0.7 с. true — если урон прошёл */
+  hurt(n) {
+    if (this.hurtT > 0 || this.hp <= 0) return false;
+    this.hp = Math.max(0, this.hp - n);
+    this.hurtT = 0.7;
+    this.regenT = 0;
+    if (this.events.onHurt) this.events.onHurt(n);
+    if (this.hp <= 0 && this.events.onDeath) this.events.onDeath();
+    return true;
+  }
+
+  heal(n) {
+    this.hp = Math.min(this.maxHp, this.hp + n);
+    if (this.events.onHeal) this.events.onHeal(n);
   }
 
   // Пересечение AABB с блоками
@@ -58,6 +77,19 @@ export class Player {
    */
   update(input, dt) {
     const w = this.world;
+    // Регенерация и отслеживание падения
+    this.hurtT = Math.max(0, this.hurtT - dt);
+    if (this.hp > 0 && this.hp < this.maxHp && this.hurtT <= 0) {
+      this.regenT += dt;
+      if (this.regenT > 8) { this.regenT = 0; this.hp = Math.min(this.maxHp, this.hp + 1); }
+    } else if (this.hurtT > 0) {
+      this.regenT = 0;
+    }
+    if (!this.onGround && !this.flying && this.vel.y < 0) {
+      this._fallFrom = Math.max(this._fallFrom ?? this.pos.y, this.pos.y);
+    } else if (this.onGround || this.flying) {
+      this._fallFrom = null;
+    }
     // Вода?
     const feet = w.getBlock(Math.floor(this.pos.x), Math.floor(this.pos.y + 0.2), Math.floor(this.pos.z));
     const head = w.getBlock(Math.floor(this.pos.x), Math.floor(this.pos.y + CONFIG.PLAYER_EYE), Math.floor(this.pos.z));
@@ -106,7 +138,12 @@ export class Player {
       }
       const wasGround = this.onGround;
       this._move(dt);
-      if (!wasGround && this.onGround && this.events.onLand) this.events.onLand();
+      if (!wasGround && this.onGround) {
+        if (this.events.onLand) this.events.onLand();
+        const fall = (this._fallFrom ?? this.pos.y) - this.pos.y;
+        this._fallFrom = null;
+        if (fall > 3.2 && this.hp > 0) this.hurt(Math.min(8, Math.floor(fall - 3)));
+      }
     }
 
     // Шаги
@@ -174,13 +211,15 @@ export class Player {
   serialize() {
     return {
       x: this.pos.x, y: this.pos.y, z: this.pos.z,
-      yaw: this.yaw, pitch: this.pitch, flying: this.flying,
+      yaw: this.yaw, pitch: this.pitch, flying: this.flying, hp: this.hp,
     };
   }
 
   deserialize(d) {
     this.pos.x = d.x; this.pos.y = d.y; this.pos.z = d.z;
     this.yaw = d.yaw || 0; this.pitch = d.pitch || 0;
+    this.hp = d.hp != null ? d.hp : 20;
+    if (this.hp <= 0) this.hp = this.maxHp;
     this.flying = !!d.flying;
     this.vel = { x: 0, y: 0, z: 0 };
   }

@@ -55,6 +55,12 @@ export const STRINGS = {
     rain_start: 'Пошёл дождь…',
     rain_stop: 'Небо проясняется',
     blocks_built: 'Построено блоков',
+    died: 'Вы погибли!',
+    respawned: 'Возрождение у спавна',
+    apple_get: 'Яблоко подобрано (F — съесть)',
+    eat_ok: 'Хрусть! +2 сердца',
+    eat_none: 'Яблок нет',
+    gloom_warn: 'Ночью опасно: Хмари рядом!',
   },
   en: {
     title: 'VoxelCraft',
@@ -111,6 +117,12 @@ export const STRINGS = {
     rain_start: 'It starts raining…',
     rain_stop: 'The sky clears up',
     blocks_built: 'Blocks built',
+    died: 'You died!',
+    respawned: 'Respawned at spawn',
+    apple_get: 'Apple picked up (F to eat)',
+    eat_ok: 'Crunch! +2 hearts',
+    eat_none: 'No apples',
+    gloom_warn: 'Night is dangerous: Gloom is near!',
   },
 };
 

@@ -318,6 +318,32 @@ html, body {
 }
 
 /* ---------- Вспышка молнии ---------- */
+/* Сердца, еда и урон */
+#status-row { position: absolute; left: 16px; bottom: 84px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+#hearts { display: flex; gap: 3px; }
+.heart { font-size: 18px; line-height: 1; color: #d33; text-shadow: 0 1px 2px #000; }
+.heart:not(.full):not(.half) { color: #3b3b42; }
+.heart.half {
+  background: linear-gradient(90deg, #d33 50%, #3b3b42 50%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+#apples {
+  align-self: flex-start;
+  background: rgba(12, 14, 20, 0.72);
+  color: #fff;
+  border-radius: 8px;
+  padding: 3px 8px;
+  font: 600 12px/1.4 system-ui, sans-serif;
+}
+#hurt-flash {
+  position: absolute; inset: 0; pointer-events: none; opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 40%, rgba(200, 20, 30, 0.55) 100%);
+}
+#hurt-flash.on { animation: hurtflash 0.45s ease-out; }
+@keyframes hurtflash { 0% { opacity: 1; } 100% { opacity: 0; } }
+
 #lightning {
   position: fixed; inset: 0;
   background: linear-gradient(180deg, rgba(230, 240, 255, 0.95), rgba(180, 205, 255, 0.55));
