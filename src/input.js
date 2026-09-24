@@ -9,6 +9,7 @@ export class Input {
     this.sneak = false;
     this.sprint = false;
     this.locked = false;
+    this.enabled = false;       // ввод обрабатывается только в состоянии игры
     this.isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
     this.handlers = {
       onToggleFly: null, onDigit: null, onScroll: null, onPause: null,
@@ -24,7 +25,10 @@ export class Input {
 
   requestLock(el) {
     if (this.isTouch) return;
-    el.requestPointerLock?.();
+    try {
+      const p = el.requestPointerLock?.();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch (e) { /* браузер может отклонить запрос — игрок просто кликнет ещё раз */ }
   }
 
   // Защита от браузерных сочетаний клавиш, зума, прокрутки, выделения и жестов,
@@ -148,6 +152,7 @@ export class Input {
     const joyRect = () => joyEl.getBoundingClientRect();
 
     const onTouchStart = (e) => {
+      if (!this.enabled) return;   // окно инвентаря/меню: жесты не перехватываем
       for (const t of e.changedTouches) {
         const jr = joyRect();
         const inJoy = t.clientX >= jr.left - 20 && t.clientX <= jr.right + 20 &&
@@ -179,6 +184,7 @@ export class Input {
     };
 
     const onTouchMove = (e) => {
+      if (!this.enabled) return;
       for (const t of e.changedTouches) {
         if (t.identifier === this._joystick.id) {
           const dx = t.clientX - this._joystick.baseX;
@@ -203,6 +209,7 @@ export class Input {
     };
 
     const onTouchEnd = (e) => {
+      if (!this.enabled) return;
       for (const t of e.changedTouches) {
         if (t.identifier === this._joystick.id) {
           this._joystick.active = false;

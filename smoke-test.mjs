@@ -2,7 +2,11 @@
 import { World } from './src/world.js';
 import { meshChunk } from './src/mesher.js';
 import { raycastVoxel } from './src/raycast.js';
-import { isSolid, isOpaque, isDecor } from './src/blocks.js';
+import { isSolid, isOpaque, isDecor, BLOCK } from './src/blocks.js';
+import { Inventory } from './src/inventory.js';
+import { RECIPES, craft, canCraft, validateRecipes } from './src/crafts.js';
+import { ITEM, blockItem, blockDropItem, breakTime, itemDamage, maxStack, placeBlockId, toolKind } from './src/items.js';
+import { CONFIG } from './src/config.js';
 
 // Заглушка THREE — достаточно для toGeometry
 const calls = { geom: 0, verts: 0, idx: 0 };
@@ -147,9 +151,105 @@ check('decor meshed as cross quads', (() => {
 // Декор непроходим и не непрозрачен
 check('decor is walk-through', isDecor(15) && !isSolid(15) && !isOpaque(15));
 
+// ---- Предметы и дроп с блоков ----
+check('трава падает землёй', blockDropItem(BLOCK.GRASS) === blockItem(BLOCK.DIRT));
+check('камень падает булыжником', blockDropItem(BLOCK.STONE) === blockItem(BLOCK.COBBLE));
+check('стекло не даёт ничего', blockDropItem(BLOCK.GLASS) === null);
+check('вода не даёт ничего', blockDropItem(BLOCK.WATER) === null);
+check('песок падает песком', blockDropItem(BLOCK.SAND) === blockItem(BLOCK.SAND));
+check('листва падает иногда', (() => {
+  let yes = 0;
+  for (let i = 0; i < 400; i++) if (blockDropItem(BLOCK.LEAVES, () => i % 4 === 0)) yes++;
+  return yes > 0 && yes < 400;
+})());
+check('стопки: блок 64, инструмент 1', maxStack(blockItem(BLOCK.STONE)) === 64 && maxStack(ITEM.WOOD_AXE) === 1);
+check('поставить можно только блок', placeBlockId(blockItem(BLOCK.PLANKS)) === BLOCK.PLANKS
+  && placeBlockId(ITEM.STICK) === 0);
+check('инструмент опознаётся', toolKind(ITEM.STONE_PICKAXE) === 'pickaxe' && toolKind(ITEM.STICK) === null);
+
+// ---- Скорость ломания с инструментами ----
+const BASE_STONE = CONFIG.BREAK_TIME.slow;
+const BASE_LOG = CONFIG.BREAK_TIME.default;
+check('камень без кирки ×2.6', Math.abs(breakTime(BLOCK.STONE, null, 'survival') - BASE_STONE * 2.6) < 1e-9);
+check('деревянная кирка ×0.85', Math.abs(breakTime(BLOCK.STONE, ITEM.WOOD_PICKAXE, 'survival') - BASE_STONE * 0.85) < 1e-9);
+check('каменная кирка ×0.55', Math.abs(breakTime(BLOCK.STONE, ITEM.STONE_PICKAXE, 'survival') - BASE_STONE * 0.55) < 1e-9);
+check('дерево без топора ×1.6', Math.abs(breakTime(BLOCK.LOG, null, 'survival') - BASE_LOG * 1.6) < 1e-9);
+check('топор ускоряет дерево ×0.5', Math.abs(breakTime(BLOCK.LOG, ITEM.WOOD_AXE, 'survival') - BASE_LOG * 0.5) < 1e-9);
+check('земля ломается как раньше', Math.abs(breakTime(BLOCK.DIRT, null, 'survival') - CONFIG.BREAK_TIME.fast) < 1e-9);
+check('креатив: блок ломается за 0.12 с',
+  breakTime(BLOCK.STONE, null, 'creative') === CONFIG.CREATIVE_BREAK_TIME && CONFIG.CREATIVE_BREAK_TIME === 0.12);
+check('урон: рука 1, деревянный меч 2, каменный 3',
+  itemDamage(null) === 1 && itemDamage(ITEM.WOOD_SWORD) === 2 && itemDamage(ITEM.STONE_SWORD) === 3);
+
+// ---- Инвентарь: 36 ячеек, стопки до 64 ----
+const inv = new Inventory(CONFIG.INV_SIZE);
+check('инвентарь: 36 ячеек, первые 9 — хотбар', inv.size === 36 && CONFIG.HOTBAR_SIZE === 9);
+check('добавление с переносом в новые стопки', inv.add(blockItem(BLOCK.DIRT), 70) === 0
+  && inv.count(blockItem(BLOCK.DIRT)) === 70 && inv.get(0).count === 64 && inv.get(1).count === 6);
+check('инструменты не складываются в стопку', inv.add(ITEM.WOOD_AXE, 2) === 0 && inv.get(2).count === 1 && inv.get(3).count === 1);
+check('удаление предметов', inv.remove(blockItem(BLOCK.DIRT), 70) && inv.count(blockItem(BLOCK.DIRT)) === 0);
+check('удаление больше, чем есть — не проходит', inv.remove(blockItem(BLOCK.DIRT), 1) === false);
+check('сериализация инвентаря крутится без потерь', (() => {
+  const a = new Inventory(CONFIG.INV_SIZE);
+  a.setStack(5, { key: blockItem(BLOCK.GLASS), count: 12 });
+  a.setStack(20, { key: ITEM.STONE_SWORD, count: 1 });
+  const b = new Inventory(CONFIG.INV_SIZE);
+  b.deserialize(a.serialize());
+  return b.get(5).count === 12 && b.get(20).key === ITEM.STONE_SWORD && b.get(0) === null;
+})());
+check('инвентарь полон → лишнее не влезает', (() => {
+  const full = new Inventory(CONFIG.INV_SIZE);
+  for (let i = 0; i < full.size; i++) full.setStack(i, { key: blockItem(BLOCK.STONE), count: 64 });
+  return full.add(blockItem(BLOCK.STONE), 5) === 5;
+})());
+
+// ---- Крафт ----
+check('рецепты без ошибок', validateRecipes().length === 0, validateRecipes().join('; '));
+check('13 рецептов', RECIPES.length === 13, 'их ' + RECIPES.length);
+function craftWith(input, id) {
+  const i = new Inventory(CONFIG.INV_SIZE);
+  for (const [k, n] of Object.entries(input)) i.add(k, n);
+  const recipe = RECIPES.find((r) => r.id === id);
+  const res = craft(i, recipe);
+  return { res, i };
+}
+const r1 = craftWith({ [blockItem(BLOCK.LOG)]: 1 }, 'planks');
+check('бревно → 4 доски', r1.res === 'ok' && r1.i.count(blockItem(BLOCK.PLANKS)) === 4 && r1.i.count(blockItem(BLOCK.LOG)) === 0);
+const r2 = craftWith({ [blockItem(BLOCK.PLANKS)]: 2 }, 'sticks');
+check('2 доски → 4 палки', r2.res === 'ok' && r2.i.count(ITEM.STICK) === 4);
+const r3 = craftWith({ [blockItem(BLOCK.PLANKS)]: 3, [ITEM.STICK]: 2 }, 'wood_pickaxe');
+check('3 доски + 2 палки → деревянная кирка', r3.res === 'ok' && r3.i.count(ITEM.WOOD_PICKAXE) === 1
+  && r3.i.count(blockItem(BLOCK.PLANKS)) === 0 && r3.i.count(ITEM.STICK) === 0);
+check('3 доски + 2 палки → деревянный топор', craftWith({ [blockItem(BLOCK.PLANKS)]: 3, [ITEM.STICK]: 2 }, 'wood_axe').i.count(ITEM.WOOD_AXE) === 1);
+check('2 доски + палка → деревянный меч', craftWith({ [blockItem(BLOCK.PLANKS)]: 2, [ITEM.STICK]: 1 }, 'wood_sword').i.count(ITEM.WOOD_SWORD) === 1);
+check('3 булыжника + 2 палки → каменная кирка', craftWith({ [blockItem(BLOCK.COBBLE)]: 3, [ITEM.STICK]: 2 }, 'stone_pickaxe').i.count(ITEM.STONE_PICKAXE) === 1);
+check('2 булыжника + палка → каменный меч', craftWith({ [blockItem(BLOCK.COBBLE)]: 2, [ITEM.STICK]: 1 }, 'stone_sword').i.count(ITEM.STONE_SWORD) === 1);
+check('2 песка → стекло', craftWith({ [blockItem(BLOCK.SAND)]: 2 }, 'glass').i.count(blockItem(BLOCK.GLASS)) === 1);
+check('2 булыжника + 2 песка → 2 кирпича', craftWith({ [blockItem(BLOCK.COBBLE)]: 2, [blockItem(BLOCK.SAND)]: 2 }, 'brick').i.count(blockItem(BLOCK.BRICK)) === 2);
+check('2 булыжника → камень', craftWith({ [blockItem(BLOCK.COBBLE)]: 2 }, 'stone').i.count(blockItem(BLOCK.STONE)) === 1);
+check('2 камня → 2 сланца', craftWith({ [blockItem(BLOCK.STONE)]: 2 }, 'slate').i.count(blockItem(BLOCK.SLATE)) === 2);
+check('булыжник + палка + листва → 2 светокамня',
+  craftWith({ [blockItem(BLOCK.COBBLE)]: 1, [ITEM.STICK]: 1, [blockItem(BLOCK.LEAVES)]: 1 }, 'glow').i.count(blockItem(BLOCK.GLOW)) === 2);
+check('песок + земля → снег', craftWith({ [blockItem(BLOCK.SAND)]: 1, [blockItem(BLOCK.DIRT)]: 1 }, 'snow').i.count(blockItem(BLOCK.SNOW)) === 1);
+check('без ресурсов крафт не проходит', craftWith({}, 'planks').res === 'missing');
+check('ресурсы не списываются при нехватке', (() => {
+  const { i } = craftWith({ [blockItem(BLOCK.LOG)]: 1 }, 'planks');
+  const before = i.count(blockItem(BLOCK.LOG));
+  const recipe = RECIPES.find((r) => r.id === 'planks');
+  craft(i, recipe);
+  return i.count(blockItem(BLOCK.LOG)) === before;
+})());
+check('недоступный рецепт не проходит проверку доступности', (() => {
+  const i = new Inventory(CONFIG.INV_SIZE);
+  return !canCraft(i, RECIPES.find((r) => r.id === 'stone_pickaxe'));
+})());
+
 // Разметка: кнопка «К спавну» и слой молний
 const html = await (await import('node:fs/promises')).readFile(new URL('./index.html', import.meta.url), 'utf8');
 check('btn-home + lightning in markup', html.includes('id="btn-home"') && html.includes('id="lightning"'));
+check('разметка: выбор режима, инвентарь, рюкзак', html.includes('id="mode-screen"')
+  && html.includes('id="inventory-screen"') && html.includes('id="btn-bag"')
+  && html.includes('id="cursor-item"') && html.includes('id="inv-hotbar-row"'));
 
 console.log(failed === 0 ? '\nВсе проверки пройдены' : `\nПровалено проверок: ${failed}`);
 process.exit(failed ? 1 : 0);

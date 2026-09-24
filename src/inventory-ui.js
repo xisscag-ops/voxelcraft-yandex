@@ -38,7 +38,7 @@ export class InventoryUI {
       this.handlers.onClose?.();
     });
     // Клик по фону окна — вернуть стопку из «руки» в инвентарь
-    this._els.screen?.addEventListener('mousedown', (e) => {
+    this._els.screen?.addEventListener('pointerdown', (e) => {
       if (e.target === this._els.screen) this.stashCarry();
     });
     const move = (e) => this._moveCursor(e.clientX, e.clientY);
@@ -127,7 +127,7 @@ export class InventoryUI {
           slot.appendChild(cnt);
         }
       }
-      slot.addEventListener('mousedown', (e) => this._onSlotDown(e, i));
+      slot.addEventListener('pointerdown', (e) => this._onSlotDown(e, i));
       slot.addEventListener('contextmenu', (e) => e.preventDefault());
       container.appendChild(slot);
     }
@@ -152,7 +152,7 @@ export class InventoryUI {
           lock.textContent = '🔒';
           cell.appendChild(lock);
         }
-        cell.addEventListener('mousedown', (e) => {
+        cell.addEventListener('pointerdown', (e) => {
           e.preventDefault();
           if (entry.locked) this.handlers.onLocked?.(entry.key);
           else this.handlers.onPickCatalog?.(entry.key);
@@ -181,7 +181,7 @@ export class InventoryUI {
           .join(' · ');
         info.append(name, ing);
         row.appendChild(info);
-        row.addEventListener('mousedown', (e) => {
+        row.addEventListener('pointerdown', (e) => {
           e.preventDefault();
           this.handlers.onCraft?.(recipe);
         });

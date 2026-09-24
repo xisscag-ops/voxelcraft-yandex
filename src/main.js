@@ -527,6 +527,7 @@ function applyMode() {
 // ---------------------------------------------------------------- Стейты
 function enterGame() {
   state = 'game';
+  input.enabled = true;
   ui.showModeLabel(mode);
   sessionStart = sessionStart || performance.now();
   ui.showGame();
@@ -539,6 +540,8 @@ function enterGame() {
 function pauseGame() {
   if (state !== 'game') return;
   state = 'pause';
+  input.enabled = false;
+  input.keys.clear();
   ysdk.gameplayStop();
   saveGame();
   ui.showModeLabel(mode);
@@ -549,6 +552,7 @@ function pauseGame() {
 
 function resumeGame() {
   state = 'game';
+  input.enabled = true;
   ysdk.gameplayStart();
   ui.showGame();
   ui.setTouchVisible(input.isTouch);
@@ -558,6 +562,7 @@ function resumeGame() {
 async function saveAndQuit() {
   await saveGame(true);
   state = 'menu';
+  input.enabled = false;
   ui.setHasSave(true);
   ui.showScreen('menu-screen');
   ui.setTouchVisible(false);
@@ -577,7 +582,9 @@ function showHints() {
   if (input.isTouch) return;
   ui.toast(i18n.t('hint_break'), 4000);
   setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_place'), 3500), 4200);
-  setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_fly'), 3500), 8000);
+  setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_inventory'), 3500), 7800);
+  setTimeout(() => state === 'game'
+    && ui.toast(i18n.t(isCreative() ? 'hint_fly' : 'hint_eat'), 3500), 11400);
 }
 
 // ---------------------------------------------------------------- Награда за рекламу
@@ -692,6 +699,10 @@ async function startWorld(opts = {}) {
 function openInventory() {
   if (state !== 'game' || !world) return;
   state = 'inventory';
+  input.enabled = false;
+  input.keys.clear();
+  input.mouse.left = false;
+  input.mouse.right = false;
   ysdk.gameplayStop();
   if (document.pointerLockElement) document.exitPointerLock?.();
   invUI.show({ inv: inventory, mode, hotbarIndex, catalog: catalogEntries() });
@@ -704,7 +715,9 @@ function closeInventory() {
   if (state !== 'inventory') return;
   invUI.hide();
   state = 'game';
+  input.enabled = true;
   ui.showGame();
+  if (!input.isTouch) input.requestLock(canvas);   // закрытие по E/✕ — это жест пользователя
   ui.setTouchVisible(input.isTouch);
   refreshHotbar();
   ysdk.gameplayStart();
@@ -770,8 +783,7 @@ ui.handlers.onPlay = () => {
 };
 ui.handlers.onNewWorld = () => {
   input.enterFullscreen(); sfx.resume(); sfx.uiOk();
-  saveData = null;
-  showModeScreen();
+  showModeScreen();      // сейв затрётся только после выбора режима
 };
 ui.handlers.onMode = (m) => {
   input.enterFullscreen(); sfx.resume(); sfx.uiOk();
