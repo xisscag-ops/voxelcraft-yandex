@@ -218,11 +218,25 @@ export class Mob {
     v.group.position.set(this.pos.x, this.pos.y + hover, this.pos.z);
     v.group.rotation.y = this.heading;
     v.group.rotation.z = Math.sin(this.animT * 2) * 0.05;
+    // Анимация получения удара: отдача назад, сплющивание и дрожь
     if (this.flashT > 0) {
       this.flashT -= dt;
-      v.group.scale.setScalar(1 + Math.max(0, this.flashT) * 1.6);
+      const k = Math.max(0, this.flashT) / 0.35;      // 1 -> 0
+      const pulse = Math.sin((1 - k) * Math.PI);        // 0 -> 1 -> 0
+      v.group.rotation.x = -0.55 * pulse;               // отклоняется назад
+      v.group.rotation.z += Math.sin(this.animT * 60) * 0.12 * k;
+      v.group.scale.set(1 + 0.25 * pulse, 1 - 0.22 * pulse, 1 + 0.25 * pulse);
+      v.group.position.y += 0.12 * pulse;
     } else {
+      v.group.rotation.x = 0;
       v.group.scale.setScalar(1);
+    }
+    // Плавный отброс после удара
+    if (this.kbT > 0) {
+      const step = Math.min(this.kbT, dt);
+      this.kbT -= dt;
+      this.pos.x += this.kbX * step;
+      this.pos.z += this.kbZ * step;
     }
 
     // Атака
@@ -240,9 +254,16 @@ export class Mob {
     }
   }
 
+  knockback(dx, dz, power = 3.2) {
+    const l = Math.hypot(dx, dz) || 1;
+    this.kbX = (dx / l) * power;
+    this.kbZ = (dz / l) * power;
+    this.kbT = 0.18;
+  }
+
   hurt(n) {
     this.hp -= n;
-    this.flashT = 0.18;
+    this.flashT = 0.35;
     if (this.hp <= 0) {
       this.dead = true;
       return true;

@@ -371,3 +371,14 @@ html, body {
   #touch-buttons { right: 14px; bottom: 60px; grid-template-columns: repeat(2, 56px); }
   .touch-btn { width: 56px; height: 56px; font-size: 20px; }
 }
+
+/* ---------- Защита: ничего не двигается и не масштабируется ---------- */
+html, body {
+  position: fixed;
+  inset: 0;
+  overscroll-behavior: none;
+  -webkit-touch-callout: none;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+img, canvas { -webkit-user-drag: none; user-drag: none; }

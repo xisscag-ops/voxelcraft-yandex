@@ -1,7 +1,7 @@
 // VoxelCraft — точка входа: игровой цикл, чанки, строительство, сохранения
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
-import { BLOCK, BLOCKS, STARTER_PALETTE, BUILDER_PALETTE, breakKind, isSolid } from './blocks.js';
+import { BLOCK, BLOCKS, STARTER_PALETTE, BUILDER_PALETTE, breakKind, isSolid, isDecor } from './blocks.js';
 import { buildAtlas, tileColor, tileTexture, CRACK_TILES } from './textures.js';
 import { World } from './world.js';
 import { meshChunk } from './mesher.js';
@@ -98,6 +98,44 @@ const highlight = new THREE.LineSegments(
 );
 highlight.visible = false;
 scene.add(highlight);
+
+// ---------------------------------------------------------------- Рука (анимация удара)
+scene.add(camera);
+const hand = new THREE.Mesh(
+  new THREE.BoxGeometry(0.16, 0.16, 0.55),
+  new THREE.MeshBasicMaterial({ color: 0xd9a27a, depthTest: false, depthWrite: false }),
+);
+hand.renderOrder = 999;
+const handPivot = new THREE.Group();
+handPivot.position.set(0.42, -0.36, -0.55);
+hand.position.set(0, 0, -0.1);
+handPivot.add(hand);
+camera.add(handPivot);
+handPivot.visible = false;
+let handSwing = 0;       // 1 -> 0 во время взмаха
+let handSwingPow = 1;
+const HAND_SWING_TIME = 0.28;
+function swingHand(power = 1) {
+  if (handSwing > 0.35) return;
+  handSwing = 1;
+  handSwingPow = power;
+}
+function updateHand(dt, light) {
+  handPivot.visible = state === 'game';
+  if (handSwing > 0) handSwing = Math.max(0, handSwing - dt / HAND_SWING_TIME);
+  const p = Math.sin((1 - handSwing) * Math.PI) * handSwingPow; // 0 -> 1 -> 0
+  const moving = Math.abs(input.move.forward) + Math.abs(input.move.right) > 0.1;
+  handBob += dt * (moving ? 9 : 1.5);
+  const bob = moving ? 0.025 : 0.006;
+  handPivot.rotation.set(-1.1 * p + 0.1, 0.35 * p, 0.4 * p);
+  handPivot.position.set(
+    0.42 - 0.18 * p + Math.cos(handBob) * bob,
+    -0.36 + 0.08 * p - Math.abs(Math.sin(handBob)) * bob,
+    -0.55 - 0.15 * p,
+  );
+  hand.material.color.setHex(0xd9a27a).multiplyScalar(0.35 + 0.65 * light);
+}
+let handBob = 0;
 
 // Трещины при ломании блока (5 стадий)
 const crackMats = CRACK_TILES.map((t) => new THREE.MeshBasicMaterial({
@@ -269,9 +307,14 @@ function tryEat() {
 
 function doPlace(hit) {
   if (!hit) return;
-  const x = hit.x + hit.nx, y = hit.y + hit.ny, z = hit.z + hit.nz;
+  swingHand(0.6);
+  // Прицел на траве/цветке — ставим блок на её место
+  const onDecor = isDecor(hit.id);
+  const x = onDecor ? hit.x : hit.x + hit.nx;
+  const y = onDecor ? hit.y : hit.y + hit.ny;
+  const z = onDecor ? hit.z : hit.z + hit.nz;
   const cur = world.getBlock(x, y, z);
-  if (cur !== BLOCK.AIR && cur !== BLOCK.WATER) return;
+  if (cur !== BLOCK.AIR && cur !== BLOCK.WATER && !isDecor(cur)) return;
   // Не ставим блок внутрь игрока
   const px = player.pos.x, py = player.pos.y, pz = player.pos.z;
   const HW = CONFIG.PLAYER_WIDTH / 2 + 0.01;
@@ -280,6 +323,12 @@ function doPlace(hit) {
     z + 1 > pz - HW && z < pz + HW;
   const id = palette[hotbarIndex];
   if (overlap && isSolid(id)) return;
+  if (isDecor(cur)) {
+    // Трава автоматически ломается при установке блока
+    if (isDecor(id) && cur === id) return;
+    particles.burst(x, y, z, tileColor(BLOCKS[cur].tiles[0]), 8);
+    sfx.breakBlock(breakKind(cur));
+  }
   if (world.setBlock(x, y, z, id)) {
     sfx.place();
     particles.burst(x, y, z, tileColor(BLOCKS[id].tiles[0]), 5);
@@ -499,9 +548,9 @@ async function startWorld(newWorld = false) {
 }
 
 // ---------------------------------------------------------------- Обработчики UI
-ui.handlers.onPlay = () => { sfx.resume(); sfx.uiOk(); startWorld(false); };
-ui.handlers.onNewWorld = () => { sfx.resume(); sfx.uiOk(); saveData = null; startWorld(true); };
-ui.handlers.onResume = () => { sfx.uiClick(); resumeGame(); };
+ui.handlers.onPlay = () => { input.enterFullscreen(); sfx.resume(); sfx.uiOk(); startWorld(false); };
+ui.handlers.onNewWorld = () => { input.enterFullscreen(); sfx.resume(); sfx.uiOk(); saveData = null; startWorld(true); };
+ui.handlers.onResume = () => { input.enterFullscreen(); sfx.uiClick(); resumeGame(); };
 ui.handlers.onSaveQuit = async () => { sfx.uiOk(); await saveAndQuit(); };
 ui.handlers.onReward = () => requestReward();
 ui.handlers.onSlot = (i) => {
@@ -682,13 +731,13 @@ function frame() {
       attackCd -= dt;
       if (mobTarget && attackCd <= 0) {
         attackCd = 0.36;
+        swingHand(1);
         mobTarget.hurt(1);
         sfx.hitMob();
         particles.burst(mobTarget.pos.x, mobTarget.pos.y + 0.5, mobTarget.pos.z, 0x2a2140, 8);
         const kx = mobTarget.pos.x - player.pos.x, kz = mobTarget.pos.z - player.pos.z;
         const kl = Math.hypot(kx, kz) || 1;
-        mobTarget.pos.x += (kx / kl) * 0.4;
-        mobTarget.pos.z += (kz / kl) * 0.4;
+        mobTarget.knockback(kx / kl, kz / kl, 3.2);
       }
     } else {
       attackCd = 0;
@@ -727,6 +776,7 @@ function frame() {
         ? dt / 0.3
         : dt / (CONFIG.BREAK_TIME[kind] ?? CONFIG.BREAK_TIME.default);
       breakProgress += rate;
+      if (handSwing <= 0) swingHand(0.7);
       // Пыль из трещин
       breakDustT += dt;
       if (breakDustT > 0.1) {
@@ -811,6 +861,7 @@ function frame() {
     sfx.setRainLevel(weather.wetness);
   }
 
+  updateHand(dt, sky.lightLevel ?? 1);
   renderer.render(scene, camera);
 }
 
