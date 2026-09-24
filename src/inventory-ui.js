@@ -73,7 +73,7 @@ export class InventoryUI {
     this.catalog = catalog || [];
     this.open_ = true;
     this.carry = null;
-    this.setGridSize(gridSize, false);
+    this.setGridSize(gridSize, true);
     // В креативе слева по умолчанию каталог, в выживании — рецепты
     this.tab = tab || (this.creative ? (this._userTab || 'catalog') : 'craft');
     this._els.screen?.classList.remove('hidden');
@@ -91,7 +91,9 @@ export class InventoryUI {
 
   /** Сменить размер сетки крафта; содержимое возвращается в инвентарь */
   setGridSize(size, dump = true) {
-    if (dump && size !== this.gridSize) this.dumpGrid();
+    // размер не менялся — сетку не трогаем (в ней могут остаться предметы)
+    if (size === this.gridSize && this.grid.length === size * size) return;
+    if (dump) this.dumpGrid();
     this.gridSize = size;
     this.grid = emptyGrid(size);
     if (this._els.craftTitle) {
