@@ -68,7 +68,7 @@ export class Weather {
     const y = initial ? p.y - 6 + Math.random() * (top - p.y + 6) : top;
     const k = i * 6;
     this.rainPos[k] = x; this.rainPos[k + 1] = y; this.rainPos[k + 2] = z;
-    this.rainPos[k + 3] = x; this.rainPos[k + 4] = y - 0.45; this.rainPos[k + 5] = z;
+    this.rainPos[k + 3] = x; this.rainPos[k + 4] = y - 0.7; this.rainPos[k + 5] = z;
     this.rainVel[i] = 14 + Math.random() * 8;
     const w = 0.55 + Math.random() * 0.25;
     for (const vi of [0, 3]) {
@@ -148,7 +148,7 @@ export class Weather {
           const k = i * 6;
           const ny = this.rainPos[k + 1] - this.rainVel[i] * dt;
           this.rainPos[k + 1] = ny;
-          this.rainPos[k + 4] = ny - 0.45;
+          this.rainPos[k + 4] = ny - 0.7;
           // У земли — перерождение сверху
           if (ny < (world.heightAt(Math.floor(this.rainPos[k]), Math.floor(this.rainPos[k + 2])) || 0) - 0.5) {
             this._respawnDrop(i, playerPos, world);
