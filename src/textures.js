@@ -13,7 +13,7 @@ export const T = {
   // Стадии трещин при ломании
   CRACK0: 17, CRACK1: 18, CRACK2: 19, CRACK3: 20, CRACK4: 21,
   // Декоративная растительность
-  GRASS_TUFT: 22, FLOWER_RED: 23, FLOWER_YELLOW: 24,
+  GRASS_TUFT: 22, FLOWER_RED: 23, FLOWER_YELLOW: 24, FERN: 25, CLOVER: 26,
 };
 
 export const CRACK_TILES = [17, 18, 19, 20, 21];
@@ -264,6 +264,37 @@ const painters = {
       px(data, x, y, 236 + (rng() * 18 | 0), 205, 60);
     }
     px(data, 8, 6, 255, 235, 120);
+  },
+  [T.FERN](data, rng) {
+    // Дуговые вайи с «листиками» по бокам
+    for (let f = 0; f < 4; f++) {
+      const lean = f < 2 ? -1 : 1;
+      const x0 = 8 + lean * (1 + (f % 2) * 2);
+      for (let i = 0; i < 9; i++) {
+        const x = x0 + lean * (((i * 0.55) | 0));
+        const y = 15 - i * 1.4;
+        const v = (rng() - 0.5) * 22;
+        px(data, x, (y | 0), 66 + v, 128 + v, 48 + v);
+        if (i % 2 === 1 && i > 1) {
+          px(data, x - 1, (y | 0), 58 + v, 112 + v, 42 + v);
+          px(data, x + 1, (y | 0), 58 + v, 112 + v, 42 + v);
+        }
+      }
+    }
+  },
+  [T.CLOVER](data, rng) {
+    // Стебель и три округлых листика
+    for (let y = 15; y >= 9; y--) px(data, 8, y, 64, 126, 48);
+    px(data, 9, 11, 58, 115, 44);
+    for (const [cx, cy] of [[5, 6], [8, 4], [11, 6]]) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 1 && dy === -1) continue;
+          const v = (rng() - 0.5) * 18;
+          px(data, cx + dx, cy + dy, 82 + v, 158 + v, 58 + v);
+        }
+      }
+    }
   },
 };
 

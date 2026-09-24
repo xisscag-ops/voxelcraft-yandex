@@ -120,17 +120,56 @@ function buildSlime(mat, geoCache) {
   return { group: g, legs: [], head: null, ears: [], hop: true, slime: body };
 }
 
+const BIRD_COLORS = [
+  [0.9, 0.9, 0.93],   // белая
+  [0.55, 0.42, 0.32], // воробей
+  [0.38, 0.48, 0.68], // синица
+];
+
+function wingPart(mat, geoCache, key, w, h, d, color, side) {
+  if (!geoCache.has(key)) {
+    const g = partGeometry(w, h, d, color);
+    g.translate(side * w / 2, 0, 0); // пивот у корпуса
+    geoCache.set(key, g);
+  }
+  return new THREE.Mesh(geoCache.get(key), mat);
+}
+
+function buildBird(mat, geoCache, ci) {
+  const c = BIRD_COLORS[ci % BIRD_COLORS.length];
+  const g = new THREE.Group();
+  const body = fixedPart(mat, geoCache, `bd-body-${ci}`, 0.22, 0.18, 0.34, c);
+  const head = fixedPart(mat, geoCache, `bd-head-${ci}`, 0.14, 0.13, 0.13, c);
+  head.position.set(0, 0.1, 0.22);
+  const beak = fixedPart(mat, geoCache, `bd-beak-${ci}`, 0.05, 0.04, 0.09, [0.95, 0.7, 0.25]);
+  beak.position.set(0, 0.08, 0.32);
+  const tail = fixedPart(mat, geoCache, `bd-tail-${ci}`, 0.09, 0.03, 0.16, c);
+  tail.position.set(0, 0.02, -0.24);
+  const wings = [];
+  for (const s of [-1, 1]) {
+    const wing = wingPart(mat, geoCache, `bd-wing-${s}-${ci}`, 0.3, 0.03, 0.2, c, s);
+    wing.position.set(s * 0.08, 0.05, 0.02);
+    wings.push(wing);
+    g.add(wing);
+  }
+  g.add(body, head, beak, tail);
+  return { group: g, legs: [], head: null, ears: [], wings, hop: false, bird: true };
+}
+
 export class Mob {
   constructor(world, visuals, type, x, y, z) {
     this.world = world;
     this.v = visuals;
-    this.type = type;            // 'bunny' | 'sheep' | 'slime'
+    this.type = type;            // 'bunny' | 'sheep' | 'slime' | 'bird'
     this.pos = { x, y, z };
+    this.home = { x, y, z };
     this.heading = Math.random() * Math.PI * 2;
     this.state = 'idle';
     this.stateT = 1 + Math.random() * 2;
     this.thinkT = Math.random();
     this.animT = Math.random() * 10;
+    this.soundT = 1 + Math.random() * 3;
+    this.onSound = null;         // (kind, dist) => void
     this.speed = type === 'bunny' ? 2.2 : type === 'slime' ? 1.6 : 1.1;
     visuals.group.position.set(x, y, z);
     this.yBase = y;
@@ -181,6 +220,9 @@ export class Mob {
   }
 
   update(dt, playerPos) {
+    // Птицы летают отдельно — без привязки к земле
+    if (this.type === 'bird') return this.updateBird(dt, playerPos);
+
     this.thinkT -= dt;
     if (this.thinkT <= 0) {
       this.thinkT = 0.5 + Math.random() * 0.4;
@@ -250,6 +292,62 @@ export class Mob {
     if (v.head && this.type === 'bunny') {
       v.head.rotation.x = Math.sin(this.animT * 3) * 0.08;
     }
+
+    // Звуки: прыжок зайки, блеяние барашка
+    const dist = Math.hypot(this.pos.x - playerPos.x, this.pos.z - playerPos.z);
+    this.soundT -= dt;
+    if (this.soundT <= 0 && this.onSound && dist < 14) {
+      if (this.type === 'bunny' && walking && Math.random() < 0.35) {
+        this.onSound('hop', dist);
+        this.soundT = 0.7;
+      } else if (this.type === 'sheep' && Math.random() < 0.12) {
+        this.onSound('bleat', dist);
+        this.soundT = 4;
+      } else {
+        this.soundT = 0.4;
+      }
+    }
+  }
+
+  updateBird(dt, playerPos) {
+    this.animT += dt;
+    const v = this.v;
+    // Кружим вокруг точки спавна, плавно меняя курс
+    this.heading += Math.sin(this.animT * 0.7 + this.pos.x) * dt * 0.9;
+    // Возвращаемся, если залетели далеко от дома
+    const hx = this.home.x - this.pos.x, hz = this.home.z - this.pos.z;
+    if (hx * hx + hz * hz > 24 * 24) this.heading = Math.atan2(hx, hz);
+    // Пугаемся игрока
+    const dx = this.pos.x - playerPos.x, dz = this.pos.z - playerPos.z;
+    const dist = Math.hypot(dx, dz);
+    let speed = 2.6;
+    if (dist < 4) {
+      this.heading = Math.atan2(dx, dz);
+      speed = 5;
+    }
+
+    this.pos.x += Math.sin(this.heading) * speed * dt;
+    this.pos.z += Math.cos(this.heading) * speed * dt;
+    // Плавная волна высоты; держимся над землёй
+    const targetY = this.home.y + Math.sin(this.animT * 0.9) * 1.6;
+    this.pos.y += (targetY - this.pos.y) * Math.min(1, dt * 2);
+
+    v.group.position.set(this.pos.x, this.pos.y, this.pos.z);
+    v.group.rotation.y = this.heading + Math.PI;
+    v.group.rotation.z = Math.sin(this.animT * 0.7) * 0.15; // крен в поворотах
+
+    // Взмахи крыльев (в полёте чаще, в парении реже)
+    const flap = Math.sin(this.animT * (dist < 4 ? 16 : 9)) * 0.85;
+    if (v.wings) {
+      v.wings[0].rotation.z = -flap;
+      v.wings[1].rotation.z = flap;
+    }
+
+    this.soundT -= dt;
+    if (this.soundT <= 0 && this.onSound && dist < 16 && Math.random() < 0.25) {
+      this.onSound('chirp', dist);
+    }
+    if (this.soundT <= 0) this.soundT = 1.2;
   }
 }
 
@@ -274,13 +372,14 @@ export class MobManager {
 
   _randomType() {
     const r = Math.random();
-    return r < 0.45 ? 'bunny' : r < 0.8 ? 'sheep' : 'slime';
+    return r < 0.32 ? 'bunny' : r < 0.6 ? 'sheep' : r < 0.78 ? 'slime' : 'bird';
   }
 
   _buildVisuals(type) {
     const ci = (Math.random() * 3) | 0;
     if (type === 'bunny') return buildBunny(this.mat, this.geoCache, ci);
     if (type === 'sheep') return buildSheep(this.mat, this.geoCache, ci);
+    if (type === 'bird') return buildBird(this.mat, this.geoCache, ci);
     return buildSlime(this.slimeMat, this.geoCache);
   }
 
@@ -292,15 +391,28 @@ export class MobManager {
       const x = playerPos.x + Math.sin(ang) * r;
       const z = playerPos.z + Math.cos(ang) * r;
       const h = this.world.heightAt(Math.floor(x), Math.floor(z));
+      const type = this._randomType();
+
+      // Птицы — в небе над любой поверхностью
+      if (type === 'bird') {
+        if (h <= 2) continue;
+        const visuals = this._buildVisuals(type);
+        const mob = new Mob(this.world, visuals, type, x, Math.max(h + 7, this.world.seaLevel + 6) + Math.random() * 5, z);
+        mob.onSound = this.onSound;
+        this.scene.add(visuals.group);
+        this.mobs.push(mob);
+        return;
+      }
+
       if (h <= this.world.seaLevel + 1) continue;
       // Проверяем настоящий блок сверху
       const top = this.world.getBlock(Math.floor(x), h, Math.floor(z));
       const above = this.world.getBlock(Math.floor(x), h + 1, Math.floor(z));
       const above2 = this.world.getBlock(Math.floor(x), h + 2, Math.floor(z));
       if ((top !== BLOCK.GRASS && top !== BLOCK.SNOW) || above !== BLOCK.AIR || above2 !== BLOCK.AIR) continue;
-      const type = this._randomType();
       const visuals = this._buildVisuals(type);
       const mob = new Mob(this.world, visuals, type, x + 0.5, h + 1, z + 0.5);
+      mob.onSound = this.onSound;
       this.scene.add(visuals.group);
       this.mobs.push(mob);
       return;

@@ -129,7 +129,7 @@ let decorCount = 0;
 for (let cz = -2; cz <= 2; cz++) {
   for (let cx = -2; cx <= 2; cx++) {
     const c = wd.getChunk(cx, cz);
-    for (const v of c.blocks) if (v === 15 || v === 16 || v === 17) decorCount++;
+    for (const v of c.blocks) if (v >= 15 && v <= 19) decorCount++;
   }
 }
 check('decor (grass/flowers) generated', decorCount > 5);

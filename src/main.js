@@ -66,6 +66,13 @@ const sky = new Sky(THREE, scene);
 sky.viewDistance = settings.viewDistance;
 const particles = new Particles(THREE, scene);
 const mobManager = new MobManager(scene, null);
+// Звуки мобов с затуханием по расстоянию
+mobManager.onSound = (kind, dist) => {
+  const vol = 1 / (1 + dist * 0.35);
+  if (kind === 'hop') sfx.mobHop(vol);
+  else if (kind === 'bleat') sfx.bleat(vol);
+  else if (kind === 'chirp') sfx.chirp(vol);
+};
 
 // Контур выбранного блока
 const highlight = new THREE.LineSegments(
@@ -193,6 +200,7 @@ function rebuildPalette() {
 let breakTarget = null;    // {x,y,z}
 let breakProgress = 0;
 let breakQuick = false;    // быстрое ломание по тапу (тач-экран)
+let breakDustT = 0;
 let placeCooldown = 0;
 
 function pickTarget() {
@@ -576,6 +584,12 @@ function frame() {
         ? dt / 0.3
         : dt / (CONFIG.BREAK_TIME[kind] ?? CONFIG.BREAK_TIME.default);
       breakProgress += rate;
+      // Пыль из трещин
+      breakDustT += dt;
+      if (breakDustT > 0.1) {
+        breakDustT = 0;
+        particles.burst(breaking.x, breaking.y, breaking.z, tileColor(BLOCKS[breaking.id].tiles[0]), 2);
+      }
       if (breakProgress >= 1) {
         doBreak(breaking);
       } else {
@@ -586,6 +600,7 @@ function frame() {
       breakTarget = null;
       breakProgress = 0;
       breakQuick = false;
+      breakDustT = 0;
       ui.setBreakProgress(0);
       crackMesh.visible = false;
     }
@@ -698,4 +713,5 @@ window.VoxelCraft = {
   get scene() { return scene; },
   get renderer() { return renderer; },
   get camera() { return camera; },
+  get mobs() { return mobManager; },
 };

@@ -115,4 +115,31 @@ export class Sfx {
     this._tone({ freq: 440, dur: 0.12, gain: 0.1, type: 'square', slide: 220 });
     setTimeout(() => this._tone({ freq: 660, dur: 0.15, gain: 0.1, type: 'square', slide: 220 }), 120);
   }
+
+  // ---- Звуки мобов (vol затухает с расстоянием) ----
+  mobHop(vol = 1) {
+    this._burst({ freq: 340, dur: 0.05, gain: 0.07 * vol, pitchDrop: 0.5 });
+  }
+  bleat(vol = 1) {
+    // Короткое вибратто — «м-э-э»
+    if (!this.enabled || !this._ensure() || this.ctx.state === 'suspended') return;
+    const t0 = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(300, t0);
+    // Дрожание
+    for (let i = 0; i < 6; i++) {
+      osc.frequency.setValueAtTime(270 + (i % 2) * 60, t0 + i * 0.06);
+    }
+    osc.frequency.linearRampToValueAtTime(210, t0 + 0.4);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.05 * vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.42);
+    osc.connect(g); g.connect(this.master);
+    osc.start(t0); osc.stop(t0 + 0.45);
+  }
+  chirp(vol = 1) {
+    this._tone({ freq: 1850, dur: 0.07, gain: 0.035 * vol, type: 'sine', slide: 650 });
+    setTimeout(() => this._tone({ freq: 2100, dur: 0.05, gain: 0.03 * vol, type: 'sine', slide: 400 }), 90);
+  }
 }

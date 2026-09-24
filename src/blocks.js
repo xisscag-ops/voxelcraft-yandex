@@ -20,6 +20,8 @@ export const BLOCK = {
   TALL_GRASS: 15,
   FLOWER_RED: 16,
   FLOWER_YELLOW: 17,
+  FERN: 18,
+  CLOVER: 19,
 };
 
 // tiles: [top, bottom, side] — индексы тайлов атласа
@@ -42,6 +44,8 @@ export const BLOCKS = [
   { id: 15, name: 'tall_grass', solid: false, tiles: [22, 22, 22], break: 'fast', transparent: true, decor: true },
   { id: 16, name: 'flower_red', solid: false, tiles: [23, 23, 23], break: 'fast', transparent: true, decor: true },
   { id: 17, name: 'flower_yellow', solid: false, tiles: [24, 24, 24], break: 'fast', transparent: true, decor: true },
+  { id: 18, name: 'fern', solid: false, tiles: [25, 25, 25], break: 'fast', transparent: true, decor: true },
+  { id: 19, name: 'clover', solid: false, tiles: [26, 26, 26], break: 'fast', transparent: true, decor: true },
 ];
 
 // Названия для UI
@@ -51,12 +55,14 @@ export const BLOCK_NAMES = {
     6: 'Бревно', 7: 'Доски', 8: 'Листва', 9: 'Стекло', 10: 'Кирпич',
     11: 'Светокамень', 12: 'Снег', 13: 'Вода', 14: 'Сланец',
     15: 'Трава', 16: 'Красный цветок', 17: 'Жёлтый цветок',
+    18: 'Папоротник', 19: 'Клевер',
   },
   en: {
     1: 'Grass', 2: 'Dirt', 3: 'Stone', 4: 'Cobblestone', 5: 'Sand',
     6: 'Log', 7: 'Planks', 8: 'Leaves', 9: 'Glass', 10: 'Brick',
     11: 'Glowstone', 12: 'Snow', 13: 'Water', 14: 'Slate',
     15: 'Tall grass', 16: 'Red flower', 17: 'Yellow flower',
+    18: 'Fern', 19: 'Clover',
   },
 };
 
@@ -64,7 +70,7 @@ export const BLOCK_NAMES = {
 export const STARTER_PALETTE = [BLOCK.GRASS, BLOCK.DIRT, BLOCK.STONE, BLOCK.SAND, BLOCK.LOG, BLOCK.PLANKS];
 export const BUILDER_PALETTE = [
   BLOCK.COBBLE, BLOCK.LEAVES, BLOCK.GLASS, BLOCK.BRICK, BLOCK.GLOW, BLOCK.SNOW, BLOCK.SLATE,
-  BLOCK.TALL_GRASS, BLOCK.FLOWER_RED, BLOCK.FLOWER_YELLOW,
+  BLOCK.TALL_GRASS, BLOCK.FERN, BLOCK.CLOVER, BLOCK.FLOWER_RED, BLOCK.FLOWER_YELLOW,
 ];
 
 export function isSolid(id) {

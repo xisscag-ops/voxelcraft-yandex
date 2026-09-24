@@ -134,8 +134,10 @@ export class World {
         if (chunk.get(x, h + 1, z) !== BLOCK.AIR) continue;
         const r = rng();
         if (r < 0.12) chunk.set(x, h + 1, z, BLOCK.TALL_GRASS);
-        else if (r < 0.145) chunk.set(x, h + 1, z, BLOCK.FLOWER_RED);
-        else if (r < 0.165) chunk.set(x, h + 1, z, BLOCK.FLOWER_YELLOW);
+        else if (r < 0.165) chunk.set(x, h + 1, z, BLOCK.FERN);
+        else if (r < 0.19) chunk.set(x, h + 1, z, BLOCK.CLOVER);
+        else if (r < 0.215) chunk.set(x, h + 1, z, BLOCK.FLOWER_RED);
+        else if (r < 0.235) chunk.set(x, h + 1, z, BLOCK.FLOWER_YELLOW);
       }
     }
 
