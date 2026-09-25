@@ -44,7 +44,7 @@ export const STRINGS = {
     ready: 'Мир готов!',
     howto_text: `
       <b>ПК:</b> WASD — движение, мышь — обзор, ЛКМ — сломать (удерживать), ПКМ — поставить,
-      колесо/1-9 — выбор слота, пробел — прыжок, Ctrl — бег, Shift — вниз в полёте,
+      колесо/1-9 — выбор слота, пробел — прыжок, Ctrl — бег, Shift — красться (в полёте — вниз),
       <b>E</b> — инвентарь и крафт, <b>F</b> — съесть яблоко сразу, Esc — пауза.
       С едой в руке удерживайте <b>ЛКМ</b> — персонаж жуёт, и предмет уходит в дело.<br><br>
       <b>Миры:</b> создавайте отдельные миры, задавайте имя, сид, режим и сложность; прогресс
@@ -54,7 +54,12 @@ export const STRINGS = {
       <b>Крафт:</b> откройте инвентарь (E). Слева — список рецептов (доступные подсвечены зелёным,
       клик — быстрый крафт), справа вверху — сетка 2×2: кладите предметы ЛКМ/ПКМ и забирайте результат.
       Рецепты «3×3» (кирки, топоры, мечи) требуют <b>верстак</b>: 4 доски в сетке 2×2 → верстак,
-      поставьте его и нажмите ПКМ.<br><br>
+      поставьте его и нажмите ПКМ. Железные, золотые и алмазные инструменты куются только
+      на <b>наковальне</b> (3 слитка + 4 доски). Стопки в инвентаре можно <b>перетаскивать</b> мышью,
+      а Shift+клик перекладывает их в хотбар — если не открыт верстак, печь или сундук.<br><br>
+      <b>Добыча:</b> овцы дают шерсть и мясо, волки — мясо и клыки, мясо жарится в печи.
+      Две плиты в одной клетке складываются в полный блок, из берёзовых брёвен получаются
+      берёзовые доски, а забор не даёт пройти.<br><br>
       <b>Телефон:</b> слева — джойстик, справа — обзор; короткий тап — сломать блок,
       а с едой в руке — удерживайте палец, чтобы поесть.
       Кнопки: прыжок, поставить, копать, слот «🎒» — инвентарь.<br><br>
@@ -110,13 +115,24 @@ export const STRINGS = {
     mode_creative_sub: 'Все блоки бесконечны, полёт двойным пробелом, бессмертие',
     mode_now: 'Режим',
     inv_title: 'Инвентарь',
-    inv_hint: 'ЛКМ — взять/положить стопку, ПКМ — по одному или половину',
+    inv_hint: 'ЛКМ — взять/положить стопку, ПКМ — по одному или половину. Стопку можно перетащить мышью в другую ячейку.',
     craft_grid: 'Крафт 2×2',
-    craft_hint: 'Собирайте предметы в сетке, результат — справа. Клик по рецепту — быстрый крафт, Shift+клик — переложить',
+    craft_hint: 'Собирайте предметы в сетке, результат — справа. Клик по рецепту — быстрый крафт, Shift+клик — переложить (работает, когда верстак/печь/сундук закрыты)',
     table_title: 'Верстак 3×3',
     table_hint: 'ПКМ по верстаку — крафт 3×3',
     need_table: 'Нужен верстак',
     need_table_short: '3×3',
+    anvil_title: 'Наковальня',
+    anvil_craft_title: 'Ковка 3×3',
+    anvil_hint: 'На наковальне куются железные, золотые и алмазные инструменты. Перетащите слитки в сетку или кликните по рецепту слева.',
+    anvil_recipes: 'Ковка',
+    need_anvil: 'Нужна наковальня: 3 железных слитка + 4 доски → поставьте её и нажмите ПКМ',
+    need_anvil_short: 'наковальня',
+    anvil_open: 'Наковальня открыта',
+    sneak_hint: 'Shift — красться: медленнее, но не упадёте с края',
+    music: 'Музыка',
+    music_hint: 'Треки берутся из папки music/ (music1.mp3 … music4.mp3)',
+    dropped: 'Выпало',
     craft_take: 'Заберите результат',
     craft_nothing: 'Такой рецепт неизвестен',
     table_open: 'Верстак открыт',
@@ -204,7 +220,7 @@ export const STRINGS = {
     ready: 'World ready!',
     howto_text: `
       <b>Desktop:</b> WASD — move, mouse — look, LMB — break (hold), RMB — place,
-      wheel/1-9 — pick slot, Space — jump, Ctrl — sprint, Shift — down while flying,
+      wheel/1-9 — pick slot, Space — jump, Ctrl — sprint, Shift — sneak (down while flying),
       <b>E</b> — inventory & crafting, <b>F</b> — eat an apple instantly, Esc — pause.
       With food in hand hold <b>LMB</b> — the character chews and the item is used up.<br><br>
       <b>Worlds:</b> create separate worlds with a name, seed, mode and difficulty; each keeps its own progress.
@@ -214,7 +230,12 @@ export const STRINGS = {
       <b>Crafting:</b> open the inventory (E). The recipe list is on the left (available ones are
       green, click for instant crafting), the 2×2 grid is above: place items with LMB/RMB and take the
       result. Recipes marked “3×3” (pickaxes, axes, swords) need a <b>crafting table</b>:
-      4 planks in the 2×2 grid → table, place it and press RMB.<br><br>
+      4 planks in the 2×2 grid → table, place it and press RMB. Iron, golden and diamond tools
+      can only be forged on an <b>anvil</b> (3 ingots + 4 planks). Stacks can be <b>dragged</b>
+      between slots, and Shift+click moves them to the hotbar — unless a table, furnace or chest is open.<br><br>
+      <b>Gathering:</b> sheep drop wool and meat, wolves drop meat and fangs, meat can be cooked
+      in a furnace. Two slabs in one cell merge into a full block, birch logs make birch planks,
+      and fences block the way.<br><br>
       <b>Mobile:</b> joystick on the left, look on the right; quick tap — break a block,
       with food in hand hold your finger to eat.
       Buttons: jump, place, dig, «🎒» — inventory.<br><br>
@@ -270,13 +291,24 @@ export const STRINGS = {
     mode_creative_sub: 'Infinite blocks, double-tap space to fly, immortal',
     mode_now: 'Mode',
     inv_title: 'Inventory',
-    inv_hint: 'LMB — take/put a stack, RMB — one item or half',
+    inv_hint: 'LMB — take/put a stack, RMB — one item or half. You can drag a stack into another slot.',
     craft_grid: 'Crafting 2×2',
-    craft_hint: 'Arrange items in the grid; the result is on the right. Click a recipe to craft instantly, Shift+click to move items',
+    craft_hint: 'Arrange items in the grid; the result is on the right. Click a recipe to craft instantly, Shift+click to move items (only when no table/furnace/chest is open)',
     table_title: 'Table 3×3',
     table_hint: 'RMB on a crafting table — 3×3 crafting',
     need_table: 'Crafting table required',
     need_table_short: '3×3',
+    anvil_title: 'Anvil',
+    anvil_craft_title: 'Smithing 3×3',
+    anvil_hint: 'Iron, golden and diamond tools are forged on the anvil. Drag ingots into the grid or click a recipe on the left.',
+    anvil_recipes: 'Smithing',
+    need_anvil: 'Anvil required: 3 iron ingots + 4 planks → place it and press RMB',
+    need_anvil_short: 'anvil',
+    anvil_open: 'Anvil opened',
+    sneak_hint: 'Shift — sneak: slower, but you will not fall off edges',
+    music: 'Music',
+    music_hint: 'Tracks are loaded from the music/ folder (music1.mp3 … music4.mp3)',
+    dropped: 'Dropped',
     craft_take: 'Take the result',
     craft_nothing: 'Unknown recipe',
     table_open: 'Crafting table opened',

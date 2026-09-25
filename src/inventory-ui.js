@@ -3,7 +3,8 @@
 import { HOTBAR_SIZE } from './inventory.js';
 import { itemIconEl } from './icons.js';
 import { itemDef, itemName, itemDescription, maxStack } from './items.js';
-import { RECIPES, canCraft, ingredients, emptyGrid, gridResult, craftFromGrid, needsTable } from './crafts.js';
+import { canCraft, ingredients, emptyGrid, gridResult, craftFromGrid, needsTable,
+  recipesFor, stationAllows, stationInfo } from './crafts.js';
 import { SMELT_TIME, smeltResult } from './furnace.js';
 
 export class InventoryUI {
@@ -22,6 +23,7 @@ export class InventoryUI {
     this.station = null;      // { type: 'furnace', machine } | { type: 'chest', inv }
     this._furnaceSignature = '';
     this._paint = null;       // мазок зажатой кнопкой по клеткам (как в Minecraft)
+    this._drag = null;        // настоящее перетаскивание стопки из ячейки в ячейку
     this.handlers = {
       onChange: null, onCraft: null, onPickCatalog: null, onLocked: null,
       onClose: null, onSelect: null, onSound: null, onQuickCraft: null,
@@ -78,7 +80,7 @@ export class InventoryUI {
 
     // Протаскивание с зажатой кнопкой: раскладываем предметы по клеткам крафта
     document.addEventListener('pointermove', (e) => this._onPaintMove(e));
-    const endPaint = () => { this._paint = null; };
+    const endPaint = (e) => { this._paint = null; this._endDrag(e); };
     document.addEventListener('mouseup', endPaint);
     document.addEventListener('pointerup', endPaint);
     document.addEventListener('touchend', endPaint);
@@ -98,6 +100,17 @@ export class InventoryUI {
 
   isOpen() { return this.open_; }
 
+  /**
+   * «Станок» для рецептов: верстак (3×3) или наковальня. Печь и сундук крафта
+   * не дают, поэтому для них возвращается null (сетка 2×2 как в инвентаре).
+   */
+  craftStation() {
+    const st = this.station;
+    if (!st) return null;
+    if (st.type === 'table' || st.type === 'anvil') return st;
+    return null;
+  }
+
   /** Открыть окно; mode — 'survival' | 'creative', gridSize — 2 (инвентарь) или 3 (верстак) */
   show({ inv, mode, hotbarIndex, catalog, gridSize = 2, tab = null, station = null }) {
     this.inv = inv;
@@ -109,7 +122,10 @@ export class InventoryUI {
     this._furnaceSignature = '';
     this.open_ = true;
     this.carry = null;
+    this._drag = null;
+    this._paint = null;
     this.setGridSize(gridSize, true);
+    this._updateCraftTitle();
     // В креативе слева по умолчанию каталог, в выживании — рецепты
     this.tab = tab || (this.creative ? (this._userTab || 'catalog') : 'craft');
     this._els.screen?.classList.remove('hidden');
@@ -122,6 +138,8 @@ export class InventoryUI {
     this.dumpGrid();
     this.open_ = false;
     this.station = null;
+    this._drag = null;
+    this._paint = null;
     this._furnaceSignature = '';
     this._els.screen?.classList.add('hidden');
     this._els.cursor?.classList.add('hidden');
@@ -134,9 +152,17 @@ export class InventoryUI {
     if (dump) this.dumpGrid();
     this.gridSize = size;
     this.grid = emptyGrid(size);
-    if (this._els.craftTitle) {
-      this._els.craftTitle.textContent = size === 3 ? this.i18n.t('table_title') : this.i18n.t('craft_grid');
-    }
+    this._updateCraftTitle();
+  }
+
+  /** Подпись над сеткой крафта: «Верстак» / «Наковальня» / «Крафт» */
+  _updateCraftTitle() {
+    const el = this._els.craftTitle;
+    if (!el) return;
+    const type = this.station?.type;
+    el.textContent = type === 'anvil' ? this.i18n.t('anvil_craft_title')
+      : type === 'table' || this.gridSize === 3 ? this.i18n.t('table_title')
+        : this.i18n.t('craft_grid');
   }
 
   _setTab(tab) {
@@ -178,6 +204,8 @@ export class InventoryUI {
     const els = this._els;
     const furnaceOpen = this.station?.type === 'furnace';
     const chestOpen = this.station?.type === 'chest';
+    const anvilOpen = this.station?.type === 'anvil';
+    const tableOpen = this.station?.type === 'table' || (!this.station && this.gridSize === 3);
     els.window?.classList.toggle('furnace-open', furnaceOpen);
     els.window?.classList.toggle('chest-open', chestOpen);
     els.side?.classList.toggle('hidden', furnaceOpen || chestOpen);
@@ -188,13 +216,16 @@ export class InventoryUI {
       els.modeLabel.textContent = furnaceOpen
         ? this.i18n.t('furnace_title')
         : chestOpen ? this.i18n.t('chest_title')
-          : this.i18n.t(this.creative ? 'mode_creative' : 'mode_survival');
+          : anvilOpen ? this.i18n.t('anvil_title')
+            : tableOpen ? this.i18n.t('table_title')
+              : this.i18n.t(this.creative ? 'mode_creative' : 'mode_survival');
     }
     if (els.tip) {
       els.tip.textContent = furnaceOpen
         ? this.i18n.t('furnace_ui_hint')
         : chestOpen ? this.i18n.t('chest_hint')
-          : this.tab === 'catalog' ? this.i18n.t('catalog_hint') : this.i18n.t('craft_hint');
+          : anvilOpen ? this.i18n.t('anvil_hint')
+            : this.tab === 'catalog' ? this.i18n.t('catalog_hint') : this.i18n.t('craft_hint');
     }
     if (chestOpen) this._renderGrid(els.chestGrid, 0, this.station.inv.size, this.station.inv, 'chest');
     // Вкладки: каталог есть только в креативе
@@ -361,8 +392,8 @@ export class InventoryUI {
       slot.addEventListener('contextmenu', (e) => e.preventDefault());
       els.craftGrid.appendChild(slot);
     }
-    // Результат
-    const res = gridResult(this.grid, size);
+    // Результат (с учётом открытого станка: наковальня открывает металлические рецепты)
+    const res = gridResult(this.grid, size, this.craftStation());
     const out = els.craftResult;
     if (!out) return;
     out.innerHTML = '';
@@ -394,10 +425,11 @@ export class InventoryUI {
 
   /** Shift+клик по результату: скрафтить сколько получится сразу в инвентарь */
   _shiftTakeResult() {
-    const out = craftFromGrid(this.grid, this.gridSize, this.inv, true);
+    const st = this.craftStation();
+    const out = craftFromGrid(this.grid, this.gridSize, this.inv, true, st);
     if (out === 'full') {
       // На всю стопку места нет — пробуем по одному
-      if (craftFromGrid(this.grid, this.gridSize, this.inv, false) !== 'ok') { ui_toast_full(this); return; }
+      if (craftFromGrid(this.grid, this.gridSize, this.inv, false, st) !== 'ok') { ui_toast_full(this); return; }
     } else if (out !== 'ok') return;
     this.handlers.onSound?.('craft');
     this.render();
@@ -406,11 +438,12 @@ export class InventoryUI {
 
   _takeResult(all = false) {
     const before = this.carry ? { ...this.carry } : null;
-    const res = gridResult(this.grid, this.gridSize);
+    const st = this.craftStation();
+    const res = gridResult(this.grid, this.gridSize, st);
     if (!res) return;
     if (this.carry && this.carry.key !== res.out.key) return;
     if (this.carry && this.carry.count + res.out.count > maxStack(res.out.key)) return;
-    const out = craftFromGrid(this.grid, this.gridSize, this.inv, all);
+    const out = craftFromGrid(this.grid, this.gridSize, this.inv, all, st);
     if (out === 'full') { ui_toast_full(this); return; }
     if (out !== 'ok') return;
     // результат — в руку (если рука свободна) иначе сразу в инвентарь
@@ -481,11 +514,16 @@ export class InventoryUI {
       }
       return;
     }
-    // Список рецептов (клик — быстрый крафт)
-    if (els.sideTitle) els.sideTitle.textContent = this.i18n.t('craft_title');
+    // Список рецептов (клик — быстрый крафт). Показываем только те, что доступны
+    // на текущем станке: наковальня добавляет металлические инструменты.
+    const st = this.craftStation();
+    if (els.sideTitle) {
+      els.sideTitle.textContent = st?.type === 'anvil'
+        ? this.i18n.t('anvil_recipes') : this.i18n.t('craft_title');
+    }
     els.sideList.className = 'inv-side-list recipes';
-    for (const recipe of RECIPES) {
-      const ok = canCraft(this.inv, recipe);
+    for (const recipe of recipesFor(st)) {
+      const ok = canCraft(this.inv, recipe, st);
       const row = document.createElement('div');
       row.className = 'recipe' + (ok ? ' ok' : '');
       row.dataset.id = recipe.id;
@@ -498,6 +536,13 @@ export class InventoryUI {
       name.textContent = `${itemName(recipe.out.key, this.i18n.lang)} ×${recipe.out.count}`
         + (needsTable(recipe) ? ' · ' + this.i18n.t('need_table_short') : '');
       name.title = itemDescription(recipe.out.key, this.i18n.lang);
+      if (recipe.station === 'anvil') {
+        const badge = document.createElement('span');
+        badge.className = 'recipe-station';
+        badge.textContent = this.i18n.t('need_anvil_short');
+        badge.title = this.i18n.t('need_anvil');
+        name.appendChild(badge);
+      }
       const desc = document.createElement('div');
       desc.className = 'recipe-desc';
       desc.textContent = itemDescription(recipe.out.key, this.i18n.lang);
@@ -520,6 +565,12 @@ export class InventoryUI {
       row.appendChild(info);
       row.addEventListener('pointerdown', (e) => {
         e.preventDefault();
+        // Рецепт требует наковальню, а открыт обычный инвентарь/верстак — подсказываем
+        if (recipe.station && !stationAllows(recipe, stationInfo(st))) {
+          this.handlers.onSound?.('deny');
+          this.handlers.onNeedStation?.(recipe.station);
+          return;
+        }
         this.handlers.onQuickCraft?.(recipe);
       });
       els.sideList.appendChild(row);
@@ -560,7 +611,9 @@ export class InventoryUI {
     e.preventDefault();
     e.stopPropagation();
     if (!this.inv) return;
-    if (e.shiftKey && !this.carry) {
+    // Shift+клик «в хотбар» работает только когда не открыт верстак/печь/сундук/наковальня:
+    // иначе стопка улетала бы из окна станка и путала игрока.
+    if (e.shiftKey && !this.carry && !this.station) {
       this.quickMoveFromInventory(i);
       this._paint = null;
       this.render();
@@ -573,6 +626,7 @@ export class InventoryUI {
     }
     this._mutate(this.inv, i, e.button === 2);
     this._startPaint('inv', i);          // зажатой кнопкой можно вести по ячейкам
+    this._beginDrag(e, 'inv', i);        // а можно просто перетащить стопку в другую ячейку
     this.render();
     this.handlers.onChange?.();
   }
@@ -597,6 +651,7 @@ export class InventoryUI {
     } else {
       this._mutate(chest, i, e.button === 2);
       this._startPaint('chest', i);
+      this._beginDrag(e, 'chest', i);
     }
     this.render();
     this.handlers.onChange?.();
@@ -702,6 +757,7 @@ export class InventoryUI {
     }
     this._mutate(this._gridContainer(), i, e.button === 2, true);
     this._startPaint('craft', i);        // дальше можно вести курсором по клеткам
+    this._beginDrag(e, 'craft', i);      // либо перетащить стопку в другую клетку
     this.render();
     this.handlers.onChange?.();
   }
@@ -718,6 +774,15 @@ export class InventoryUI {
   }
 
   _onPaintMove(e) {
+    const d = this._drag;
+    if (d) {
+      if (!this.carry || (e.pointerType !== 'touch' && e.buttons === 0)) { this._drag = null; return; }
+      if (Math.abs(e.clientX - d.x) > 8 || Math.abs(e.clientY - d.y) > 8) {
+        d.moved = true;
+        this._paint = null;              // drag отменяет «мазок по одному предмету»
+      }
+      return;
+    }
     const p = this._paint;
     if (!p || !this.open_ || !this.carry) return;
     // Кнопку отпустили вне окна инвентаря — мазок заканчивается
@@ -739,6 +804,43 @@ export class InventoryUI {
     this._mutate(container, i, true, isCraftCell);
     this.render();
     this.handlers.onChange?.();
+  }
+
+  // ---------------------------------------------------------------- Перетаскивание
+  /**
+   * Настоящий drag&drop: забрали стопку из ячейки, не отпуская кнопку повели курсор
+   * и бросили в другую ячейку. Короткое движение (<8px) остаётся обычным кликом,
+   * длинное — отменяет «мазок по одному предмету» и вместо этого роняет стопку.
+   */
+  _beginDrag(e, kind, index) {
+    if (!this.carry || e.pointerType === 'touch') { this._drag = null; return; }
+    this._drag = { kind, index, x: e.clientX, y: e.clientY, moved: false };
+  }
+
+  _dragTarget(clientX, clientY) {
+    const el = document.elementFromPoint(clientX, clientY);
+    const cell = el?.closest?.('.craft-cell, .islot');
+    if (!cell?.dataset || cell.dataset.index == null) return null;
+    const isCraft = cell.classList.contains('craft-cell');
+    const kind = isCraft ? 'craft' : cell.dataset.container === 'chest' ? 'chest' : 'inv';
+    return { kind, index: Number(cell.dataset.index), el: cell };
+  }
+
+  _endDrag(e) {
+    const d = this._drag;
+    this._drag = null;
+    if (!d || !this.open_ || !this.carry) return false;
+    const t = this._dragTarget(e.clientX, e.clientY);
+    if (!t || t.kind !== d.kind || t.index === d.index) return false;
+    const container = t.kind === 'craft' ? this._gridContainer()
+      : t.kind === 'chest' ? (this.station?.type === 'chest' ? this.station.inv : null) : this.inv;
+    if (!container) return false;
+    this._mutate(container, t.index, e.button === 2, t.kind === 'craft');
+    this._paint = null;
+    this.render();
+    this.handlers.onChange?.();
+    if (t.kind === 'chest') this.handlers.onStationChange?.();
+    return true;
   }
 
   /**

@@ -7,6 +7,7 @@ export const SMELT_TIME = 4.5;
 const SMELT_RECIPES = new Map([
   [ITEM.RAW_IRON, ITEM.IRON_INGOT],
   [ITEM.RAW_GOLD, ITEM.GOLD_INGOT],
+  [ITEM.RAW_MEAT, ITEM.COOKED_MEAT],
   [blockItem(BLOCK.SAND), blockItem(BLOCK.GLASS)],
   [blockItem(BLOCK.COBBLE), blockItem(BLOCK.STONE)],
 ]);
@@ -15,6 +16,9 @@ const FUELS = new Map([
   [ITEM.COAL, 9],
   [ITEM.STICK, 1.2],
   [blockItem(BLOCK.PLANKS), 3.2],
+  [blockItem(BLOCK.BIRCH_PLANKS), 3.2],
+  [blockItem(BLOCK.PLANK_SLAB), 1.6],
+  [blockItem(BLOCK.FENCE), 2.2],
   [blockItem(BLOCK.LOG), 5.5],
   [blockItem(BLOCK.BIRCH_LOG), 5.5],
   [blockItem(BLOCK.SPRUCE_LOG), 5.5],

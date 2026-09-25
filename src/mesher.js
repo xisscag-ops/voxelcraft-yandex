@@ -1,5 +1,5 @@
 // Меширование вокселей: только видимые грани + ambient occlusion на вершинах
-import { BLOCK, BLOCKS, DENSE_FOLIAGE_TILE, isOpaque, isLiquid, isDecor, isSlab, isFoliage } from './blocks.js';
+import { BLOCK, BLOCKS, DENSE_FOLIAGE_TILE, isOpaque, isLiquid, isDecor, isSlab, isFence, isFoliage } from './blocks.js';
 import { tileUV } from './textures.js';
 
 // Яркость граней (классический «мультипликационный» свет)
@@ -324,6 +324,11 @@ export function meshChunk(THREE, world, cx, cz) {
           addSlabFaces(opaque, world, wx, y, wz, def, lightAt);
           continue;
         }
+        // Забор — столбик с перекладинами
+        if (isFence(id)) {
+          addFenceFaces(opaque, world, wx, y, wz, def, lightAt);
+          continue;
+        }
         // Факел рендерится объёмной моделью в main.js, не плоскими квадами.
         if (id === BLOCK.TORCH || def.shape === 'torch' || def.torch) continue;
 
@@ -411,49 +416,160 @@ export function meshChunk(THREE, world, cx, cz) {
   return { opaque, water };
 }
 
-function addSlabFaces(builder, world, wx, y, wz, def, lightAt) {
-  const y0 = def.half === 'top' ? 0.5 : 0;
-  const y1 = y0 + 0.5;
-  const tileIdx = def.tiles[2];
-  const [u0, v0, u1, v1] = tileUV(tileIdx);
+// ---------------------------------------------------------------- Объёмные формы
+/**
+ * Запись квада произвольной формы (плита, столб забора) с ambient occlusion
+ * и светом — тот же путь, что и у полных блоков, поэтому плиты и заборы
+ * освещены и затенены одинаково с миром вокруг.
+ *
+ * quad: { n, c — центр грани в координатах клетки (0..1),
+ *         a, b — полуоси грани (векторы), tile, shade, uvAxis }
+ * uvAxis: какая ось клетки задаёт u и v текстуры (как у полных блоков:
+ *         u = 0 в нуле оси, u = 1 в единице; v — то же самое).
+ */
+function pushShapeFace(builder, world, quad, lightAt, wx, y, wz, def, cell) {
+  const n = quad.n;
+  const base = [wx + n[0], y + n[1], wz + n[2]];
+  const [u0, v0, u1, v1] = tileUV(quad.tile ?? def.tiles[2]);
+  const emissive = !!def.emissive;
+  const uAxis = quad.a.findIndex((c) => c !== 0);
+  const vAxis = quad.b.findIndex((c) => c !== 0);
+  const ua = quad.a[uAxis], va = quad.b[vAxis];
+  const cornerAOs = [];
+  const vi = [];
+  const ring = [[1, 1], [-1, 1], [-1, -1], [1, -1]];
+  for (const [sa, sb] of ring) {
+    const p = [0, 1, 2].map((axis) => {
+      const q = quad.c[axis] + sa * quad.a[axis] + sb * quad.b[axis];
+      return Math.abs(q - Math.round(q)) < 1e-4 ? Math.round(q) : q;
+    });
+    const s1 = p.slice(), s2 = p.slice(), co = p.slice();
+    s1[uAxis] += Math.sign(ua) * sa;
+    s2[vAxis] += Math.sign(va) * sb;
+    co[uAxis] += Math.sign(ua) * sa;
+    co[vAxis] += Math.sign(va) * sb;
+    const ao = emissive ? 3 : aoOf(
+      isOpaque(world.getBlock(base[0] + s1[0], base[1] + s1[1], base[2] + s1[2])),
+      isOpaque(world.getBlock(base[0] + s2[0], base[1] + s2[1], base[2] + s2[2])),
+      isOpaque(world.getBlock(base[0] + co[0], base[1] + co[1], base[2] + co[2])),
+    );
+    cornerAOs.push(ao);
+    // UV: как у полных блоков — u по своей оси 0→1, v по своей оси 0→1
+    const uu = quad.uAxis != null ? p[quad.uAxis] : p[uAxis];
+    const vv = quad.vAxis != null ? p[quad.vAxis] : p[vAxis];
+    const u = uu <= 0.0001 ? u0 : uu >= 0.9999 ? u1 : u0 + (u1 - u0) * uu;
+    const v = vv <= 0.0001 ? v0 : vv >= 0.9999 ? v1 : v0 + (v1 - v0) * vv;
+    const k = quad.shade * AO_LEVEL[ao];
+    const shade = emissive ? 1.0 : k * lightAt(cell || [wx + p[0], y + p[1], wz + p[2]], n);
+    vi.push(builder.vertex([wx + p[0], y + p[1], wz + p[2]], u, v, shade, emissive ? 0 : k * lightAt.torch));
+  }
+  const flip = cornerAOs[0] + cornerAOs[2] > cornerAOs[1] + cornerAOs[3];
+  builder.idx.push(...(flip
+    ? [vi[1], vi[2], vi[3], vi[1], vi[3], vi[0]]
+    : [vi[0], vi[1], vi[2], vi[0], vi[2], vi[3]]));
+}
+
+/**
+ * Шесть граней бокса внутри клетки.
+ * @param {object} box { x0,y0,z0,x1,y1,z1 }
+ * @param {object} skip какие грани не рисовать: { px,nx,py,ny,pz,nz }
+ */
+function pushBox(builder, world, box, skip, lightAt, wx, y, wz, def, tile, cell) {
+  const cx = (box.x0 + box.x1) / 2, cy = (box.y0 + box.y1) / 2, cz = (box.z0 + box.z1) / 2;
+  const hx = (box.x1 - box.x0) / 2, hy = (box.y1 - box.y0) / 2, hz = (box.z1 - box.z0) / 2;
   const faces = [
-    { n: [0, 1, 0], pos: [[0, y1, 0], [1, y1, 0], [1, y1, 1], [0, y1, 1]], shade: FACE_SHADE.py },
-    { n: [0, -1, 0], pos: [[0, y0, 1], [1, y0, 1], [1, y0, 0], [0, y0, 0]], shade: FACE_SHADE.ny },
-    { n: [1, 0, 0], pos: [[1, y0, 0], [1, y0, 1], [1, y1, 1], [1, y1, 0]], shade: FACE_SHADE.px },
-    { n: [-1, 0, 0], pos: [[0, y0, 1], [0, y0, 0], [0, y1, 0], [0, y1, 1]], shade: FACE_SHADE.nx },
-    { n: [0, 0, 1], pos: [[0, y0, 1], [1, y0, 1], [1, y1, 1], [0, y1, 1]], shade: FACE_SHADE.pz },
-    { n: [0, 0, -1], pos: [[1, y0, 0], [0, y0, 0], [0, y1, 0], [1, y1, 0]], shade: FACE_SHADE.nz },
+    { key: 'px', n: [1, 0, 0], c: [box.x1, cy, cz], a: [0, 0, hz], b: [0, hy, 0], shade: FACE_SHADE.px, uAxis: 2, vAxis: 1 },
+    { key: 'nx', n: [-1, 0, 0], c: [box.x0, cy, cz], a: [0, 0, hz], b: [0, hy, 0], shade: FACE_SHADE.nx, uAxis: 2, vAxis: 1 },
+    { key: 'py', n: [0, 1, 0], c: [cx, box.y1, cz], a: [hx, 0, 0], b: [0, 0, hz], shade: FACE_SHADE.py, uAxis: 0, vAxis: 2 },
+    { key: 'ny', n: [0, -1, 0], c: [cx, box.y0, cz], a: [hx, 0, 0], b: [0, 0, hz], shade: FACE_SHADE.ny, uAxis: 0, vAxis: 2 },
+    { key: 'pz', n: [0, 0, 1], c: [cx, cy, box.z1], a: [hx, 0, 0], b: [0, hy, 0], shade: FACE_SHADE.pz, uAxis: 0, vAxis: 1 },
+    { key: 'nz', n: [0, 0, -1], c: [cx, cy, box.z0], a: [hx, 0, 0], b: [0, hy, 0], shade: FACE_SHADE.nz, uAxis: 0, vAxis: 1 },
   ];
   for (const f of faces) {
-    const n = f.n;
-    const nb = world.getBlock(wx + n[0], y + n[1], wz + n[2]);
-    if (n[1] === 1) {
-      const above = world.getBlock(wx, y + 1, wz);
-      if (isOpaque(nb) || (above !== 0 && isSlab(above))) continue;
-    } else if (n[1] === -1) {
-      if (isOpaque(nb)) continue;
-    } else {
-      if (isOpaque(nb)) continue;
-      if (nb !== 0 && isSlab(nb) && (BLOCKS[nb].half || 'bottom') === (def.half || 'bottom')) continue;
-    }
-    const vi = [];
-    for (let i = 0; i < 4; i++) {
-      const p = [wx + f.pos[i][0], y + f.pos[i][1], wz + f.pos[i][2]];
-      let u, v;
-      if (n[1] !== 0) {
-        u = f.pos[i][0] === 0 ? u0 : u1;
-        v = f.pos[i][2] === 0 ? v0 : v1;
-      } else if (n[0] !== 0) {
-        u = f.pos[i][2] === 0 ? u0 : u1;
-        v = f.pos[i][1] === y1 ? v0 : v1;
-      } else {
-        u = f.pos[i][0] === 0 ? u0 : u1;
-        v = f.pos[i][1] === y1 ? v0 : v1;
-      }
-      const shade = def.emissive ? 1.0 : f.shade * lightAt(p, n);
-      vi.push(builder.vertex(p, u, v, shade, def.emissive ? 0 : f.shade * lightAt.torch));
-    }
-    builder.idx.push(vi[0], vi[1], vi[2], vi[0], vi[2], vi[3]);
+    if (skip && skip[f.key]) continue;
+    pushShapeFace(builder, world, { ...f, tile }, lightAt, wx, y, wz, def, cell);
+  }
+}
+
+/**
+ * Полублок: шесть граней плиты высотой в полблока. Боковые грани показывают
+ * свою половину текстуры (текстура не растягивается и не перевёрнута),
+ * внутренние грани между низом и верхом одной клетки не рисуются.
+ */
+function addSlabFaces(builder, world, wx, y, wz, def, lightAt) {
+  const top = def.half === 'top';
+  const y0 = top ? 0.5 : 0;
+  const y1 = y0 + 0.5;
+  const tile = def.tiles[2];
+  const cell = [wx + 0.5, y + 0.5, wz + 0.5];
+
+  const above = world.getBlock(wx, y + 1, wz);
+  const below = world.getBlock(wx, y - 1, wz);
+  // Низ + верх в одной клетке смыкаются в полный блок: внутренняя грань не нужна
+  const closedTop = isSlab(above) && (BLOCKS[above].half || 'bottom') === 'bottom';
+  const closedBottom = isSlab(below) && (BLOCKS[below].half || 'bottom') === 'top';
+
+  const skip = {};
+  const nbTop = world.getBlock(wx, y + 1, wz);
+  const nbBottom = world.getBlock(wx, y - 1, wz);
+  if (isOpaque(nbTop) || closedTop) skip.py = true;
+  if (isOpaque(nbBottom) || closedBottom) skip.ny = true;
+  for (const [key, dx, dz] of [['px', 1, 0], ['nx', -1, 0], ['pz', 0, 1], ['nz', 0, -1]]) {
+    const nb = world.getBlock(wx + dx, y, wz + dz);
+    if (isOpaque(nb)) skip[key] = true;
+    else if (isSlab(nb) && (BLOCKS[nb].half || 'bottom') === (top ? 'top' : 'bottom')) skip[key] = true;
+  }
+  pushBox(builder, world, { x0: 0, y0, z0: 0, x1: 1, y1, z1: 1 }, skip, lightAt, wx, y, wz, def, tile, cell);
+}
+
+/** Сосед, к которому забор тянет перекладину: другой забор или полный блок */
+function fenceArmTo(world, x, y, z) {
+  const id = world.getBlock(x, y, z);
+  if (id === BLOCK.FENCE) return true;
+  if (!isOpaque(id)) return false;
+  const b = BLOCKS[id];
+  return !b.shape && !b.decor;
+}
+
+/**
+ * Забор: столбик в центре клетки (выше обычного блока — не перепрыгнуть)
+ * плюс перекладины к соседним заборам и полным блокам.
+ */
+function addFenceFaces(builder, world, wx, y, wz, def, lightAt) {
+  const tile = def.tiles[2];
+  const cell = [wx + 0.5, y + 0.5, wz + 0.5];
+  const P = 0.125;                 // половина ширины столбика
+  const TOP = 1.5;                 // высота столбика
+  const arms = {
+    px: fenceArmTo(world, wx + 1, y, wz),
+    nx: fenceArmTo(world, wx - 1, y, wz),
+    pz: fenceArmTo(world, wx, y, wz + 1),
+    nz: fenceArmTo(world, wx, y, wz - 1),
+  };
+
+  // Столбик: боковые грани закрыты перекладинами с соответствующей стороны
+  pushBox(builder, world, {
+    x0: 0.5 - P, y0: 0, z0: 0.5 - P, x1: 0.5 + P, y1: TOP, z1: 0.5 + P,
+  }, { px: arms.px, nx: arms.nx, pz: arms.pz, nz: arms.nz }, lightAt, wx, y, wz, def, tile, cell);
+
+  // Перекладина: от столбика до края клетки. Если сосед — тоже забор,
+  // торец не рисуем (его закроет перекладина соседа), к полному блоку — рисуем.
+  const CY = 0.78, T = 0.12;
+  const dirs = [
+    { key: 'px', nb: [1, 0, 0], inner: 'nx', outer: 'px',
+      box: { x0: 0.5 + P, y0: CY - T, z0: 0.5 - T, x1: 1, y1: CY + T, z1: 0.5 + T } },
+    { key: 'nx', nb: [-1, 0, 0], inner: 'px', outer: 'nx',
+      box: { x0: 0, y0: CY - T, z0: 0.5 - T, x1: 0.5 - P, y1: CY + T, z1: 0.5 + T } },
+    { key: 'pz', nb: [0, 0, 1], inner: 'nz', outer: 'pz',
+      box: { x0: 0.5 - T, y0: CY - T, z0: 0.5 + P, x1: 0.5 + T, y1: CY + T, z1: 1 } },
+    { key: 'nz', nb: [0, 0, -1], inner: 'pz', outer: 'nz',
+      box: { x0: 0.5 - T, y0: CY - T, z0: 0, x1: 0.5 + T, y1: CY + T, z1: 0.5 - P } },
+  ];
+  for (const d of dirs) {
+    if (!arms[d.key]) continue;
+    const skip = { [d.inner]: true };
+    if (world.getBlock(wx + d.nb[0], y + d.nb[1], wz + d.nb[2]) === BLOCK.FENCE) skip[d.outer] = true;
+    pushBox(builder, world, d.box, skip, lightAt, wx, y, wz, def, tile, cell);
   }
 }
 

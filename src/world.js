@@ -510,6 +510,8 @@ export class World {
     // Деревья разных пород (полностью внутри чанка, чтобы не пересекать границы)
     const rng = makeRng(hash3(cx, 0, cz, seed) * 0x7fffffff);
     const treeCount = 3 + ((rng() * 3) | 0);
+    // Каждое четвёртое дерево — «большое»: высокий толстый ствол, ветки и широкая крона
+    let bigCounter = 0;
     for (let t = 0; t < treeCount; t++) {
       const tx = 3 + ((rng() * (S - 6)) | 0);
       const tz = 3 + ((rng() * (S - 6)) | 0);
@@ -524,6 +526,17 @@ export class World {
         if (onlyAir && chunk.get(lx, ly, lz) !== BLOCK.AIR) return;
         chunk.set(lx, ly, lz, id);
       };
+      // Большая крона шире на 2 клетки, поэтому такому дереву нужно больше места
+      const bigRoll = rng();
+      const isBig = bigRoll < 0.26 && tree !== 'birch' && bigCounter < 2;
+      if (isBig) {
+        if (tx < 5 || tz < 5 || tx >= S - 5 || tz >= S - 5) continue;
+        if (th + 14 >= H) continue;
+        bigCounter++;
+        if (tree === 'spruce') growBigSpruce(tx, tz, th, put);
+        else growBigOak(tx, tz, th, put);
+        continue;
+      }
       if (tree === 'oak') {
         const trunkH = 4 + ((rng() * 3) | 0);
         for (let dy = trunkH - 2; dy <= trunkH + 1; dy++) {
@@ -565,6 +578,99 @@ export class World {
         }
         put(tx, th + trunkH + 2, tz, BLOCK.SPRUCE_LEAVES);
         for (let dy = 1; dy <= trunkH; dy++) chunk.set(tx, th + dy, tz, BLOCK.SPRUCE_LOG);
+      }
+    }
+
+    // -------------------------------------------------- большие деревья
+    /**
+     * Огромный дуб: ствол 9–12 блоков толщиной 2×2, ветки в разные стороны
+     * и двухъярусная крона. Ветки и листва ставятся только в воздух,
+     * чтобы не «съедать» соседние деревья и рельеф.
+     */
+    function growBigOak(tx, tz, th, put) {
+      const trunkH = 9 + ((rng() * 4) | 0);
+      const top = th + trunkH;
+      // Крона: два яруса, радиус 3 и 2 (+ «шапка» на макушке)
+      for (let dy = -3; dy <= 2; dy++) {
+        const y = top + dy;
+        if (y < 0 || y >= H) continue;
+        const r = dy <= -2 ? 3 : dy <= 0 ? 3 : dy === 1 ? 2 : 1;
+        for (let dx = -r; dx <= r; dx++) {
+          for (let dz = -r; dz <= r; dz++) {
+            const d2 = dx * dx + dz * dz;
+            if (d2 > r * r + 1) continue;
+            // углы короны прореживаем — крона выглядит живой, а не «кубиком»
+            if (Math.abs(dx) === r && Math.abs(dz) === r && rng() < 0.55) continue;
+            if (d2 === r * r + 1 && rng() < 0.4) continue;
+            put(tx + dx, y, tz + dz, BLOCK.LEAVES);
+          }
+        }
+      }
+      // Ветки: 3–4 штуки, расходятся от ствола вверх-наружу
+      const branches = 3 + ((rng() * 2) | 0);
+      for (let b = 0; b < branches; b++) {
+        const ang = rng() * Math.PI * 2;
+        const sx = Math.sin(ang), sz = Math.cos(ang);
+        const y0 = th + 4 + ((rng() * (trunkH - 5)) | 0);
+        const len = 2 + ((rng() * 3) | 0);
+        for (let k = 1; k <= len; k++) {
+          const bx = Math.round(tx + sx * k);
+          const bz = Math.round(tz + sz * k);
+          const by = y0 + Math.round(k * 0.7);
+          if (by < 0 || by >= H) continue;
+          chunk.set(bx, by, bz, BLOCK.LOG);
+          put(bx, by + 1, bz, BLOCK.LEAVES);
+          put(bx + 1, by, bz, BLOCK.LEAVES);
+          put(bx - 1, by, bz, BLOCK.LEAVES);
+          put(bx, by, bz + 1, BLOCK.LEAVES);
+          put(bx, by, bz - 1, BLOCK.LEAVES);
+        }
+      }
+      // Ствол 2×2 (ставим поверх листвы — он всегда виден)
+      for (let dy = 1; dy <= trunkH; dy++) {
+        for (let dx = 0; dx <= 1; dx++) {
+          for (let dz = 0; dz <= 1; dz++) {
+            if (dx && dz && rng() < 0.25) continue;      // лёгкая неровность верха
+            chunk.set(tx + dx, th + dy, tz + dz, BLOCK.LOG);
+          }
+        }
+      }
+      // Корни-подпорки у основания
+      for (const [dx, dz] of [[-1, 0], [2, 0], [0, -1], [0, 2], [-1, -1], [2, 2]]) {
+        if (rng() < 0.5) put(tx + dx, th + 1, tz + dz, BLOCK.LOG);
+      }
+    }
+
+    /** Огромная ель: высокий ствол и широкие ярусы лап, сужающиеся кверху */
+    function growBigSpruce(tx, tz, th, put) {
+      const trunkH = 11 + ((rng() * 4) | 0);
+      const top = th + trunkH;
+      // Ярусы лап: снизу (r=3) кверху (r=0)
+      const tiers = 5;
+      for (let i = 0; i < tiers; i++) {
+        const y = th + 3 + Math.round((trunkH - 3) * (i / (tiers - 1)));
+        const r = 3 - Math.round(i * 0.7);
+        for (let dx = -r; dx <= r; dx++) {
+          for (let dz = -r; dz <= r; dz++) {
+            const man = Math.abs(dx) + Math.abs(dz);
+            if (man > r + 1) continue;
+            if (man === r + 1 && rng() < 0.45) continue;
+            if (dx === 0 && dz === 0) continue;          // центр займёт ствол
+            put(tx + dx, y, tz + dz, BLOCK.SPRUCE_LEAVES);
+            // под длинными лапами — ещё один слой, чтобы крона не была «бумажной»
+            if (r >= 2 && man >= r && rng() < 0.5) put(tx + dx, y - 1, tz + dz, BLOCK.SPRUCE_LEAVES);
+          }
+        }
+      }
+      put(tx, top + 1, tz, BLOCK.SPRUCE_LEAVES);
+      put(tx, top + 2, tz, BLOCK.SPRUCE_LEAVES);
+      // Ствол 2×2 и торчащая макушка
+      for (let dy = 1; dy <= trunkH; dy++) {
+        chunk.set(tx, th + dy, tz, BLOCK.SPRUCE_LOG);
+        if (dy <= trunkH - 2 && rng() < 0.7) chunk.set(tx + 1, th + dy, tz, BLOCK.SPRUCE_LOG);
+      }
+      for (const [dx, dz] of [[-1, 0], [0, -1], [1, 1], [-1, 1], [1, -1]]) {
+        if (rng() < 0.35) put(tx + dx, th + 1, tz + dz, BLOCK.SPRUCE_LOG);
       }
     }
 

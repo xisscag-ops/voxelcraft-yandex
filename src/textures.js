@@ -29,6 +29,8 @@ export const T = {
   LEAVES_DENSE: 50, BIRCH_LEAVES_DENSE: 51, SPRUCE_LEAVES_DENSE: 52,
   // Сундук
   CHEST_TOP: 53, CHEST_SIDE: 54, CHEST_FRONT: 55,
+  // Берёзовые доски, забор и наковальня
+  BIRCH_PLANKS: 56, FENCE: 57, ANVIL_TOP: 58, ANVIL_SIDE: 59, ANVIL_FRONT: 60,
 };
 
 export const CRACK_TILES = [17, 18, 19, 20, 21];
@@ -427,27 +429,76 @@ const painters = {
     }
   },
   // ---- Деревья разных пород ----
+  // Берёза: светлая кора с частыми вертикальными волокнами и характерными
+  // тёмными чёрточками-«чечевичками», которые идут горизонтальными штрихами.
   [T.BIRCH_SIDE](data, rng) {
-    noisyFill(data, rng, [219, 216, 205], 8);
-    for (let i = 0; i < 12; i++) {
-      const y = (rng() * TILE) | 0;
-      const x = (rng() * 10) | 0;
-      const w = 1 + ((rng() * 3) | 0);
-      for (let k = 0; k < w; k++) px(data, x + k, y, 66, 60, 54);
+    // База — тёплый бело-кремовый с лёгкой вертикальной неоднородностью
+    for (let x = 0; x < TILE; x++) {
+      const colV = (rng() - 0.5) * 9;
+      for (let y = 0; y < TILE; y++) {
+        const v = (rng() - 0.5) * 11 + colV;
+        px(data, x, y, 226 + v, 223 + v, 212 + v);
+      }
+    }
+    // Тонкие вертикальные волокна коры
+    for (let i = 0; i < 16; i++) {
+      const x = (rng() * TILE) | 0;
+      const y0 = (rng() * 8) | 0;
+      const len = 4 + ((rng() * 9) | 0);
+      const dark = rng() < 0.45;
+      for (let y = y0; y < Math.min(TILE, y0 + len); y++) {
+        const v = (rng() - 0.5) * 10;
+        if (dark) px(data, x, y, 196 + v, 192 + v, 182 + v);
+        else px(data, x, y, 240 + v, 238 + v, 231 + v);
+      }
+    }
+    // Чёрные штрихи берёзы: короткие горизонтальные полосы разной толщины
+    const dashes = 7 + ((rng() * 4) | 0);
+    for (let i = 0; i < dashes; i++) {
+      const y = 1 + ((rng() * (TILE - 2)) | 0);
+      const x = (rng() * (TILE - 5)) | 0;
+      const w = 3 + ((rng() * 6) | 0);
+      const h = rng() < 0.3 ? 2 : 1;
+      for (let k = 0; k < w; k++) {
+        for (let hh = 0; hh < h; hh++) {
+          // концы штриха чуть светлее — штрих сужается
+          const edge = k === 0 || k === w - 1;
+          const v = edge ? 46 : 0;
+          px(data, x + k, y + hh, 44 + v, 40 + v, 38 + v);
+        }
+      }
+      // тонкий светлый блик под штрихом
+      if (rng() < 0.6) px(data, x + 1 + ((rng() * (w - 2)) | 0), y + h, 246, 244, 238);
+    }
+    // Тёмные «глазки» — округлые отметины
+    for (let i = 0; i < 2; i++) {
+      const x = 2 + ((rng() * (TILE - 5)) | 0);
+      const y = 2 + ((rng() * (TILE - 5)) | 0);
+      px(data, x, y, 58, 52, 48); px(data, x + 1, y, 78, 72, 66);
+      px(data, x, y + 1, 96, 90, 84); px(data, x + 1, y + 1, 58, 52, 48);
     }
   },
   [T.BIRCH_TOP](data, rng) {
-    noisyFill(data, rng, [206, 198, 178], 8);
+    noisyFill(data, rng, [214, 205, 183], 7);
     for (let y = 0; y < TILE; y++) {
       for (let x = 0; x < TILE; x++) {
         const d = Math.hypot(x - 7.5, y - 7.5);
-        if (d > 6.5) px(data, x, y, 226, 222, 210);
-        else if (((d * 1.6) | 0) % 2 === 0) {
+        if (d > 7.0) {
+          // кора по краю спила
           const v = (rng() - 0.5) * 10;
-          px(data, x, y, 176 + v, 166 + v, 142 + v);
+          px(data, x, y, 228 + v, 225 + v, 215 + v);
+        } else if (((d * 1.7) | 0) % 2 === 0) {
+          const v = (rng() - 0.5) * 12;
+          px(data, x, y, 178 + v, 164 + v, 134 + v);
+        } else {
+          const v = (rng() - 0.5) * 10;
+          px(data, x, y, 206 + v, 192 + v, 162 + v);
         }
       }
     }
+    // тёмная сердцевина
+    px(data, 7, 7, 128, 108, 78); px(data, 8, 7, 128, 108, 78);
+    px(data, 7, 8, 142, 120, 88); px(data, 8, 8, 142, 120, 88);
   },
   [T.BIRCH_LEAVES](data, rng) { leavesFill(data, rng, [124, 178, 84], 0.15); },
   [T.SPRUCE_SIDE](data, rng) {
@@ -559,6 +610,112 @@ const painters = {
     }
     px(data, 7, 7, 40, 40, 44); px(data, 8, 7, 40, 40, 44);
   },
+  // ---- Берёзовые доски: светлые, с ровными плашками и тонкой фаской ----
+  [T.BIRCH_PLANKS](data, rng) {
+    noisyFill(data, rng, [214, 200, 164], 8);
+    for (let y = 0; y < TILE; y += 4) {
+      // тёмный шов между плашками
+      for (let x = 0; x < TILE; x++) px(data, x, y, 158, 140, 104);
+      // светлая фаска сразу под швом
+      for (let x = 0; x < TILE; x++) {
+        const v = (rng() - 0.5) * 8;
+        px(data, x, y + 1, 228 + v, 216 + v, 184 + v);
+      }
+      // волокна древесины внутри плашки
+      for (let x = 0; x < TILE; x++) {
+        if (rng() < 0.28) {
+          const v = (rng() - 0.5) * 12;
+          px(data, x, y + 2 + ((rng() * 2) | 0), 190 + v, 174 + v, 138 + v);
+        }
+      }
+      // торец плашки (вертикальный стык) со смещением в каждом ряду
+      const xk = ((y / 4) | 0) % 2 === 0 ? 5 + ((rng() * 3) | 0) : 10 + ((rng() * 3) | 0);
+      for (let y2 = y + 1; y2 < y + 4; y2++) px(data, xk, y2, 168, 150, 114);
+    }
+  },
+  // ---- Забор: текстура столбика (светлое дерево с волокнами и фаской) ----
+  [T.FENCE](data, rng) {
+    noisyFill(data, rng, [156, 116, 68], 9);
+    for (let y = 0; y < TILE; y++) {
+      // вертикальные волокна
+      for (const x of [1, 4, 7, 11, 14]) {
+        if (rng() < 0.55) {
+          const v = (rng() - 0.5) * 16;
+          px(data, x, y, 126 + v, 92 + v, 52 + v);
+        }
+      }
+      // тёмные кромки столбика и светлая фаска
+      px(data, 0, y, 92, 66, 36);
+      px(data, 1, y, 122, 90, 50);
+      px(data, TILE - 1, y, 84, 60, 32);
+      px(data, TILE - 2, y, 112, 82, 46);
+    }
+    // горизонтальные прожилки и шляпки гвоздей
+    for (let x = 2; x < TILE - 2; x++) px(data, x, 3, 132, 98, 56);
+    for (let x = 2; x < TILE - 2; x++) px(data, x, 12, 132, 98, 56);
+    px(data, 7, 6, 74, 74, 80); px(data, 8, 6, 168, 170, 178);
+    px(data, 7, 9, 74, 74, 80); px(data, 8, 9, 168, 170, 178);
+  },
+  // ---- Наковальня: тёмная сталь с потёртостями ----
+  [T.ANVIL_TOP](data, rng) {
+    noisyFill(data, rng, [74, 76, 84], 8);
+    for (let y = 0; y < TILE; y++) {
+      for (let x = 0; x < TILE; x++) {
+        const edge = x < 2 || y < 2 || x > 13 || y > 13;
+        if (edge) {
+          const v = (rng() - 0.5) * 10;
+          px(data, x, y, 46 + v, 48 + v, 54 + v);
+        } else if (rng() < 0.12) {
+          px(data, x, y, 128, 132, 142);      // блики отполированной стали
+        }
+      }
+    }
+    // следы ударов
+    for (let i = 0; i < 8; i++) {
+      const x = 4 + ((rng() * 8) | 0), y = 4 + ((rng() * 8) | 0);
+      px(data, x, y, 40, 42, 48);
+      px(data, x + 1, y + 1, 104, 108, 118);
+    }
+    // ржавые потёки по краям
+    for (let i = 0; i < 10; i++) {
+      const x = (rng() * TILE) | 0, y = (rng() * TILE) | 0;
+      px(data, x, y, 116, 74, 44);
+    }
+  },
+  [T.ANVIL_SIDE](data, rng) {
+    noisyFill(data, rng, [58, 60, 68], 7);
+    for (let x = 0; x < TILE; x++) {
+      px(data, x, 0, 96, 99, 108);            // светлая верхняя кромка
+      px(data, x, 1, 78, 80, 88);
+      px(data, x, TILE - 1, 30, 31, 36);      // тёмное основание
+      px(data, x, TILE - 2, 38, 40, 46);
+    }
+    for (let i = 0; i < 14; i++) {
+      const x = (rng() * TILE) | 0, y = 3 + ((rng() * 9) | 0);
+      px(data, x, y, 108, 70, 42);            // ржавчина
+    }
+    for (let i = 0; i < 10; i++) {
+      const x = (rng() * TILE) | 0, y = 3 + ((rng() * 9) | 0);
+      px(data, x, y, 92, 95, 104);            // потёртости
+    }
+  },
+  [T.ANVIL_FRONT](data, rng) {
+    painters[T.ANVIL_SIDE](data, rng);
+    // силуэт наковальни: рог слева, массивная середина, сужение к основанию
+    for (let y = 3; y <= 12; y++) {
+      for (let x = 1; x <= 14; x++) {
+        const horn = y >= 5 && y <= 8 && x <= 4;
+        const body = x >= 4 && x <= 13 && y >= 3 && y <= 9;
+        const waist = x >= 6 && x <= 11 && y >= 9 && y <= 10;
+        const foot = x >= 3 && x <= 13 && y >= 11;
+        if (!(horn || body || waist || foot)) continue;
+        const rim = !((x > 4 && x < 13) && (y > 3 && y < 9));
+        const v = (rng() - 0.5) * 10;
+        px(data, x, y, ...(rim ? [88 + v, 90 + v, 98 + v] : [52 + v, 54 + v, 61 + v]));
+      }
+    }
+    px(data, 2, 6, 122, 126, 134); px(data, 3, 6, 122, 126, 134);   // блик на роге
+  },
 };
 
 function chestWood(data, rng) {
@@ -613,7 +770,24 @@ function drawCracks(data, rng, stage) {
 
 const tileColors = {};
 
-export function buildAtlas() {
+// Тайлы-источники света не затемняются: они должны выглядеть яркими.
+const EMISSIVE_TILES = new Set([T.GLOW, T.TORCH, T.FURNACE_FRONT]);
+// Общий множитель яркости атласа: текстуры чуть темнее «мультяшных»,
+// ближе к реальному освещению (просили больше реализма).
+export const ATLAS_DARKEN = 0.9;
+
+function darkenTile(data, idx) {
+  const f = EMISSIVE_TILES.has(idx) ? 0.985 : ATLAS_DARKEN;
+  if (f >= 1) return;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] === 0) continue;
+    data[i] = Math.round(data[i] * f);
+    data[i + 1] = Math.round(data[i + 1] * f);
+    data[i + 2] = Math.round(data[i + 2] * f);
+  }
+}
+
+export function buildAtlas(darken = true) {
   const canvas = document.createElement('canvas');
   canvas.width = ATLAS_COLS * TILE;
   canvas.height = ATLAS_ROWS * TILE;
@@ -625,6 +799,7 @@ export function buildAtlas() {
     // Сид по номеру тайла — стабильный вид между запусками
     const rng = makeRng(1000 + idx * 77);
     painters[idx](img.data, rng);
+    if (darken) darkenTile(img.data, idx);
     const tx = (idx % ATLAS_COLS) * TILE;
     const ty = ((idx / ATLAS_COLS) | 0) * TILE;
     ctx.putImageData(img, tx, ty);

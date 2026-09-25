@@ -15,6 +15,7 @@ export const CONFIG = {
   JUMP_SPEED: 8.6,
   WALK_SPEED: 4.5,
   SPRINT_SPEED: 7.0,
+  SNEAK_SPEED: 1.7,          // крадучись (Shift) — медленно и без падения с края
   FLY_SPEED: 10,
   SWIM_SPEED: 3.0,
   REACH: 6,

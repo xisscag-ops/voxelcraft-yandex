@@ -1,6 +1,6 @@
 // Предметы: единый реестр (блоки, палка, яблоко, инструменты) + физические дропы в мире
 import * as THREE from 'three';
-import { BLOCK, BLOCKS, BLOCK_NAMES } from './blocks.js';
+import { BLOCK, BLOCKS, BLOCK_NAMES, isSlab, slabDropItem } from './blocks.js';
 import { CONFIG } from './config.js';
 
 // ---------------------------------------------------------------- Реестр предметов
@@ -24,8 +24,24 @@ export const ITEM = {
   WHEAT: 'wheat',
   IRON_INGOT: 'iron_ingot',
   GOLD_INGOT: 'gold_ingot',
+  WOOL: 'wool',
+  RAW_MEAT: 'raw_meat',
+  COOKED_MEAT: 'cooked_meat',
+  FANG: 'fang',
+  IRON_PICKAXE: 'tool_iron_pickaxe',
+  IRON_AXE: 'tool_iron_axe',
+  IRON_SWORD: 'tool_iron_sword',
+  GOLD_PICKAXE: 'tool_gold_pickaxe',
+  GOLD_AXE: 'tool_gold_axe',
+  GOLD_SWORD: 'tool_gold_sword',
+  DIAMOND_PICKAXE: 'tool_diamond_pickaxe',
+  DIAMOND_AXE: 'tool_diamond_axe',
+  DIAMOND_SWORD: 'tool_diamond_sword',
   XP: 'xp',
 };
+
+/** Инструменты выше каменных — куются только на наковальне */
+export const ANVIL_TIERS = new Set(['iron', 'gold', 'diamond']);
 
 export function blockItem(id) { return 'block_' + id; }
 export function isBlockItem(key) { return typeof key === 'string' && key.startsWith('block_'); }
@@ -80,6 +96,54 @@ export const ITEMS = {
     speed: 1, damage: 3,
     name: { ru: 'Каменный меч', en: 'Stone sword' },
   },
+  // --- Железные инструменты (наковальня) ---
+  [ITEM.IRON_PICKAXE]: {
+    kind: 'tool', tool: 'pickaxe', tier: 'iron', max: 1, icon: 'iron_pickaxe',
+    speed: 0.4, damage: 2,
+    name: { ru: 'Железная кирка', en: 'Iron pickaxe' },
+  },
+  [ITEM.IRON_AXE]: {
+    kind: 'tool', tool: 'axe', tier: 'iron', max: 1, icon: 'iron_axe',
+    speed: 0.24, damage: 4,
+    name: { ru: 'Железный топор', en: 'Iron axe' },
+  },
+  [ITEM.IRON_SWORD]: {
+    kind: 'tool', tool: 'sword', tier: 'iron', max: 1, icon: 'iron_sword',
+    speed: 1, damage: 5,
+    name: { ru: 'Железный меч', en: 'Iron sword' },
+  },
+  // --- Золотые инструменты (наковальня): быстрые, но слабый урон ---
+  [ITEM.GOLD_PICKAXE]: {
+    kind: 'tool', tool: 'pickaxe', tier: 'gold', max: 1, icon: 'gold_pickaxe',
+    speed: 0.3, damage: 2,
+    name: { ru: 'Золотая кирка', en: 'Golden pickaxe' },
+  },
+  [ITEM.GOLD_AXE]: {
+    kind: 'tool', tool: 'axe', tier: 'gold', max: 1, icon: 'gold_axe',
+    speed: 0.18, damage: 3,
+    name: { ru: 'Золотой топор', en: 'Golden axe' },
+  },
+  [ITEM.GOLD_SWORD]: {
+    kind: 'tool', tool: 'sword', tier: 'gold', max: 1, icon: 'gold_sword',
+    speed: 1, damage: 4,
+    name: { ru: 'Золотой меч', en: 'Golden sword' },
+  },
+  // --- Алмазные инструменты (наковальня): самые быстрые и прочные ---
+  [ITEM.DIAMOND_PICKAXE]: {
+    kind: 'tool', tool: 'pickaxe', tier: 'diamond', max: 1, icon: 'diamond_pickaxe',
+    speed: 0.26, damage: 3,
+    name: { ru: 'Алмазная кирка', en: 'Diamond pickaxe' },
+  },
+  [ITEM.DIAMOND_AXE]: {
+    kind: 'tool', tool: 'axe', tier: 'diamond', max: 1, icon: 'diamond_axe',
+    speed: 0.15, damage: 6,
+    name: { ru: 'Алмазный топор', en: 'Diamond axe' },
+  },
+  [ITEM.DIAMOND_SWORD]: {
+    kind: 'tool', tool: 'sword', tier: 'diamond', max: 1, icon: 'diamond_sword',
+    speed: 1, damage: 7,
+    name: { ru: 'Алмазный меч', en: 'Diamond sword' },
+  },
   [ITEM.COAL]: {
     kind: 'item', max: 64, icon: 'coal',
     name: { ru: 'Уголь', en: 'Coal' },
@@ -111,6 +175,23 @@ export const ITEMS = {
   [ITEM.GOLD_INGOT]: {
     kind: 'item', max: 64, icon: 'gold_ingot',
     name: { ru: 'Золотой слиток', en: 'Gold ingot' },
+  },
+  // --- Дроп с мобов ---
+  [ITEM.WOOL]: {
+    kind: 'item', max: 64, icon: 'wool',
+    name: { ru: 'Шерсть', en: 'Wool' },
+  },
+  [ITEM.RAW_MEAT]: {
+    kind: 'item', max: 64, icon: 'raw_meat', food: 2,
+    name: { ru: 'Сырое мясо', en: 'Raw meat' },
+  },
+  [ITEM.COOKED_MEAT]: {
+    kind: 'item', max: 64, icon: 'cooked_meat', food: 7,
+    name: { ru: 'Жареное мясо', en: 'Cooked meat' },
+  },
+  [ITEM.FANG]: {
+    kind: 'item', max: 64, icon: 'fang',
+    name: { ru: 'Клык', en: 'Fang' },
   },
   [ITEM.XP]: {
     kind: 'item', max: 9999, icon: 'xp',
@@ -159,6 +240,9 @@ const BLOCK_DETAILS = {
   [BLOCK.TORCH]: { ru: 'Светильник для освещения тёмных мест.', en: 'A small light source for dark places.' },
   [BLOCK.FURNACE]: { ru: 'Печь для переплавки руды и песка. Положите сырьё и топливо, затем нажмите ПКМ.', en: 'Smelts ore and sand. Add an ingredient and fuel, then right-click.' },
   [BLOCK.WALL_TORCH]: { ru: 'Тот же светильник, но висит на стене — поставьте факел на боковой блок.', en: 'The same light source, mounted on a wall: place a torch against a side block.' },
+  [BLOCK.BIRCH_PLANKS]: { ru: 'Светлые берёзовые доски: бревно берёзы → 4 доски.', en: 'Pale birch boards: one birch log makes four planks.' },
+  [BLOCK.FENCE]: { ru: 'Забор из досок и палок. Через него не перепрыгнуть, но видно всё вокруг.', en: 'A fence of planks and sticks. Too tall to jump over, but you can see through it.' },
+  [BLOCK.ANVIL]: { ru: 'Наковальня: на ней куются железные, золотые и алмазные инструменты. ПКМ — открыть.', en: 'An anvil: iron, golden and diamond tools are forged here. Right-click to open.' },
   [BLOCK.CHEST]: { ru: 'Хранилище на 27 ячеек. ПКМ — открыть, Shift+клик — быстро переложить предмет.', en: 'Stores 27 stacks. Right-click to open, Shift+click to move items quickly.' },
 };
 for (const id of [BLOCK.WALL_TORCH_PX, BLOCK.WALL_TORCH_NX, BLOCK.WALL_TORCH_PZ, BLOCK.WALL_TORCH_NZ]) {
@@ -185,6 +269,19 @@ const ITEM_DETAILS = {
   [ITEM.WHEAT]: { ru: 'Соберите три пшеницы и скрафтите хлеб.', en: 'Combine three wheat to craft bread.' },
   [ITEM.IRON_INGOT]: { ru: 'Готовый железный слиток после плавки руды.', en: 'An iron ingot produced by smelting raw iron.' },
   [ITEM.GOLD_INGOT]: { ru: 'Готовый золотой слиток после плавки руды.', en: 'A gold ingot produced by smelting raw gold.' },
+  [ITEM.WOOL]: { ru: 'Шерсть с овцы. Мягкий материал для будущих поделок.', en: 'Wool sheared from a sheep. A soft material for future crafts.' },
+  [ITEM.RAW_MEAT]: { ru: 'Сырое мясо с овцы или волка. Лучше пожарить в печи.', en: 'Raw meat from a sheep or a wolf. Better cooked in a furnace.' },
+  [ITEM.COOKED_MEAT]: { ru: 'Жареное мясо: восстанавливает 7 единиц здоровья.', en: 'Cooked meat: restores 7 health.' },
+  [ITEM.FANG]: { ru: 'Волчий клык. Редкий трофей — пригодится для особых крафтов.', en: 'A wolf fang. A rare trophy, useful for special crafting later.' },
+  [ITEM.IRON_PICKAXE]: { ru: 'Железная кирка: добывает камень быстрее каменной. Куётся на наковальне.', en: 'Iron pickaxe: mines stone faster than the stone one. Forged on an anvil.' },
+  [ITEM.IRON_AXE]: { ru: 'Железный топор: быстро рубит дерево, урон по мобу 4. Нужна наковальня.', en: 'Iron axe: chops wood fast, 4 damage to mobs. Requires an anvil.' },
+  [ITEM.IRON_SWORD]: { ru: 'Железный меч: урон по мобу 5. Куётся на наковальне.', en: 'Iron sword: 5 damage to mobs. Forged on an anvil.' },
+  [ITEM.GOLD_PICKAXE]: { ru: 'Золотая кирка: самая быстрая добыча камня, но урон небольшой.', en: 'Golden pickaxe: the fastest mining, but low damage.' },
+  [ITEM.GOLD_AXE]: { ru: 'Золотой топор: быстрее всех рубит дерево. Нужна наковальня.', en: 'Golden axe: chops wood faster than any other. Requires an anvil.' },
+  [ITEM.GOLD_SWORD]: { ru: 'Золотой меч: урон по мобу 4. Куётся на наковальне.', en: 'Golden sword: 4 damage to mobs. Forged on an anvil.' },
+  [ITEM.DIAMOND_PICKAXE]: { ru: 'Алмазная кирка: берёт любую породу и делает это быстро.', en: 'Diamond pickaxe: cuts through any rock, quickly.' },
+  [ITEM.DIAMOND_AXE]: { ru: 'Алмазный топор: урон по мобу 6, рубит быстрее всех, кроме золотого.', en: 'Diamond axe: 6 damage, chops nearly as fast as gold.' },
+  [ITEM.DIAMOND_SWORD]: { ru: 'Алмазный меч: лучшее оружие ближнего боя, урон 7.', en: 'Diamond sword: the best melee weapon, 7 damage.' },
   [ITEM.XP]: { ru: 'Опыт, который дают мобы. Подойдите к светящемуся шару, чтобы собрать.', en: 'Experience dropped by mobs. Walk close to a glowing orb to collect it.' },
 };
 
@@ -276,9 +373,9 @@ export function blockDropItem(id, rng = Math.random) {
   if (id === BLOCK.IRON_ORE) return ITEM.RAW_IRON;
   if (id === BLOCK.GOLD_ORE) return ITEM.RAW_GOLD;
   if (id === BLOCK.DIAMOND_ORE) return ITEM.DIAMOND;
+  if (isSlab(id)) return blockItem(slabDropItem(id));
   if (BLOCKS[id]?.torch) return blockItem(BLOCK.TORCH);
   if (BLOCKS[id]?.chest) return blockItem(BLOCK.CHEST);
-  if (id === BLOCK.SLAB) return blockItem(BLOCK.SLAB);
   if (id === BLOCK.FURNACE) return blockItem(BLOCK.FURNACE);
   // с высокой травы иногда падает пшеница для хлеба
   if (id === BLOCK.TALL_GRASS) {
@@ -330,6 +427,12 @@ const ORE_COLORS = {
   [ITEM.BREAD]: 0xdeba7a,
   [ITEM.WHEAT]: 0xe8d86a,
   [ITEM.STICK]: 0x8b5a2b,
+  [ITEM.WOOL]: 0xe8e6e0,
+  [ITEM.RAW_MEAT]: 0xc05a5a,
+  [ITEM.COOKED_MEAT]: 0x8a4a26,
+  [ITEM.FANG]: 0xe8e4d8,
+  [ITEM.IRON_INGOT]: 0xd8dee4,
+  [ITEM.GOLD_INGOT]: 0xf0c451,
 };
 const SLAB_BLOCKS = new Set([
   BLOCK.PLANK_SLAB, BLOCK.PLANK_SLAB_TOP, BLOCK.COBBLE_SLAB, BLOCK.COBBLE_SLAB_TOP,

@@ -13,6 +13,7 @@ const FLAT_BLOCKS = new Set([
 const SLAB_BLOCKS = new Set([
   BLOCK.PLANK_SLAB, BLOCK.PLANK_SLAB_TOP, BLOCK.COBBLE_SLAB, BLOCK.COBBLE_SLAB_TOP,
 ]);
+const FENCE_BLOCKS = new Set([BLOCK.FENCE]);
 
 // Затенение граней кубика: верх — светлый, левая — средняя, правая — тёмная
 export const FACE_SHADE = { top: 1, left: 0.74, right: 0.52 };
@@ -321,8 +322,136 @@ const SPRITES = {
   },
 };
 
+Object.assign(SPRITES, {
+  // Железные, золотые и алмазные инструменты: тот же пиксель-арт, другой металл
+  iron_pickaxe: {
+    pal: { h: '#7b5530', H: '#a97a45', W: '#d8dee4', w: '#8d949c' },
+    rows: SPRITES.stone_pickaxe.rows,
+  },
+  iron_axe: {
+    pal: { h: '#7b5530', H: '#a97a45', W: '#d8dee4', w: '#8d949c' },
+    rows: SPRITES.stone_axe.rows,
+  },
+  iron_sword: {
+    pal: { h: '#7b5530', H: '#a97a45', B: '#e2e8ee', b: '#98a2ad', g: '#5d5d68' },
+    rows: SPRITES.stone_sword.rows,
+  },
+  gold_pickaxe: {
+    pal: { h: '#7b5530', H: '#a97a45', W: '#f6d168', w: '#b58c2c' },
+    rows: SPRITES.stone_pickaxe.rows,
+  },
+  gold_axe: {
+    pal: { h: '#7b5530', H: '#a97a45', W: '#f6d168', w: '#b58c2c' },
+    rows: SPRITES.stone_axe.rows,
+  },
+  gold_sword: {
+    pal: { h: '#7b5530', H: '#a97a45', B: '#ffe08a', b: '#c39a2e', g: '#5d5d68' },
+    rows: SPRITES.stone_sword.rows,
+  },
+  diamond_pickaxe: {
+    pal: { h: '#7b5530', H: '#a97a45', W: '#5fe3d6', w: '#2b93a8' },
+    rows: SPRITES.stone_pickaxe.rows,
+  },
+  diamond_axe: {
+    pal: { h: '#7b5530', H: '#a97a45', W: '#5fe3d6', w: '#2b93a8' },
+    rows: SPRITES.stone_axe.rows,
+  },
+  diamond_sword: {
+    pal: { h: '#7b5530', H: '#a97a45', B: '#7df0e2', b: '#2f9fb0', g: '#5d5d68' },
+    rows: SPRITES.stone_sword.rows,
+  },
+  // Дроп с мобов: шерсть, мясо, клык
+  wool: {
+    pal: { W: '#e9e7e1', w: '#c3c0b8', d: '#a5a29b' },
+    rows: [
+      '................',
+      '................',
+      '.....WWWWWW.....',
+      '....WWWWWWWW....',
+      '...WWWwWWWWW....',
+      '...WWWWWWwWW....',
+      '..WWWwWWWWWWW...',
+      '..WWWWWWWWWWW...',
+      '..WWWwWWWWwWW...',
+      '..WWWWWWWwWWW...',
+      '...WWWWWWWWW....',
+      '...WWWwWWWW.....',
+      '....WWWWWW......',
+      '.....ddddd......',
+      '................',
+      '................',
+    ],
+  },
+  raw_meat: {
+    pal: { R: '#c4574f', r: '#9c3b39', F: '#e8ded2', B: '#f0e6da' },
+    rows: [
+      '................',
+      '................',
+      '......RRRR......',
+      '....RRRRRRRR....',
+      '...RRrRRRRRRR...',
+      '...RRRRRrRRRR...',
+      '..RRRrRRRRRRRR..',
+      '..RRRRRRRRrRRR..',
+      '..RRrRRRRRRRRR..',
+      '..RRRRRRrRRRRR..',
+      '...RRRRRRRRRR...',
+      '....FFRRRRFF....',
+      '.....FFFFFF.....',
+      '......BBBB......',
+      '................',
+      '................',
+    ],
+  },
+  cooked_meat: {
+    pal: { R: '#8d4a24', r: '#6d3517', F: '#e0cfae', B: '#c9b48d' },
+    rows: [
+      '................',
+      '................',
+      '......RRRR......',
+      '....RRRRRRRR....',
+      '...RRrRRRRRRR...',
+      '...RRRRRrRRRR...',
+      '..RRRrRRRRRRRR..',
+      '..RRRRRRRRrRRR..',
+      '..RRrRRRRRRRRR..',
+      '..RRRRRRrRRRRR..',
+      '...RRRRRRRRRR...',
+      '....FFRRRRFF....',
+      '.....FFFFFF.....',
+      '......BBBB......',
+      '................',
+      '................',
+    ],
+  },
+  fang: {
+    pal: { W: '#f2efe4', w: '#cbc6b6', d: '#9a9484' },
+    rows: [
+      '................',
+      '.......WW.......',
+      '......WWWW......',
+      '......WWWW......',
+      '......WWwW......',
+      '.....WWwwW......',
+      '.....WWwwW......',
+      '.....WWww.......',
+      '....WWwww.......',
+      '....WWww........',
+      '....Www.........',
+      '....Www.........',
+      '...wwd..........',
+      '...wd...........',
+      '................',
+      '................',
+    ],
+  },
+});
+
 // Остальные ресурсы рисуем на сетке 16×16; ни на одной платформе не нужны emoji-шрифты.
-const RESOURCE_SPRITES = new Set(['wheat', 'coal', 'ore', 'gold_ore', 'diamond', 'ingot', 'gold_ingot', 'bread']);
+const RESOURCE_SPRITES = new Set([
+  'wheat', 'coal', 'ore', 'gold_ore', 'diamond', 'ingot', 'gold_ingot', 'bread',
+  'raw_iron', 'raw_gold', 'iron_ingot', 'xp',
+]);
 function resourceIcon(ctx, name) {
   const box = (x, y, w, h, color) => { ctx.fillStyle = color; ctx.fillRect(x, y, w, h); };
   if (name === 'bread') {
@@ -339,13 +468,16 @@ function resourceIcon(ctx, name) {
     box(6, 2, 5, 2, '#d7ffff'); box(3, 4, 10, 4, '#48b7cb');
     box(4, 8, 8, 3, '#3ce4d2'); box(6, 11, 4, 2, '#267eac');
     box(5, 4, 3, 4, '#aefff0');
-  } else if (name === 'ingot' || name === 'gold_ingot') {
+  } else if (name === 'ingot' || name === 'gold_ingot' || name === 'iron_ingot') {
     const metal = name === 'gold_ingot' ? ['#88601f', '#e1ac43', '#ffe094'] : ['#596577', '#aebbc7', '#ebf3f4'];
     box(2, 9, 12, 4, metal[0]); box(3, 7, 10, 4, metal[1]);
-    box(5, 6, 6, 2, metal[2]);
+    box(5, 6, 6, 2, metal[2]); box(3, 12, 10, 1, metal[0]);
+  } else if (name === 'xp') {
+    box(5, 5, 6, 6, '#4e9c2a'); box(6, 6, 4, 4, '#8aff4a');
+    box(7, 7, 2, 2, '#e6ffcf'); box(4, 8, 1, 1, '#8aff4a'); box(11, 7, 1, 1, '#8aff4a');
   } else {
     const shades = name === 'coal' ? ['#17191d', '#333942', '#727885']
-      : name === 'gold_ore' ? ['#715e40', '#b48c44', '#ffdb66']
+      : (name === 'gold_ore' || name === 'raw_gold') ? ['#715e40', '#b48c44', '#ffdb66']
         : ['#68594b', '#ad7350', '#e0a777'];
     box(3, 5, 10, 8, shades[0]); box(4, 3, 8, 9, shades[1]);
     box(5, 4, 4, 3, shades[2]); box(10, 8, 2, 3, shades[2]);
@@ -387,7 +519,7 @@ export function pixelSpriteCanvas(name, size = 48) {
  */
 export function spritePixels(name) {
   const sp = SPRITES[name];
-  if (!sp) return null;
+  if (!sp) return resourcePixels(name);
   const out = [];
   for (let y = 0; y < 16; y++) {
     const row = sp.rows[y] || '';
@@ -400,6 +532,37 @@ export function spritePixels(name) {
   return out;
 }
 
+const _resourcePixelCache = new Map();
+/**
+ * Пиксели ресурсных иконок (уголь, слитки, алмаз, хлеб и т.п.): они рисуются
+ * кодом, поэтому для объёмной модели предмета читаем готовый канвас 16×16
+ * и возвращаем непрозрачные пиксели с их цветом.
+ */
+function resourcePixels(name) {
+  if (!RESOURCE_SPRITES.has(name)) return null;
+  if (_resourcePixelCache.has(name)) return _resourcePixelCache.get(name);
+  let out = null;
+  try {
+    const c = pixelSpriteCanvas(name, 16);
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    const data = ctx.getImageData(0, 0, 16, 16).data;
+    out = [];
+    const hex = (v) => v.toString(16).padStart(2, '0');
+    for (let y = 0; y < 16; y++) {
+      for (let x = 0; x < 16; x++) {
+        const i = (y * 16 + x) * 4;
+        if (data[i + 3] < 40) continue;
+        out.push({ x, y, color: '#' + hex(data[i]) + hex(data[i + 1]) + hex(data[i + 2]) });
+      }
+    }
+    if (!out.length) out = null;
+  } catch (e) {
+    out = null;   // без canvas/DOM (тесты) объёмная модель не нужна
+  }
+  _resourcePixelCache.set(name, out);
+  return out;
+}
+
 /** Иконка блока по id: кубик или плоский спрайт */
 export function blockIconCanvas(id, size = 48) {
   if (FLAT_BLOCKS.has(id)) return blockSpriteCanvas(id, size);
@@ -408,7 +571,28 @@ export function blockIconCanvas(id, size = 48) {
     c.getContext('2d').drawImage(blockCubeCanvas(id, size), 0, size * 0.17, size, size * 0.75);
     return c;
   }
+  if (FENCE_BLOCKS.has(id)) return fenceIconCanvas(id, size);
   return blockCubeCanvas(id, size);
+}
+
+/** Забор: столбик с двумя перекладинами — узнаваемый силуэт вместо целого куба */
+function fenceIconCanvas(id, size = 48) {
+  const def = BLOCKS[id];
+  const c = makeCanvas(size, size);
+  if (!def || !def.tiles) return c;
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  const tile = tileCanvas(def.tiles[2]);
+  const u = size / 16;
+  ctx.drawImage(tile, 0, 0, TILE, TILE, 5.5 * u, 1 * u, 5 * u, 14 * u);
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';
+  ctx.fillRect(9.5 * u, 1 * u, 1 * u, 14 * u);
+  for (const [y, h] of [[4, 1.6], [9, 1.6]]) {
+    ctx.drawImage(tile, 0, 0, TILE, TILE, 1 * u, y * u, 14 * u, h * u);
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.fillRect(1 * u, (y + h - 0.4) * u, 14 * u, 0.4 * u);
+  }
+  return c;
 }
 
 /** Иконка любого предмета по ключу ('block_3', 'stick', 'tool_wood_axe', …) */
