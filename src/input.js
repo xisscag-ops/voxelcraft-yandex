@@ -190,6 +190,7 @@ export class Input {
 
     const onTouchStart = (e) => {
       if (!this.enabled) return;   // окно инвентаря/меню: жесты не перехватываем
+      if (e.target.closest('button, select, input, #hotbar')) return;
       for (const t of e.changedTouches) {
         const jr = joyRect();
         const inJoy = t.clientX >= jr.left - 20 && t.clientX <= jr.right + 20 &&

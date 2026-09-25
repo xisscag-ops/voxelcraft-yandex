@@ -22,11 +22,12 @@
       <div id="apples" class="hidden"></div>
       <div id="arrows" class="hidden"></div>
     </div>
+    <div id="xp-hud"><span id="xp-level">0</span><div id="xp-bar"><div id="xp-fill"></div></div></div>
     <div id="break-bar" class="hidden"><div id="break-fill"></div></div>
     <div id="debug" class="hidden"></div>
     <div id="hotbar"></div>
-    <button id="btn-bag" class="icon-btn bag-btn" aria-label="Inventory">🎒</button>
-    <button id="btn-pause-hud" class="icon-btn hidden" aria-label="Pause">⏸</button>
+    <button id="btn-bag" class="icon-btn bag-btn" aria-label="Inventory" data-i18n="touch_inventory">ИНВ</button>
+    <button id="btn-pause-hud" class="icon-btn hidden" aria-label="Pause">II</button>
   </div>
 
   <!-- ===================== Сенсорное управление ===================== -->
@@ -34,9 +35,10 @@
     <div id="look-zone"></div>
     <div id="joystick"><div id="joy-knob"></div></div>
     <div id="touch-buttons">
-      <button id="btn-fly" class="touch-btn" aria-label="Fly">🕊</button>
-      <button id="btn-break" class="touch-btn" aria-label="Break">⛏</button>
-      <button id="btn-place" class="touch-btn" aria-label="Place">🧱</button>
+      <button id="btn-fly" class="touch-btn" aria-label="Fly" data-i18n="touch_fly">ЛЕТ</button>
+      <button id="btn-break" class="touch-btn" aria-label="Break" data-i18n="touch_break">КОП</button>
+      <button id="btn-place" class="touch-btn" aria-label="Place" data-i18n="touch_place">СТАВ</button>
+      <button id="btn-eat" class="touch-btn" aria-label="Eat" data-i18n="touch_eat">ЕСТЬ</button>
       <button id="btn-sneak" class="touch-btn small" aria-label="Down">▼</button>
       <button id="btn-jump" class="touch-btn small" aria-label="Jump">▲</button>
     </div>
@@ -56,6 +58,13 @@
     <div class="panel">
       <h1 class="logo">Voxel<span>Craft</span></h1>
       <div class="tagline" data-i18n="tagline">Воксельная песочница</div>
+      <div class="settings-row mode-picker">
+        <label for="mode-menu" data-i18n="mode_now">Режим</label>
+        <select id="mode-menu">
+          <option value="survival" data-i18n="mode_survival">Выживание</option>
+          <option value="creative" data-i18n="mode_creative">Креатив</option>
+        </select>
+      </div>
       <div class="menu-buttons">
         <button id="btn-play" class="btn primary" data-i18n="play">Играть</button>
         <button id="btn-new-world" class="btn hidden" data-i18n="new_world">Новый мир</button>
@@ -87,11 +96,16 @@
   <div id="pause-screen" class="screen hidden">
     <div class="panel">
       <h2 data-i18n="pause">Пауза</h2>
-      <div class="tagline" id="pause-mode"></div>
+      <div class="settings-row mode-picker">
+        <label id="pause-mode" for="mode-pause"></label>
+        <select id="mode-pause">
+          <option value="survival" data-i18n="mode_survival">Выживание</option>
+          <option value="creative" data-i18n="mode_creative">Креатив</option>
+        </select>
+      </div>
       <div class="menu-buttons">
         <button id="btn-resume" class="btn primary" data-i18n="resume">Продолжить игру</button>
         <button id="btn-home" class="btn" data-i18n="to_spawn">К спавну</button>
-        <button id="btn-toggle-mode" class="btn" data-i18n="toggle_mode">Сменить режим: Выживание/Креатив</button>
         <button id="btn-reward2" class="btn reward" data-i18n="reward_btn">Смотреть рекламу</button>
         <button id="btn-settings2" class="btn" data-i18n="settings">Настройки</button>
         <button id="btn-save-quit" class="btn" data-i18n="save_quit">Сохранить и выйти</button>
@@ -139,6 +153,17 @@
       <div class="menu-buttons">
         <button id="btn-settings-back" class="btn primary" data-i18n="back">Назад</button>
       </div>
+    </div>
+  </div>
+
+  <!-- ===================== Печка ===================== -->
+  <div id="furnace-screen" class="screen hidden">
+    <div class="panel furnace-panel">
+      <h2 data-i18n="furnace_title">Печка</h2>
+      <p data-i18n="furnace_help">Выберите обжиг. Топливо: уголь или доска.</p>
+      <div id="furnace-stock"></div>
+      <div id="furnace-recipes"></div>
+      <button id="btn-furnace-close" class="btn primary" data-i18n="back">Назад</button>
     </div>
   </div>
 

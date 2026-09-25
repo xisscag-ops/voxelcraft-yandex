@@ -356,4 +356,8 @@ export class Sfx {
   pickup() {
     this._tone({ freq: 880, dur: 0.07, gain: 0.1, type: 'triangle', slide: 240 });
   }
+
+  xp() {
+    this._tone({ freq: 1100, dur: 0.12, gain: 0.07, type: 'sine', slide: 380 });
+  }
 }

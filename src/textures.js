@@ -24,8 +24,7 @@ export const T = {
   SPRUCE_SIDE: 40, SPRUCE_TOP: 41, SPRUCE_LEAVES: 42,
   // Прочее
   CACTUS_SIDE: 43, CACTUS_TOP: 44, OBSIDIAN: 45,
-  SLAB: 46, FURNACE_TOP: 47, FURNACE_FRONT: 48, FURNACE_SIDE: 49,
-  TORCH: 50, BREAD: 51,
+  FURNACE_TOP: 46, FURNACE_SIDE: 47, FURNACE_FRONT: 48, TORCH: 49,
 };
 
 export const CRACK_TILES = [17, 18, 19, 20, 21];
@@ -499,71 +498,34 @@ const painters = {
     }
     for (let i = 0; i < 6; i++) px(data, (rng() * TILE) | 0, (rng() * TILE) | 0, 128, 112, 190);
   },
-  [T.SLAB](data, rng) {
-    noisyFill(data, rng, [172, 132, 78], 10);
-    for (let y = 0; y < TILE; y += 4) {
-      for (let x = 0; x < TILE; x++) px(data, x, y, 120, 90, 52);
-    }
-  },
   [T.FURNACE_TOP](data, rng) {
-    noisyFill(data, rng, [120, 120, 124], 10);
-    for (let i = 0; i < TILE; i++) {
-      px(data, i, 0, 80, 80, 84);
-      px(data, i, TILE - 1, 80, 80, 84);
-      px(data, 0, i, 80, 80, 84);
-      px(data, TILE - 1, i, 80, 80, 84);
-    }
-  },
-  [T.FURNACE_FRONT](data, rng) {
-    noisyFill(data, rng, [108, 108, 112], 10);
-    // темная рамка
-    for (let i = 0; i < TILE; i++) {
-      px(data, i, 0, 62, 62, 66);
-      px(data, i, TILE - 1, 62, 62, 66);
-      px(data, 0, i, 62, 62, 66);
-      px(data, TILE - 1, i, 62, 62, 66);
-    }
-    // окно печи
-    for (let y = 4; y < 12; y++) {
-      for (let x = 4; x < 12; x++) {
-        const v = (rng() - 0.5) * 20;
-        px(data, x, y, 48 + v, 38 + v, 32 + v);
+    noisyFill(data, rng, [106, 106, 105], 10);
+    for (const k of [2, 13]) {
+      for (let j = 1; j < 15; j++) {
+        px(data, k, j, 65, 65, 68); px(data, j, k, 65, 65, 68);
       }
     }
-    // пламя внутри
-    for (let i = 0; i < 6; i++) px(data, 6 + (rng() * 4 | 0), 6 + (rng() * 4 | 0), 240, 160, 40);
   },
   [T.FURNACE_SIDE](data, rng) {
-    noisyFill(data, rng, [108, 108, 112], 10);
-    for (let i = 0; i < TILE; i++) {
-      px(data, i, 0, 62, 62, 66);
-      px(data, i, TILE - 1, 62, 62, 66);
+    noisyFill(data, rng, [114, 108, 102], 12);
+    for (let y = 2; y < 16; y += 5) for (let x = 0; x < 16; x++) px(data, x, y, 70, 68, 66);
+  },
+  [T.FURNACE_FRONT](data, rng) {
+    painters[T.FURNACE_SIDE](data, rng);
+    for (let y = 5; y < 13; y++) for (let x = 3; x < 13; x++) {
+      const rim = x === 3 || x === 12 || y === 5 || y === 12;
+      px(data, x, y, ...(rim ? [185, 173, 145] : y > 8 ? [35, 33, 37] : [19, 21, 25]));
     }
+    for (const [x, y] of [[7, 9], [8, 8], [9, 10], [6, 11], [9, 11]]) px(data, x, y, 246, 137, 43);
   },
   [T.TORCH](data, rng) {
-    // стержень + огонь
-    for (let y = 0; y < TILE; y++) for (let x = 0; x < TILE; x++) px(data, x, y, 0, 0, 0, 0);
-    for (let y = 6; y < 16; y++) {
-      const v = (rng() - 0.5) * 10;
-      px(data, 7, y, 140 + v, 100 + v, 40 + v);
-      px(data, 8, y, 150 + v, 110 + v, 50 + v);
+    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) px(data, x, y, 0, 0, 0, 0);
+    for (let y = 6; y < 16; y++) for (let x = 7; x <= 8; x++) px(data, x, y, 135, 83, 41);
+    for (let y = 2; y <= 7; y++) {
+      const w = y > 4 ? 2 : 1;
+      for (let x = 8 - w; x <= 8 + w; x++) px(data, x, y, 255, y > 4 ? 168 : 223, 70);
     }
-    for (let y = 0; y < 7; y++) {
-      for (let x = 5; x < 11; x++) {
-        if (rng() < 0.6) px(data, x, y + (rng() * 2 | 0), 250, 200 - y * 15, 30 + y * 5);
-      }
-    }
-    px(data, 7, 2, 255, 255, 180);
-    px(data, 8, 2, 255, 240, 120);
-  },
-  [T.BREAD](data, rng) {
-    noisyFill(data, rng, [198, 154, 92], 12);
-    for (let y = 4; y < 12; y++) {
-      for (let x = 3; x < 13; x++) {
-        const v = (rng() - 0.5) * 14;
-        px(data, x, y, 210 + v, 170 + v, 110 + v);
-      }
-    }
+    px(data, 8, 1, 255, 245, 151); px(data, 8, 4, 255, 248, 160);
   },
 };
 

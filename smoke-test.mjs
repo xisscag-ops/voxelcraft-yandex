@@ -265,7 +265,7 @@ check('инвентарь полон → лишнее не влезает', (() 
 
 // ---- Крафт ----
 check('рецепты без ошибок', validateRecipes().length === 0, validateRecipes().join('; '));
-check('22 рецепта (включая верстак, лук, стрелы и полублоки/факелы/хлеб/печку/слитки)', RECIPES.length === 22, 'их ' + RECIPES.length);
+check('23 рецепта (включая старые рецепты хлеба и выплавки)', RECIPES.length === 23, 'их ' + RECIPES.length);
 function craftWith(input, id) {
   const i = new Inventory(CONFIG.INV_SIZE);
   for (const [k, n] of Object.entries(input)) i.add(k, n);
@@ -318,8 +318,9 @@ function grid3(pairs) {
 check('сетка 2×2: бревно → доски', gridResult(grid2([[0, blockItem(BLOCK.LOG)]]), 2)?.out.key === blockItem(BLOCK.PLANKS));
 check('сетка 2×2: 2 доски столбиком → палки',
   gridResult(grid2([[0, blockItem(BLOCK.PLANKS)], [2, blockItem(BLOCK.PLANKS)]]), 2)?.out.key === ITEM.STICK);
-check('сетка 2×2: 2 доски в ряд — не рецепт',
-  gridResult(grid2([[0, blockItem(BLOCK.PLANKS)], [1, blockItem(BLOCK.PLANKS)]]), 2) === null);
+check('сетка 2×2: 2 доски в ряд → 4 полублока',
+  gridResult(grid2([[0, blockItem(BLOCK.PLANKS)], [1, blockItem(BLOCK.PLANKS)]]), 2)?.out.key
+    === blockItem(BLOCK.PLANK_SLAB));
 check('сетка 2×2: 4 доски → верстак',
   gridResult(grid2([[0, blockItem(BLOCK.PLANKS)], [1, blockItem(BLOCK.PLANKS)],
     [2, blockItem(BLOCK.PLANKS)], [3, blockItem(BLOCK.PLANKS)]]), 2)?.out.key === blockItem(BLOCK.TABLE));
@@ -608,6 +609,158 @@ check('btn-home + lightning in markup', html.includes('id="btn-home"') && html.i
 check('разметка: выбор режима, инвентарь, рюкзак', html.includes('id="mode-screen"')
   && html.includes('id="inventory-screen"') && html.includes('id="btn-bag"')
   && html.includes('id="cursor-item"') && html.includes('id="inv-hotbar-row"'));
+
+// ---- Новые механики на обновлённой линии main ----
+{
+  const { blockBounds, isSlab } = await import('./src/blocks.js');
+  const { Player } = await import('./src/physics.js');
+  const { ItemDrops } = await import('./src/items.js');
+  const { FURNACE_RECIPES, smelt } = await import('./src/crafts.js');
+  const { isHiddenSpawn, makeMobVisuals } = await import('./src/mobs.js');
+  const Three = await import('three');
+  const { Sky } = await import('./src/sky.js');
+  const { spriteNames } = await import('./src/icons.js');
+
+  check('id из опубликованной main сохранены: полублок 35, факел 36, печка 37',
+    BLOCK.TABLE === 20 && BLOCK.DIAMOND_ORE === 24 && BLOCK.OBSIDIAN === 34
+      && BLOCK.PLANK_SLAB === 35 && BLOCK.TORCH === 36 && BLOCK.FURNACE === 37
+      && BLOCK.PLANK_SLAB_TOP === 38 && BLOCK.COBBLE_SLAB === 39 && BLOCK.COBBLE_SLAB_TOP === 40);
+  check('полублоки твёрдые, но занимают только половину ячейки',
+    isSlab(BLOCK.PLANK_SLAB) && isSolid(BLOCK.COBBLE_SLAB)
+      && !isOpaque(BLOCK.COBBLE_SLAB) && blockBounds(BLOCK.PLANK_SLAB).maxY === 0.5
+      && blockBounds(BLOCK.PLANK_SLAB_TOP).minY === 0.5);
+  const fake = { chunkSize: 16, worldHeight: 4,
+    getBlock: (x, y, z) => (x === 0 && z === 0 && y === 0 ? BLOCK.PLANK_SLAB : 0) };
+  const m = meshChunk(Three, fake, 0, 0).opaque;
+  check('меш полублока заканчивается на y=0.5',
+    m.pos.length > 0 && Math.max(...m.pos.filter((_, i) => i % 3 === 1)) === 0.5);
+  check('луч попадает на верх полублока и проходит над ним',
+    raycastVoxel(fake, .5, 2, .5, 0, -1, 0, 3)?.t === 1.5 &&
+    raycastVoxel(fake, .5, .75, -1, 0, 0, 1, 3) === null);
+  const stand = new Player(fake);
+  check('физика допускает стоять на половине высоты',
+    stand.collides(.5, .45, .5) && !stand.collides(.5, .51, .5));
+  const ledge = { getBlock: (x, y, z) => y < 0 ? BLOCK.STONE
+    : x === 1 && z === 0 && y === 0 ? BLOCK.PLANK_SLAB : BLOCK.AIR };
+  const stepper = new Player(ledge);
+  stepper.pos.x = .5; stepper.pos.y = 0; stepper.pos.z = .5;
+  stepper.onGround = true; stepper.vel.x = 3;
+  stepper._move(.2);
+  check('игрок автоматически зашагивает на нижний полублок (main)',
+    stepper.pos.x > .8 && stepper.pos.y >= .5);
+  const upper = new Player({ getBlock: (x, y, z) => y < 0 ? BLOCK.STONE
+    : x === 1 && z === 0 && y === 0 ? BLOCK.PLANK_SLAB_TOP : BLOCK.AIR });
+  upper.pos.x = .5; upper.pos.y = 0; upper.pos.z = .5;
+  upper.onGround = true; upper.vel.x = 3;
+  upper._move(.2);
+  check('автошаг не поднимает на целый блок', upper.pos.y === 0 && upper.pos.x < .8);
+  const torchWorld = { chunkSize: 16, worldHeight: 3,
+    getBlock: (x, y, z) => (x === 0 && z === 0 && y === 0 ? BLOCK.TORCH : 0) };
+  check('факел рисуется отдельным ярким мешем',
+    meshChunk(Three, torchWorld, 0, 0).torch.idx.length > 0 && !isSolid(BLOCK.TORCH));
+  const saveWorld = new World(333);
+  const y = saveWorld.heightAt(0, 0) + 2;
+  saveWorld.setBlock(0, y, 0, BLOCK.TORCH);
+  const saved = saveWorld.serializeEdits();
+  const loadedWorld = new World(333); loadedWorld.loadEdits(saved);
+  check('факелы учитываются после сохранения и удаления',
+    loadedWorld.torches.has(`0,${y},0`) &&
+      (loadedWorld.setBlock(0, y, 0, BLOCK.AIR), !loadedWorld.torches.has(`0,${y},0`)));
+  check('4 вида руды отдают подбираемые предметы',
+    [ITEM.COAL, ITEM.ORE, ITEM.GOLD_ORE, ITEM.DIAMOND].every((key, i) =>
+      blockDropItem([BLOCK.COAL_ORE, BLOCK.IRON_ORE, BLOCK.GOLD_ORE, BLOCK.DIAMOND_ORE][i]) === key));
+  const drops = new ItemDrops(new Three.Scene());
+  drops.spawn(3.5, 2, .5, ITEM.ORE, 2);
+  const restored = new ItemDrops(new Three.Scene());
+  restored.load(drops.serialize());
+  let picked = 0;
+  restored.onPickup = (kind, n) => { if (kind === ITEM.ORE) picked += n; };
+  restored.update(1 / 60, { getBlock: () => 0 }, { x: 3.5, y: 1, z: .5 });
+  check('добытая руда сохраняется и подбирается один раз', picked === 2 && restored.items.length === 0);
+  const orbs = new ItemDrops(new Three.Scene());
+  orbs.spawn(3.5, 1.9, .5, 'xp', 2);
+  const orbX = orbs.items[0].group.position.x;
+  orbs.update(.1, { getBlock: () => 0 }, { x: .5, y: 1, z: .5 });
+  check('сфера опыта притягивается к игроку с расстояния (main)',
+    orbs.items[0].group.position.x < orbX);
+  check('полублоки и печка имеют рецепты',
+    RECIPES.some((r) => r.id === 'plank_slabs') && RECIPES.some((r) => r.id === 'furnace'));
+  const furnaceInv = new Inventory(CONFIG.INV_SIZE);
+  furnaceInv.add(ITEM.ORE, 1); furnaceInv.add(ITEM.COAL, 1);
+  const smelted = smelt(furnaceInv, FURNACE_RECIPES.find((r) => r.id === 'smelt_iron'));
+  check('печка превращает руду в слиток и тратит топливо',
+    smelted === 'ok' && furnaceInv.count(ITEM.INGOT) === 1
+      && furnaceInv.count(ITEM.ORE) === 0 && furnaceInv.count(ITEM.COAL) === 0);
+  furnaceInv.add(ITEM.WHEAT, 3); furnaceInv.add(blockItem(BLOCK.PLANKS), 1);
+  check('печка печёт съедобный хлеб на досках',
+    smelt(furnaceInv, FURNACE_RECIPES.find((r) => r.id === 'bake_bread')) === 'ok'
+      && furnaceInv.count(ITEM.BREAD) === 1 && foodValue(ITEM.BREAD) === 6);
+  check('рецепты хлеба и слитка из main также остались в обычном крафте',
+    gridResult(grid3([[0, ITEM.WHEAT], [1, ITEM.WHEAT], [2, ITEM.WHEAT]]), 3)?.out.key === ITEM.BREAD
+      && craftWith({ [ITEM.ORE]: 1, [ITEM.COAL]: 1 }, 'iron_ingot').i.count(ITEM.INGOT) === 1
+      && craftWith({ [ITEM.GOLD_ORE]: 1, [ITEM.COAL]: 1 }, 'gold_ingot').i.count(ITEM.GOLD_INGOT) === 1);
+  const hero = new Player(fake);
+  hero.addXP(9); const hero2 = new Player(fake); hero2.deserialize(hero.serialize());
+  check('сферы опыта повышают уровень и сохраняются', hero2.level === 1 && hero2.xp === 4);
+  check('невидимый спавн за спиной и не ближе 18 блоков',
+    isHiddenSpawn({ x: 0, z: 0 }, 0, 0, 26)
+      && !isHiddenSpawn({ x: 0, z: 0 }, 0, 0, -26)
+      && !isHiddenSpawn({ x: 0, z: 0 }, 0, 0, 4));
+  const gloom = makeMobVisuals('gloom');
+  const spider = makeMobVisuals('spider');
+  check('Хмарь меньше оригинала со страшным лицом, паук чёрный',
+    gloom.scale < 1.7 && gloom.face.length >= 4 && spider.head.geometry.attributes.color.array[0] < 0.16);
+  const clock = new Sky(Three, new Three.Scene());
+  clock.setTime(.25); clock.update(0, { x: 0, y: 30, z: 0 });
+  const noon = clock.lightLevel;
+  clock.setTime(.75); clock.update(0, { x: 0, y: 30, z: 0 });
+  check('полдень светлый, полночь тёмная, шейдер факела совместим с Three',
+    noon > .9 && clock.lightLevel < .3
+      && Three.ShaderLib.basic.vertexShader.includes('#include <begin_vertex>'));
+  check('хлеб, пшеница, слитки и руда имеют собственные иконки',
+    [ITEM.BREAD, ITEM.WHEAT, ITEM.ORE, ITEM.INGOT].every((key) => spriteNames().includes(key)));
+  check('новые UI и сенсорные кнопки доступны в ru/en',
+    ['furnace_title','touch_place','touch_inventory','xp_level','bread_eaten'].every((key) =>
+      STRINGS.ru[key] && STRINGS.en[key]) &&
+      ['mode-menu','mode-pause','furnace-screen','xp-hud','btn-eat'].every((id) => html.includes(`id="${id}"`)));
+
+  const { migrateSave } = await import('./src/save-migration.js');
+  const prSave = { v: 1, seed: 333, mode: 'survival',
+    edits: ['0,30,0', 20, '1,30,0', 21, '2,30,0', 22, '3,30,0', 23,
+      '4,30,0', 24, '5,30,0', 25, '6,30,0', 26, '7,30,0', 27],
+    inventory: { 'block:20': 66, 'block:24': 2, 'block:25': 1, ore: 3 },
+    player: { x: 2, y: 30, z: 2, level: 2, xp: 3 },
+    drops: [{ kind: 'ore', amount: 2, x: 1, y: 31, z: 1 }] };
+  const converted = migrateSave(prSave);
+  const inventoryFromPR = new Inventory(CONFIG.INV_SIZE);
+  inventoryFromPR.deserialize(converted.inventory);
+  check('старое сохранение PR #6: ID и количества мигрируют без потерь',
+    converted.v === 3 && converted.edits.filter((_, i) => i % 2).join(',') ===
+      [BLOCK.PLANK_SLAB, BLOCK.PLANK_SLAB_TOP, BLOCK.COBBLE_SLAB, BLOCK.COBBLE_SLAB_TOP,
+        BLOCK.TORCH, BLOCK.FURNACE, BLOCK.IRON_ORE, BLOCK.COAL_ORE].join(',')
+      && inventoryFromPR.count(blockItem(BLOCK.PLANK_SLAB)) === 66
+      && inventoryFromPR.count(blockItem(BLOCK.TORCH)) === 2
+      && inventoryFromPR.count(ITEM.ORE) === 3 && converted.player.level === 2
+      && prSave.edits[1] === 20 && migrateSave(converted) === converted);
+  const publishedMain = { v: 2, seed: 55, edits: ['0,30,0', 35, '1,30,0', 36, '2,30,0', 37],
+    inventory: [['raw_iron', 4], ['raw_gold', 3], ['iron_ingot', 2], ['block_36', 8], ['block_37', 1]] };
+  const mainSave = migrateSave(publishedMain);
+  const inventoryFromMain = new Inventory(CONFIG.INV_SIZE);
+  inventoryFromMain.deserialize(mainSave.inventory);
+  const loadedPublished = new World(55); loadedPublished.loadEdits(mainSave.edits);
+  check('сохранение main: факелы/печка и старые ключи руды сохранены',
+    mainSave.edits[3] === BLOCK.TORCH && mainSave.edits[5] === BLOCK.FURNACE
+      && loadedPublished.torches.has('1,30,0')
+      && inventoryFromMain.count(ITEM.ORE) === 4
+      && inventoryFromMain.count(ITEM.GOLD_ORE) === 3
+      && inventoryFromMain.count(ITEM.INGOT) === 2
+      && inventoryFromMain.count(blockItem(BLOCK.TORCH)) === 8);
+  const preview = migrateSave({ v: 2, edits: ['0,30,0', 39, '1,30,0', 40],
+    drops: [], inventory: [['block_39', 4], ['block_40', 1]] });
+  check('ранние превью: старые новые ID факела/печки конвертируются',
+    preview.edits[1] === BLOCK.TORCH && preview.edits[3] === BLOCK.FURNACE
+      && preview.inventory[0][0] === blockItem(BLOCK.TORCH));
+}
 
 console.log(failed === 0 ? '\nВсе проверки пройдены' : `\nПровалено проверок: ${failed}`);
 process.exit(failed ? 1 : 0);

@@ -19,6 +19,18 @@ export const STRINGS = {
     reward_desc: 'Посмотрите рекламу и разблокируйте декоративные блоки: стекло, кирпич, светокамень и другие.',
     reward_btn: 'Смотреть рекламу',
     reward_got: 'Набор строителя разблокирован!',
+    reward_creative: 'Все блоки уже доступны',
+    touch_inventory: 'ИНВ', touch_fly: 'ЛЕТ', touch_break: 'КОП',
+    touch_place: 'СТАВ', touch_eat: 'ЕСТЬ',
+    furnace_title: 'Печка',
+    furnace_help: 'Обжиг требует руду или пшеницу и 1 уголь либо 1 доску.',
+    furnace_fuel: 'Топливо',
+    furnace_open: 'Печка открыта',
+    furnace_missing: 'Не хватает материалов или топлива',
+    torch_floor: 'Факелу нужна твёрдая опора',
+    ore_get: 'Руда подобрана — переплавьте её в печке',
+    bread_eaten: 'Хлеб съеден! +3 сердца',
+    xp_level: 'Новый уровень',
     reward_fail: 'Реклама не загрузилась. Попробуйте позже.',
     ad_loading: 'Загрузка рекламы…',
     saved: 'Игра сохранена',
@@ -39,8 +51,11 @@ export const STRINGS = {
       поставьте его и нажмите ПКМ.<br><br>
       <b>Телефон:</b> слева — джойстик, справа — обзор; короткий тап — сломать блок,
       а с едой в руке — удерживайте палец, чтобы поесть.
-      Кнопки: прыжок, поставить, копать, слот «🎒» — инвентарь.<br><br>
-      Прогресс (мир, инвентарь, яблоки) сохраняется автоматически.`,
+      Кнопки: ▲ — прыгать, СТАВ — поставить/открыть печку, КОП — копать, ЕСТЬ — поесть,
+      ИНВ — инвентарь. Креатив и выживание переключаются в меню или на паузе.<br><br>
+      Руда после добычи падает предметом. Печка переплавляет руду и выпекает хлеб из пшеницы;
+      топливо — уголь или доски. Факелы светят ночью, монстры оставляют опыт.<br><br>
+      Прогресс (мир, инвентарь, режим и опыт) сохраняется автоматически.`,
     howto_title: 'Как играть',
     pause_hint: 'Esc — пауза и освобождение мыши',
     unlocked_blocks: 'Открыты новые блоки в панели!',
@@ -105,19 +120,12 @@ export const STRINGS = {
     catalog_locked: 'Набор строителя закрыт — посмотрите рекламу',
     inv_full: 'Инвентарь полон',
     bag_hint: 'E — инвентарь',
-    eat_hint: '🍎 ЛКМ/F',
+    eat_hint: 'Еда ЛКМ/F',
     fly_creative_only: 'Полёт доступен только в креативе',
     block_drop: 'Подобрано',
     hint_inventory: 'E — инвентарь и крафт',
     hint_eat: 'Яблоко: удерживайте ЛКМ, чтобы съесть (или F — сразу)',
     hint_table: '4 доски в сетке крафта → верстак: на нём открывается крафт 3×3',
-    toggle_mode: 'Сменить режим: Выживание/Креатив',
-    mode_switched_survival: 'Режим: Выживание',
-    mode_switched_creative: 'Режим: Креатив',
-    wheat_get: 'Пшеница подобрана (3 → хлеб)',
-    bread_get: 'Хлеб подобран',
-    furnace_hint: 'Печка: положи уголь + руду в крафт, чтобы получить слиток',
-    xp_get: 'Опыт получен',
   },
   en: {
     title: 'VoxelCraft',
@@ -138,6 +146,18 @@ export const STRINGS = {
     reward_desc: 'Watch an ad to unlock decorative blocks: glass, brick, glowstone and more.',
     reward_btn: 'Watch ad',
     reward_got: 'Builder Pack unlocked!',
+    reward_creative: 'All blocks are available',
+    touch_inventory: 'BAG', touch_fly: 'FLY', touch_break: 'MINE',
+    touch_place: 'PLACE', touch_eat: 'EAT',
+    furnace_title: 'Furnace',
+    furnace_help: 'Smelting needs ore or wheat and 1 coal or 1 plank for fuel.',
+    furnace_fuel: 'Fuel',
+    furnace_open: 'Furnace opened',
+    furnace_missing: 'Not enough ingredients or fuel',
+    torch_floor: 'A torch needs solid support',
+    ore_get: 'Ore collected — smelt it in a furnace',
+    bread_eaten: 'Bread eaten! +3 hearts',
+    xp_level: 'New level',
     reward_fail: 'Ad failed to load. Try again later.',
     ad_loading: 'Loading ad…',
     saved: 'Game saved',
@@ -158,8 +178,11 @@ export const STRINGS = {
       4 planks in the 2×2 grid → table, place it and press RMB.<br><br>
       <b>Mobile:</b> joystick on the left, look on the right; quick tap — break a block,
       with food in hand hold your finger to eat.
-      Buttons: jump, place, dig, «🎒» — inventory.<br><br>
-      Progress (world, inventory, apples) saves automatically.`,
+      Buttons: ▲ — jump, PLACE — place/open furnace, MINE — dig, EAT — eat, BAG — inventory.
+      Switch Creative/Survival in the menu or while paused.<br><br>
+      Mined ore drops as an item. Furnaces smelt ore and bake wheat into bread using coal or planks.
+      Torches illuminate the night, and slain monsters drop experience.<br><br>
+      Progress (world, inventory, mode and XP) saves automatically.`,
     howto_title: 'How to play',
     pause_hint: 'Esc — pause & release mouse',
     unlocked_blocks: 'New blocks unlocked in the hotbar!',
@@ -224,19 +247,12 @@ export const STRINGS = {
     catalog_locked: 'Builder Pack is locked — watch an ad',
     inv_full: 'Inventory is full',
     bag_hint: 'E — inventory',
-    eat_hint: '🍎 LMB/F',
+    eat_hint: 'Food LMB/F',
     fly_creative_only: 'Flying is available in Creative only',
     block_drop: 'Picked up',
     hint_inventory: 'E — inventory & crafting',
     hint_eat: 'Apple: hold LMB to eat it (or press F instantly)',
     hint_table: '4 planks in the crafting grid → crafting table with 3×3 recipes',
-    toggle_mode: 'Switch mode: Survival/Creative',
-    mode_switched_survival: 'Mode: Survival',
-    mode_switched_creative: 'Mode: Creative',
-    wheat_get: 'Wheat picked up (3 → bread)',
-    bread_get: 'Bread picked up',
-    furnace_hint: 'Furnace: put coal + ore in crafting to get ingot',
-    xp_get: 'XP gained',
   },
 };
 

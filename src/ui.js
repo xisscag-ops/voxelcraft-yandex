@@ -9,9 +9,11 @@ export class UI {
       onPlay: null, onResume: null, onSaveQuit: null, onNewWorld: null,
       onSettingsChange: null, onReward: null, onSlot: null, onPauseBtn: null,
       onToSpawn: null, onMode: null, onModeBack: null, onBag: null,
+      onModeChange: null, onCloseFurnace: null, onEat: null,
     };
+    this.mode = 'survival';
     this._screens = ['loading-screen', 'menu-screen', 'mode-screen', 'pause-screen',
-      'howto-screen', 'settings-screen', 'inventory-screen'];
+      'howto-screen', 'settings-screen', 'inventory-screen', 'furnace-screen'];
     this._bind();
   }
 
@@ -36,6 +38,14 @@ export class UI {
     click('btn-home', () => this.handlers.onToSpawn?.());
     click('btn-pause-hud', () => this.handlers.onPauseBtn?.());
     click('btn-bag', () => this.handlers.onBag?.());
+    click('btn-furnace-close', () => this.handlers.onCloseFurnace?.());
+    click('btn-eat', () => this.handlers.onEat?.());
+    for (const id of ['mode-menu', 'mode-pause']) {
+      document.getElementById(id)?.addEventListener('change', (e) => {
+        this.setModeSelectors(e.target.value);
+        this.handlers.onModeChange?.(e.target.value, id);
+      });
+    }
     click('btn-mode-survival', () => this.handlers.onMode?.('survival'));
     click('btn-mode-creative', () => this.handlers.onMode?.('creative'));
     click('btn-mode-back', () => this.handlers.onModeBack?.());
@@ -96,14 +106,33 @@ export class UI {
     // Кнопка «Продолжить», если сейв есть
     const btnPlay = document.getElementById('btn-play');
     if (btnPlay && this._hasSave) btnPlay.textContent = t('continue');
+    this.setModeSelectors(this.mode);
     document.title = `${t('title')} — ${t('tagline')}`;
   }
 
-  /** Подпись режима («Выживание» / «Креатив») на экране паузы */
+  /** Селекторы синхронизированы: смена режима доступна из меню и паузы. */
+  setModeSelectors(mode) {
+    this.mode = mode === 'creative' ? 'creative' : 'survival';
+    for (const id of ['mode-menu', 'mode-pause']) {
+      const el = document.getElementById(id);
+      if (el) el.value = this.mode;
+    }
+    this.showModeLabel(this.mode);
+  }
+
   showModeLabel(mode) {
     const el = document.getElementById('pause-mode');
+    if (el) el.textContent = this.i18n.t('mode_now');
+    const pause = document.getElementById('mode-pause');
+    if (pause) pause.value = mode;
+  }
+
+  setXP(level, xp, needed, mode = this.mode) {
+    const el = document.getElementById('xp-hud');
     if (!el) return;
-    el.textContent = this.i18n.t('mode_now') + ': ' + this.i18n.t(mode === 'survival' ? 'mode_survival' : 'mode_creative');
+    el.classList.toggle('hidden', mode === 'creative');
+    document.getElementById('xp-level').textContent = String(level);
+    document.getElementById('xp-fill').style.width = `${Math.max(0, Math.min(100, xp / needed * 100))}%`;
   }
 
   setHasSave(v) {
@@ -236,8 +265,9 @@ export class UI {
     for (const id of ['btn-reward', 'btn-reward2']) {
       const el = document.getElementById(id);
       if (!el) continue;
-      el.disabled = unlocked;
-      el.textContent = unlocked ? this.i18n.t('reward_got') : this.i18n.t('reward_btn');
+      el.disabled = unlocked || this.mode === 'creative';
+      el.textContent = this.mode === 'creative' ? this.i18n.t('reward_creative')
+        : unlocked ? this.i18n.t('reward_got') : this.i18n.t('reward_btn');
     }
   }
 
@@ -290,7 +320,7 @@ export class UI {
     if (!el) return;
     if (n <= 0 || mode === 'creative') { el.classList.add('hidden'); return; }
     el.classList.remove('hidden');
-    el.textContent = '🏹 ×' + n;
+    el.textContent = '➤ ×' + n;
   }
 
   setApples(n, mode = 'survival') {

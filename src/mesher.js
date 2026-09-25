@@ -1,12 +1,8 @@
-// Меширование вокселей: только видимые грани + ambient occlusion на вершинах
-import { BLOCKS, isOpaque, isLiquid, isDecor, isSlab, isTorch } from './blocks.js';
+// Меширование вокселей: видимые грани, полублоки, факелы и AO на вершинах.
+import { BLOCK, BLOCKS, blockBounds, isOpaque, isLiquid, isDecor, isSlab } from './blocks.js';
 import { tileUV } from './textures.js';
 
-// Яркость граней (классический «мультипликационный» свет)
 const FACE_SHADE = { px: 0.72, nx: 0.72, py: 1.0, ny: 0.5, pz: 0.88, nz: 0.88 };
-
-// Описание граней куба: нормаль, оси U/V для UV и AO, 4 вершины (du,dv)
-// Кольцо вершин: (+,+), (−,+), (−,−), (+,−)
 const FACES = [
   { key: 'px', n: [1, 0, 0], U: 2, V: 1, face: 2 },
   { key: 'nx', n: [-1, 0, 0], U: 2, V: 1, face: 2 },
@@ -15,53 +11,37 @@ const FACES = [
   { key: 'pz', n: [0, 0, 1], U: 0, V: 1, face: 2 },
   { key: 'nz', n: [0, 0, -1], U: 0, V: 1, face: 2 },
 ];
-
 const RING = [[1, 1], [-1, 1], [-1, -1], [1, -1]];
 const AO_LEVEL = [0.42, 0.64, 0.82, 1.0];
 
-// Предвычисляем для каждой грани: позиции вершин (в координатах куба 0..1),
-// индексы треугольников с правильным обходом, смещения AO-сэмплов
 const FACE_PRECOMP = FACES.map((f) => {
+  const aAxis = f.n.findIndex((c) => c !== 0);
   const verts = RING.map(([du, dv]) => {
-    // Координаты: по оси нормали — плоскость грани, по U/V — 0/1 от du,dv
     const pos = [0, 0, 0];
-    const aAxis = f.n.findIndex((c) => c !== 0);
     pos[aAxis] = f.n[aAxis] > 0 ? 1 : 0;
     pos[f.U] = du > 0 ? 1 : 0;
     pos[f.V] = dv > 0 ? 1 : 0;
-    return { pos, du, dv, u: 0, v: 0 };
+    return { pos, du, dv };
   });
-  // UV: u от U-оси, v от V-оси (для боковых граней V = Y, текстура не переворачивается)
-  for (const vert of verts) {
-    vert.u = vert.pos[f.U];
-    vert.v = vert.pos[f.V];
-  }
-  // Проверка обхода: (v1-v0)x(v2-v0) должен смотреть по нормали
-  const [v0, v1, v2] = verts;
-  const ax = v1.pos[0] - v0.pos[0], ay = v1.pos[1] - v0.pos[1], az = v1.pos[2] - v0.pos[2];
-  const bx = v2.pos[0] - v0.pos[0], by = v2.pos[1] - v0.pos[1], bz = v2.pos[2] - v0.pos[2];
-  const cx = ay * bz - az * by, cy = az * bx - ax * bz, cz = ax * by - ay * bx;
-  const dot = cx * f.n[0] + cy * f.n[1] + cz * f.n[2];
-  // Кольцо с правильной ориентацией (против часовой, если смотреть по нормали)
-  const ring = dot > 0 ? [0, 1, 2, 3] : [0, 3, 2, 1];
-  // Два варианта триангуляции (разная диагональ) — оба с правильным обходом
-  const idxA = [ring[0], ring[1], ring[2], ring[0], ring[2], ring[3]]; // диагональ 0-2
-  const idxB = [ring[1], ring[2], ring[3], ring[1], ring[3], ring[0]]; // диагональ 1-3
-  return { ...f, verts, idxA, idxB, indices: idxA, aAxis: f.n.findIndex((c) => c !== 0) };
+  const [a, b, c] = verts.map((v) => v.pos);
+  const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+  const cross = [ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]];
+  const ring = cross[aAxis] * f.n[aAxis] > 0 ? [0, 1, 2, 3] : [0, 3, 2, 1];
+  return {
+    ...f, verts, aAxis,
+    idxA: [ring[0], ring[1], ring[2], ring[0], ring[2], ring[3]],
+    idxB: [ring[1], ring[2], ring[3], ring[1], ring[3], ring[0]],
+  };
 });
 
 function aoOf(side1, side2, corner) {
   if (side1 && side2) return 0;
-  return 3 - ((side1 ? 1 : 0) + (side2 ? 1 : 0) + (corner ? 1 : 0));
+  return 3 - Number(side1) - Number(side2) - Number(corner);
 }
 
 class MeshBuilder {
-  constructor() {
-    this.pos = [];
-    this.uv = [];
-    this.col = [];
-    this.idx = [];
-  }
+  constructor() { this.pos = []; this.uv = []; this.col = []; this.idx = []; }
   vertex(p, u, v, shade) {
     this.pos.push(p[0], p[1], p[2]);
     this.uv.push(u, v);
@@ -80,16 +60,37 @@ class MeshBuilder {
   }
 }
 
-/**
- * Строит меши чанка.
- * @param {*} THREE модуль three
- * @param {object} world объект мира (getBlock)
- * @param {number} cx, cz координаты чанка
- * @returns {{opaque: MeshBuilder, water: MeshBuilder}}
- */
+// Вернуть видимый участок грани. Грань, расположенная внутри ячейки
+// (верх нижнего полублока / низ верхнего), не перекрывается соседом.
+// Если рядом с полным блоком стоит полублок, рисуется только открытая
+// ПОЛОВИНА боковой грани: нет ни дыр, ни наложения поверхностей.
+function visibleBounds(id, neighbor, face) {
+  const bounds = blockBounds(id);
+  const axis = 'XYZ'[face.aAxis];
+  const edge = face.n[face.aAxis] > 0 ? bounds[`max${axis}`] === 1 : bounds[`min${axis}`] === 0;
+  if (!edge) return bounds;
+  if (isLiquid(id)) return neighbor === id || isOpaque(neighbor) ? null : bounds;
+  if (isOpaque(neighbor)) return null;
+  if (neighbor === id && (BLOCKS[id].transparent || BLOCKS[id].foliage)) return null;
+
+  if (isSlab(neighbor)) {
+    const half = BLOCKS[neighbor].half;
+    if (face.key === 'py' && half === 'bottom') return null;
+    if (face.key === 'ny' && half === 'top') return null;
+    if (face.aAxis !== 1) {
+      if (isSlab(id) && BLOCKS[id].half === half) return null;
+      if (!isSlab(id)) return half === 'bottom'
+        ? { ...bounds, minY: 0.5 } : { ...bounds, maxY: 0.5 };
+    }
+  }
+  return bounds;
+}
+
+/** Строит геометрию чанка (не создаёт GPU-ресурсы). */
 export function meshChunk(THREE, world, cx, cz) {
   const opaque = new MeshBuilder();
   const water = new MeshBuilder();
+  const torch = new MeshBuilder();
   const S = world.chunkSize, H = world.worldHeight;
   const ox = cx * S, oz = cz * S;
 
@@ -100,217 +101,101 @@ export function meshChunk(THREE, world, cx, cz) {
         const id = world.getBlock(wx, y, wz);
         if (!id) continue;
         const def = BLOCKS[id];
+        if (isDecor(id)) { addDecorQuads(opaque, world, wx, y, wz, def); continue; }
+        if (id === BLOCK.TORCH) { addTorchQuads(torch, wx, y, wz, def); continue; }
+
         const liquid = isLiquid(id);
-
-        // Полублок — низкая плита
-        if (isSlab(id)) {
-          addSlabFaces(opaque, world, wx, y, wz, def);
-          continue;
-        }
-        // Факел — тонкий столбик со светом
-        if (isTorch(id)) {
-          addTorchQuads(opaque, world, wx, y, wz, def);
-          continue;
-        }
-
-        // Декоративная растительность — два перекрёстных спрайта
-        if (isDecor(id)) {
-          addDecorQuads(opaque, world, wx, y, wz, def);
-          continue;
-        }
-
         const builder = liquid ? water : opaque;
-
         for (const face of FACE_PRECOMP) {
           const n = face.n;
           const nb = world.getBlock(wx + n[0], y + n[1], wz + n[2]);
-          // Видимость грани
-          if (liquid) {
-            if (nb === id || isOpaque(nb)) continue;
-            // боковые грани воды — только против воздуха/непрозрачного выше? достаточно: не вода и не непрозрачный
-          } else {
-            if (isOpaque(nb)) continue;
-            // грань между двумя одинаковыми стеклянными/листьями/плитами — не рисуем
-            if (nb === id && (def.transparent || def.foliage || def.slab)) continue;
-          }
+          const bounds = visibleBounds(id, nb, face);
+          if (!bounds) continue;
 
-          const tileIdx = def.tiles[face.face];
+          const tileIdx = face.key === 'pz' && def.tiles[3] != null ? def.tiles[3] : def.tiles[face.face];
           const [u0, v0, u1, v1] = tileUV(tileIdx);
           const baseShade = FACE_SHADE[face.key];
           const emissive = !!def.emissive;
-
-          // Поверхность воды чуть ниже (у верхних вершин всех граней под открытым небом)
-          let yTopOffset = 0;
-          if (liquid && !isLiquid(world.getBlock(wx, y + 1, wz))) {
-            yTopOffset = -0.12;
-          }
-
+          const yTopOffset = liquid && !isLiquid(world.getBlock(wx, y + 1, wz)) ? -0.12 : 0;
           const base = [wx + n[0], y + n[1], wz + n[2]];
-          const cornerAOs = [];
-          const vi = [];
+          const cornerAOs = [], vi = [];
 
           for (const vert of face.verts) {
-            // AO-сэмплы в плоскости соседней ячейки
-            const s1 = [0, 0, 0], s2 = [0, 0, 0], co = [0, 0, 0];
-            for (let a = 0; a < 3; a++) {
-              s1[a] = base[a];
-              s2[a] = base[a];
-              co[a] = base[a];
-            }
+            const s1 = [...base], s2 = [...base], co = [...base];
             s1[face.U] += vert.du;
             s2[face.V] += vert.dv;
-            co[face.U] += vert.du;
-            co[face.V] += vert.dv;
+            co[face.U] += vert.du; co[face.V] += vert.dv;
             const ao = emissive ? 3 : aoOf(
-              isOpaque(world.getBlock(s1[0], s1[1], s1[2])),
-              isOpaque(world.getBlock(s2[0], s2[1], s2[2])),
-              isOpaque(world.getBlock(co[0], co[1], co[2])),
+              isOpaque(world.getBlock(...s1)),
+              isOpaque(world.getBlock(...s2)),
+              isOpaque(world.getBlock(...co)),
             );
             cornerAOs.push(ao);
 
-            const p = [wx + vert.pos[0], y + vert.pos[1], wz + vert.pos[2]];
+            const p = [wx, y, wz];
+            for (let a = 0; a < 3; a++) {
+              const axis = 'XYZ'[a];
+              p[a] += bounds[`min${axis}`] + vert.pos[a] * (bounds[`max${axis}`] - bounds[`min${axis}`]);
+            }
             if (vert.pos[1] === 1 && yTopOffset && face.key !== 'ny') p[1] += yTopOffset;
-
-            const u = vert.u === 0 ? u0 : u1;
-            const v = vert.v === 0 ? v0 : v1;
-            const shade = emissive ? 1.0 : baseShade * AO_LEVEL[ao];
+            // На вертикальных гранях полублока текстура обрезана по высоте,
+            // а не растянута до целого блока.
+            const local = [p[0] - wx, p[1] - y, p[2] - wz];
+            const u = u0 + (u1 - u0) * local[face.U];
+            const v = v0 + (v1 - v0) * local[face.V];
+            const shade = emissive ? 1 : baseShade * AO_LEVEL[ao];
             vi.push(builder.vertex(p, u, v, shade));
           }
-
-          // Классический флип триангуляции по AO (борьба с артефактами диагонали);
-          // обход треугольников уже корректен в обоих вариантах
           const flip = cornerAOs[0] + cornerAOs[2] > cornerAOs[1] + cornerAOs[3];
           builder.idx.push(...(flip ? face.idxB : face.idxA).map((i) => vi[i]));
         }
       }
     }
   }
-
-  return { opaque, water };
+  return { opaque, water, torch };
 }
 
-function addSlabFaces(builder, world, wx, y, wz, def) {
-  const H = 0.5;
-  const tileIdx = def.tiles[2];
-  const [u0, v0, u1, v1] = tileUV(tileIdx);
-  // top at 0.5 if not blocked above, bottom always, sides half height
-  const faces = [
-    // top
-    { n: [0, 1, 0], pos: [[0, H, 0], [1, H, 0], [1, H, 1], [0, H, 1]], shade: FACE_SHADE.py },
-    // bottom
-    { n: [0, -1, 0], pos: [[0, 0, 1], [1, 0, 1], [1, 0, 0], [0, 0, 0]], shade: FACE_SHADE.ny },
-    // sides
-    { n: [1, 0, 0], pos: [[1, 0, 0], [1, 0, 1], [1, H, 1], [1, H, 0]], shade: FACE_SHADE.px },
-    { n: [-1, 0, 0], pos: [[0, 0, 1], [0, 0, 0], [0, H, 0], [0, H, 1]], shade: FACE_SHADE.nx },
-    { n: [0, 0, 1], pos: [[0, 0, 1], [1, 0, 1], [1, H, 1], [0, H, 1]], shade: FACE_SHADE.pz },
-    { n: [0, 0, -1], pos: [[1, 0, 0], [0, 0, 0], [0, H, 0], [1, H, 0]], shade: FACE_SHADE.nz },
-  ];
-  for (const f of faces) {
-    const n = f.n;
-    const nb = world.getBlock(wx + n[0], y + n[1], wz + n[2]);
-    // top face: if slab above or opaque block above, hide
-    if (n[1] === 1) {
-      if (isOpaque(nb) || world.getBlock(wx, y + 1, wz) !== 0 && isSlab(world.getBlock(wx, y + 1, wz))) continue;
-    } else if (n[1] === -1) {
-      if (isOpaque(nb)) continue;
-    } else {
-      if (isOpaque(nb)) continue;
-      // hide side if neighbor slab at same height
-      if (nb !== 0 && isSlab(nb)) continue;
-    }
-    const emissive = !!def.emissive;
-    const vi = [];
-    for (let i = 0; i < 4; i++) {
-      const p = [wx + f.pos[i][0], y + f.pos[i][1], wz + f.pos[i][2]];
-      // UV mapping: for top/bottom use x,z ; for sides use x,y etc
-      let u, v;
-      if (n[1] !== 0) { u = f.pos[i][0] === 0 ? u0 : u1; v = f.pos[i][2] === 0 ? v0 : v1; }
-      else if (n[0] !== 0) { u = f.pos[i][2] === 0 ? u0 : u1; v = f.pos[i][1] === 0 ? v1 : (f.pos[i][1] === H ? v0 : v1 - (v1 - v0) * 0.5); }
-      else { u = f.pos[i][0] === 0 ? u0 : u1; v = f.pos[i][1] === 0 ? v1 : v0; }
-      const shade = emissive ? 1.0 : f.shade;
-      vi.push(builder.vertex(p, u, v, shade));
-    }
-    builder.idx.push(vi[0], vi[1], vi[2], vi[0], vi[2], vi[3]);
-  }
-}
-
-function addTorchQuads(builder, world, wx, y, wz, def) {
-  const [u0, v0, u1, v1] = tileUV(def.tiles[2]);
-  const shade = 1.0; // emissive full bright
-  // тонкий стержень высотой 0.7, крест из двух плоскостей
-  const w = 0.12;
-  const cx = 0.5 - w / 2, cz = 0.5 - w / 2;
-  const cx2 = 0.5 + w / 2, cz2 = 0.5 + w / 2;
-  const y0 = 0.0, y1 = 0.62;
-  const planes = [
-    [[cx, cx], [cx2, cz2]],
-    [[cx2, cx], [cx, cz2]],
-  ];
-  // stem using torch side texture (brown) - but we use same tile: stretch
-  for (const [[ax, az], [bx, bz]] of planes) {
-    const vi = [];
-    vi.push(builder.vertex([wx + ax, y + y0, wz + az], u0, v1, shade));
-    vi.push(builder.vertex([wx + bx, y + y0, wz + bz], u1, v1, shade));
-    vi.push(builder.vertex([wx + bx, y + y1, wz + bz], u1, v0, shade));
-    vi.push(builder.vertex([wx + ax, y + y1, wz + az], u0, v0, shade));
-    builder.idx.push(vi[0], vi[1], vi[2], vi[0], vi[2], vi[3]);
-    builder.idx.push(vi[2], vi[1], vi[0], vi[3], vi[2], vi[0]);
-  }
-  // flame top - small bright quad
-  const fy0 = y1, fy1 = y1 + 0.22;
-  const fx0 = 0.5 - 0.11, fx1 = 0.5 + 0.11, fz0 = 0.5 - 0.11, fz1 = 0.5 + 0.11;
-  // flame faces as cross above stick
-  const flamePlanes = [
-    [[fx0, 0.5], [fx1, 0.5]],
-    [[0.5, fz0], [0.5, fz1]],
-  ];
-  // actually two vertical planes for flame
-  const flameVs = [
-    [[fx0, fy0, 0.5], [fx1, fy0, 0.5], [fx1, fy1, 0.5], [fx0, fy1, 0.5]],
-    [[0.5, fy0, fz0], [0.5, fy0, fz1], [0.5, fy1, fz1], [0.5, fy1, fz0]],
-  ];
-  for (const quad of flameVs) {
-    const vi = [];
-    vi.push(builder.vertex([wx + quad[0][0], y + quad[0][1], wz + quad[0][2]], u0, v1, shade));
-    vi.push(builder.vertex([wx + quad[1][0], y + quad[1][1], wz + quad[1][2]], u1, v1, shade));
-    vi.push(builder.vertex([wx + quad[2][0], y + quad[2][1], wz + quad[2][2]], u1, v0, shade));
-    vi.push(builder.vertex([wx + quad[3][0], y + quad[3][1], wz + quad[3][2]], u0, v0, shade));
-    builder.idx.push(vi[0], vi[1], vi[2], vi[0], vi[2], vi[3]);
-    builder.idx.push(vi[2], vi[1], vi[0], vi[3], vi[2], vi[0]);
-  }
-}
-
-/**
- * Крестовые спрайты декора (трава, цветы): две диагональные плоскости,
- * каждая рисуется с двух сторон (материал односторонний).
- */
+// Декоративные растения: два двусторонних крестовых спрайта.
 function addDecorQuads(builder, world, wx, y, wz, def) {
   const [u0, v0, u1, v1] = tileUV(def.tiles[2]);
-  // Чем свободнее вокруг, тем ярче трава
   let open = 0;
   if (!isOpaque(world.getBlock(wx + 1, y, wz))) open++;
   if (!isOpaque(world.getBlock(wx - 1, y, wz))) open++;
   if (!isOpaque(world.getBlock(wx, y, wz + 1))) open++;
   if (!isOpaque(world.getBlock(wx, y, wz - 1))) open++;
   const shade = 0.72 + 0.07 * open;
-
-  const y0 = 0.02, y1 = 0.92, m = 0.15;
-  // Две плоскости: (m,m)-(1-m,1-m) и (1-m,m)-(m,1-m)
-  const planes = [
-    [[m, m], [1 - m, 1 - m]],
-    [[1 - m, m], [m, 1 - m]],
-  ];
-  for (const [[ax, az], [bx, bz]] of planes) {
-    const vi = [];
-    // Кольцо: нижний А, нижний Б, верхний Б, верхний А
-    vi.push(builder.vertex([wx + ax, y + y0, wz + az], u0, v0, shade));
-    vi.push(builder.vertex([wx + bx, y + y0, wz + bz], u1, v0, shade));
-    vi.push(builder.vertex([wx + bx, y + y1, wz + bz], u1, v1, shade));
-    vi.push(builder.vertex([wx + ax, y + y1, wz + az], u0, v1, shade));
-    // Обе стороны плоскости (обход/против обхода)
-    builder.idx.push(vi[0], vi[1], vi[2], vi[0], vi[2], vi[3]);
-    builder.idx.push(vi[2], vi[1], vi[0], vi[3], vi[2], vi[0]);
+  for (const [[ax, az], [bx, bz]] of [
+    [[0.15, 0.15], [0.85, 0.85]],
+    [[0.85, 0.15], [0.15, 0.85]],
+  ]) {
+    addDoubleQuad(builder, [
+      [wx + ax, y + 0.02, wz + az], [wx + bx, y + 0.02, wz + bz],
+      [wx + bx, y + 0.92, wz + bz], [wx + ax, y + 0.92, wz + az],
+    ], [u0, v0, u1, v1], shade);
   }
 }
 
+function addDoubleQuad(builder, points, uv, shade) {
+  const [u0, v0, u1, v1] = uv;
+  const vi = [
+    builder.vertex(points[0], u0, v0, shade), builder.vertex(points[1], u1, v0, shade),
+    builder.vertex(points[2], u1, v1, shade), builder.vertex(points[3], u0, v1, shade),
+  ];
+  builder.idx.push(vi[0], vi[1], vi[2], vi[0], vi[2], vi[3]);
+  builder.idx.push(vi[2], vi[1], vi[0], vi[3], vi[2], vi[0]);
+}
 
+// Факел рендерится отдельным всегда ярким материалом; освещение соседних
+// блоков выполняет шейдер местного света (см. main.js).
+function addTorchQuads(builder, wx, y, wz, def) {
+  const uv = tileUV(def.tiles[2]);
+  for (const [[ax, az], [bx, bz]] of [
+    [[0.38, 0.5], [0.62, 0.5]],
+    [[0.5, 0.38], [0.5, 0.62]],
+  ]) {
+    addDoubleQuad(builder, [
+      [wx + ax, y + 0.02, wz + az], [wx + bx, y + 0.02, wz + bz],
+      [wx + bx, y + 0.84, wz + bz], [wx + ax, y + 0.84, wz + az],
+    ], uv, 1);
+  }
+}
