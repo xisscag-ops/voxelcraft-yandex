@@ -14,6 +14,8 @@ export const T = {
   CRACK0: 17, CRACK1: 18, CRACK2: 19, CRACK3: 20, CRACK4: 21,
   // Декоративная растительность
   GRASS_TUFT: 22, FLOWER_RED: 23, FLOWER_YELLOW: 24, FERN: 25, CLOVER: 26,
+  // Верстак (крафт 3x3)
+  TABLE_TOP: 27, TABLE_SIDE: 28,
 };
 
 export const CRACK_TILES = [17, 18, 19, 20, 21];
@@ -296,6 +298,44 @@ const painters = {
       }
     }
   },
+  // Верстак: крышка с сеткой и инструментами
+  [T.TABLE_TOP](data, rng) {
+    painters[T.PLANKS](data, rng);
+    // Тёмная рамка и внутренняя сетка (как рабочая поверхность)
+    for (let i = 0; i < TILE; i++) {
+      px(data, i, 0, 74, 52, 30);
+      px(data, i, TILE - 1, 74, 52, 30);
+      px(data, 0, i, 74, 52, 30);
+      px(data, TILE - 1, i, 74, 52, 30);
+    }
+    for (let i = 1; i < TILE - 1; i++) {
+      if (i % 5 === 0) {
+        for (let j = 1; j < TILE - 1; j++) px(data, i, j, 118, 88, 52);
+      }
+    }
+    // Инструменты на крышке: пила (светлая) и молоток (тёмный)
+    for (let x = 3; x <= 9; x++) px(data, x, 3, 190, 190, 198);
+    for (let y = 3; y <= 6; y++) px(data, 9, y, 190, 190, 198);
+    for (let x = 10; x <= 13; x++) px(data, x, 12, 96, 96, 104);
+    for (let y = 9; y <= 12; y++) px(data, 12, y, 150, 118, 70);
+  },
+  [T.TABLE_SIDE](data, rng) {
+    painters[T.PLANKS](data, rng);
+    // Верхняя кромка и вертикальные стойки
+    for (let x = 0; x < TILE; x++) {
+      px(data, x, 0, 150, 116, 68);
+      px(data, x, 1, 108, 80, 46);
+      px(data, x, 2, 88, 64, 38);
+    }
+    for (let y = 3; y < TILE; y++) {
+      px(data, 2, y, 96, 70, 42);
+      px(data, 13, y, 96, 70, 42);
+    }
+    // Полка с инструментом
+    for (let x = 3; x < 13; x++) px(data, x, 8, 84, 60, 36);
+    for (let y = 4; y <= 7; y++) px(data, 6, y, 176, 176, 184);
+    for (let y = 5; y <= 7; y++) px(data, 9, y, 124, 92, 52);
+  },
 };
 
 // Растущие трещины: чем выше стадия, тем гуще сетка
@@ -380,10 +420,11 @@ export function tileIcon(idx, size = 48) {
 }
 
 let _atlasCanvas = null;
-function buildAtlasOnce() {
+export function atlasCanvas() {
   if (!_atlasCanvas) _atlasCanvas = buildAtlas();
   return _atlasCanvas;
 }
+const buildAtlasOnce = atlasCanvas;
 
 // Отдельный канвас одного тайла (для оверлея трещин)
 export function tileCanvas(idx) {

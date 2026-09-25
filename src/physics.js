@@ -25,6 +25,9 @@ export class Player {
     // Здоровье и урон от падений
     this.hp = 20; this.maxHp = 20;
     this.hurtT = 0; this.regenT = 0; this._fallFrom = null;
+    // Режим игры: в креативе игрок бессмертен и умеет летать
+    this.invulnerable = false;
+    this.canFly = true;
   }
 
   lookDir() {
@@ -42,6 +45,7 @@ export class Player {
 
   /** Урон с неуязвимостью 0.7 с. true — если урон прошёл */
   hurt(n) {
+    if (this.invulnerable) return false;
     if (this.hurtT > 0 || this.hp <= 0) return false;
     this.hp = Math.max(0, this.hp - n);
     this.hurtT = 0.7;
@@ -203,9 +207,15 @@ export class Player {
   }
 
   toggleFly() {
+    if (!this.canFly) { this.flying = false; return false; }
     this.flying = !this.flying;
     if (this.flying) this.vel.y = 0;
     return this.flying;
+  }
+
+  /** Сброс полёта (например, при выходе из креатива) */
+  stopFly() {
+    this.flying = false;
   }
 
   serialize() {

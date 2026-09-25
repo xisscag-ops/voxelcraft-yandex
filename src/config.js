@@ -25,6 +25,11 @@ export const CONFIG = {
     slow: 0.9,      // камень, кирпич, стекло
     fast: 0.25,     // земля, песок, листва
   },
+  CREATIVE_BREAK_TIME: 0.12,  // в креативе блоки ломаются почти мгновенно
+
+  // Инвентарь
+  INV_SIZE: 36,
+  HOTBAR_SIZE: 9,
 
   // Прочее
   SAVE_KEY: 'voxelcraft_save_v1',
