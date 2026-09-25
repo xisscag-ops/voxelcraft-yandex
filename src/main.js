@@ -557,7 +557,7 @@ function disposeChunkMeshes(c) {
 // Каталог креатива: все блоки (кроме воздуха и воды) и предметы
 const CATALOG_KEYS = [
   ...BLOCKS.filter((b) => b.id !== BLOCK.AIR && b.id !== BLOCK.WATER).map((b) => blockItem(b.id)),
-  ITEM.STICK, ITEM.APPLE,
+  ITEM.STICK, ITEM.APPLE, ITEM.BOW, ITEM.ARROW,
   ITEM.WOOD_PICKAXE, ITEM.WOOD_AXE, ITEM.WOOD_SWORD, ITEM.STONE_PICKAXE, ITEM.STONE_SWORD,
 ];
 

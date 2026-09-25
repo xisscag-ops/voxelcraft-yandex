@@ -8,7 +8,7 @@ import {
   RECIPES, craft, canCraft, validateRecipes, emptyGrid, matchRecipe, gridResult,
   craftFromGrid, needsTable, recipeGridSize,
 } from './src/crafts.js';
-import { ITEM, blockItem, blockDropItem, breakTime, itemDamage, maxStack, placeBlockId, toolKind } from './src/items.js';
+import { ITEM, itemDef, blockItem, blockDropItem, breakTime, itemDamage, maxStack, placeBlockId, toolKind } from './src/items.js';
 import { CONFIG } from './src/config.js';
 
 // Заглушка THREE — достаточно для toGeometry
@@ -305,6 +305,82 @@ check('крафт из сетки: пустая сетка', (() => {
   const i = new Inventory(CONFIG.INV_SIZE);
   return craftFromGrid(emptyGrid(2), 2, i) === 'nothing';
 })());
+
+// ---- Лук и стрелы ----
+check('лук и стрела есть в предметах', !!itemDef(ITEM.BOW) && !!itemDef(ITEM.ARROW));
+check('лук: 3 палки + 3 доски', craftWith({ [ITEM.STICK]: 3, [blockItem(BLOCK.PLANKS)]: 3 }, 'bow')
+  .i.count(ITEM.BOW) === 1);
+check('стрелы: палка + булыжник → 2 стрелы',
+  craftWith({ [ITEM.STICK]: 1, [blockItem(BLOCK.COBBLE)]: 1 }, 'arrows').i.count(ITEM.ARROW) === 2);
+check('лук не стакается', maxStack(ITEM.BOW) === 1);
+
+// ---- Стрелы: полёт, попадание в блок, подбор ----
+{
+  const proj = await import('./src/projectiles.js');
+  const scene = { add() {}, remove() {} };
+  const arrows = new proj.Arrows(scene);
+  const wallWorld = { getBlock: (x) => (x >= 3 ? 3 : 0) };
+  let stuck = null, picked = 0, hitMob = null;
+  const cb = { onBlock: (a) => { stuck = a; }, onPickup: (n) => { picked += n; } };
+  arrows.shoot(0.5, 10, 0.5, 1, 0, 0, 20, 3, cb);
+  for (let i = 0; i < 120 && !stuck; i++) arrows.update(1 / 60, wallWorld, [], null);
+  check('стрела долетает до стены', !!stuck);
+  check('стрела не проваливается в блок', !!stuck && Math.floor(stuck.group.position.x) < 3);
+  if (stuck) {
+    for (let i = 0; i < 20 && !picked; i++) {
+      arrows.update(1 / 60, wallWorld, [], stuck.group.position);
+    }
+    check('воткнутая стрела подбирается', picked === 1);
+  }
+
+  const arrows2 = new proj.Arrows(scene);
+  const mob = { pos: { x: 2, y: 10, z: 0.5 }, dead: false, dying: -1 };
+  arrows2.shoot(0.5, 10, 0.5, 1, 0, 0, 20, 3, { onMob: (m) => { hitMob = m; } });
+  for (let i = 0; i < 120 && !hitMob; i++) arrows2.update(1 / 60, wallWorld, [mob], null);
+  check('стрела попадает в моба на лету', hitMob === mob);
+
+  const arrows3 = new proj.Arrows(scene);
+  let dyingHit = null;
+  const dying = { pos: { x: 2, y: 10, z: 0.5 }, dead: false, dying: 0.4 };
+  arrows3.shoot(0.5, 10, 0.5, 1, 0, 0, 20, 3, { onMob: (m) => { dyingHit = m; } });
+  for (let i = 0; i < 120 && !dyingHit; i++) arrows3.update(1 / 60, wallWorld, [dying], null);
+  check('в умирающего моба стрела не бьёт', dyingHit === null);
+}
+
+// ---- Мобы: направление движения, урон, анимация смерти ----
+{
+  const mobs = await import('./src/mobs.js');
+  const THREE = await import('three');
+  const flat = { getBlock: (x, y) => (y <= 30 ? 1 : 0), seaLevel: 22, heightAt: () => 30 };
+  const visuals = { group: new THREE.Group(), legs: [], head: null, ears: [], hop: true };
+  const mob = new mobs.Mob(flat, visuals, 'bunny', 0.5, 31, 0.5);
+  mob.state = 'walk';
+  mob.thinkT = 1e9;                 // курс не перебивается «мыслями»
+  mob.heading = 0.7;
+  const x0 = mob.pos.x, z0 = mob.pos.z;
+  mob.update(0.5, { x: 60, y: 31, z: 60 });
+  const mx = mob.pos.x - x0, mz = mob.pos.z - z0;
+  const fwd = new THREE.Vector3(0, 0, 1).applyEuler(visuals.group.rotation);
+  check('моб сдвинулся с места', Math.hypot(mx, mz) > 0.1);
+  check('моб смотрит по ходу движения', mx * fwd.x + mz * fwd.z > 0.1);
+  check('взгляд моба горизонтальный', Math.abs(fwd.y) < 1e-6);
+
+  check('кап мобов', mobs.MOB_CAPS.spider === 3 && mobs.MOB_CAPS.creeper === 2);
+  check('ночные мобы враждебны', ['gloom', 'spider', 'creeper'].every((t) => mobs.HOSTILE.has(t)));
+  check('рыба и волк — не враждебные', !mobs.HOSTILE.has('fish') && !mobs.HOSTILE.has('wolf'));
+
+  // Смерть: не исчезает мгновенно, а заваливается на бок и только потом убирается
+  const dead = new mobs.Mob(flat, { group: new THREE.Group(), legs: [], head: null, ears: [] }, 'spider', 0.5, 31, 0.5);
+  dead.hurt(99);
+  check('смертельный урон включает анимацию, а не мгновенное исчезновение', dead.dying === 0 && !dead.dead);
+  const baseScale = dead.v.group.scale.x;
+  dead.updateDeath(0.35);
+  dead.updateDeath(0.35);                       // почти вся анимация (~0.75 с)
+  const tilt = Math.abs(dead.v.group.rotation.z);
+  check('моб заваливается на бок', tilt > 1 && dead.v.group.scale.x < baseScale && !dead.dead);
+  for (let i = 0; i < 60 && !dead.dead; i++) dead.updateDeath(1 / 60);
+  check('после анимации моб убирается из мира', dead.dead);
+}
 
 // Разметка: кнопка «К спавну» и слой молний
 const html = await (await import('node:fs/promises')).readFile(new URL('./index.html', import.meta.url), 'utf8');
