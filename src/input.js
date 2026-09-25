@@ -2,17 +2,22 @@
 export class Input {
   constructor() {
     this.keys = new Set();
+    this.pressed = new Set();   // одиночные нажатия (съедаются в игровом кадре)
     this.mouse = { dx: 0, dy: 0, left: false, right: false };
     this.move = { forward: 0, right: 0 };       // -1..1
     this.jump = false;
     this.sneak = false;
     this.sprint = false;
     this.locked = false;
+    this.enabled = false;       // ввод обрабатывается только в состоянии игры
     this.isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
     this.handlers = {
       onToggleFly: null, onDigit: null, onScroll: null, onPause: null,
-      onActionBreak: null, onActionPlace: null, onMouseBreak: null, onInventory: null,
+      onActionBreak: null, onActionPlace: null, onToggleInventory: null,
+      onFullscreenChange: null,
     };
+    this.allowFullscreen = true;   // настройка «Полный экран» (settings.fullscreen)
+    this.keysLocked = false;
     this._flyTapT = 0;
     this._swallowLook = 0;
     this._joystick = { active: false, id: -1, baseX: 0, baseY: 0, x: 0, y: 0 };
@@ -23,7 +28,10 @@ export class Input {
 
   requestLock(el) {
     if (this.isTouch) return;
-    el.requestPointerLock?.();
+    try {
+      const p = el.requestPointerLock?.();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch (e) { /* браузер может отклонить запрос — игрок просто кликнет ещё раз */ }
   }
 
   // Защита от браузерных сочетаний клавиш, зума, прокрутки, выделения и жестов,
@@ -65,30 +73,57 @@ export class Input {
     window.addEventListener('resize', pin);
   }
 
-  // Полноэкранный режим + блокировка системных клавиш (Esc оставляем для паузы)
+  // Полноэкранный режим + захват клавиш.
+  // Через Keyboard Lock API (Chrome/Edge) забираем себе игровые клавиши целиком,
+  // включая модификаторы: тогда Ctrl+W, Ctrl+S, Ctrl+T и прочие сочетания не уходят
+  // браузеру, а Esc не выкидывает из полного экрана — он открывает меню паузы.
+  // Вне полного экрана (а также в iframe Яндекс Игр) API недоступно: там Ctrl+W
+  // остаётся системным сочетанием браузера, и предотвратить его нельзя.
   async enterFullscreen() {
+    if (this.allowFullscreen === false) { await this.lockKeys(); return; }
     const el = document.documentElement;
     try {
       if (!document.fullscreenElement && el.requestFullscreen) {
         await el.requestFullscreen({ navigationUI: 'hide' });
       }
     } catch (e) { /* iframe без allowfullscreen — не критично */ }
+    await this.lockKeys();
+  }
+
+  /** Захват клавиш доступен только в полном экране и только в Chromium-браузерах */
+  async lockKeys() {
+    if (!document.fullscreenElement || !navigator.keyboard?.lock) return false;
     try {
-      if (document.fullscreenElement && navigator.keyboard?.lock) {
-        await navigator.keyboard.lock(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyN', 'KeyT', 'KeyQ',
-          'Tab', 'AltLeft', 'MetaLeft', 'MetaRight', 'ControlLeft', 'ControlRight']);
-      }
-    } catch (e) { /* не поддерживается */ }
+      await navigator.keyboard.lock([
+        'Escape', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyF', 'KeyI', 'KeyN', 'KeyT', 'KeyQ',
+        'Tab', 'AltLeft', 'MetaLeft', 'MetaRight', 'ControlLeft', 'ControlRight', 'F3',
+      ]);
+      this.keysLocked = true;
+    } catch (e) {
+      this.keysLocked = false;   // Safari/Firefox/iframe — Esc останется за браузером
+    }
+    return this.keysLocked;
+  }
+
+  unlockKeys() {
+    try { if (this.keysLocked) navigator.keyboard?.unlock?.(); } catch (e) { /* noop */ }
+    this.keysLocked = false;
+  }
+
+  exitFullscreen() {
+    this.unlockKeys();
+    try { if (document.fullscreenElement) document.exitFullscreen(); } catch (e) { /* noop */ }
   }
 
   _bind() {
     this._bindGuards();
     window.addEventListener('keydown', (e) => {
-      if (e.repeat || e.target?.matches?.('input, select, textarea')) return;
+      if (e.repeat) return;
       this.keys.add(e.code);
+      this.pressed.add(e.code);
       if (e.code === 'Escape') this.handlers.onPause?.();
-      if (e.code === 'KeyG') this.handlers.onToggleFly?.();
-      if (e.code === 'KeyE') this.handlers.onInventory?.();
+      if (e.code === 'KeyE') this.handlers.onToggleInventory?.();
+      if (e.code === 'KeyI') this.handlers.onToggleInventory?.();
       if (e.code === 'F1') e.preventDefault();
       if (e.code.startsWith('Digit')) {
         const n = Number(e.code.slice(5));
@@ -104,6 +139,14 @@ export class Input {
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => { this.keys.clear(); this.mouse.left = this.mouse.right = false; });
+
+    // Полный экран: пока мы в нём, игровые клавиши (в том числе Esc) захвачены
+    document.addEventListener('fullscreenchange', () => {
+      const on = !!document.fullscreenElement;
+      if (on) this.lockKeys();
+      else this.unlockKeys();
+      this.handlers.onFullscreenChange?.(on);
+    });
 
     document.addEventListener('pointerlockchange', () => {
       const was = this.locked;
@@ -122,14 +165,8 @@ export class Input {
     });
     window.addEventListener('mousedown', (e) => {
       if (!this.locked) return;
-      if (e.button === 0) {
-        this.mouse.left = true;
-        this.handlers.onMouseBreak?.(); // даже если клик короче кадра
-      }
-      if (e.button === 2) {
-        this.mouse.right = true;
-        this.handlers.onActionPlace?.(); // ПКМ срабатывает сразу, не только на следующем кадре
-      }
+      if (e.button === 0) this.mouse.left = true;
+      if (e.button === 2) this.mouse.right = true;
     });
     window.addEventListener('mouseup', (e) => {
       if (e.button === 0) this.mouse.left = false;
@@ -152,9 +189,8 @@ export class Input {
     const joyRect = () => joyEl.getBoundingClientRect();
 
     const onTouchStart = (e) => {
-      // Тапы по меню, слоту хотбара и кнопкам HUD — не жест обзора.
-      if (document.getElementById('touch-controls')?.classList.contains('hidden') ||
-          e.target?.closest?.('button, #hotbar, .screen')) return;
+      if (!this.enabled) return;   // окно инвентаря/меню: жесты не перехватываем
+      if (e.target.closest('button, select, input, #hotbar')) return;
       for (const t of e.changedTouches) {
         const jr = joyRect();
         const inJoy = t.clientX >= jr.left - 20 && t.clientX <= jr.right + 20 &&
@@ -186,11 +222,9 @@ export class Input {
     };
 
     const onTouchMove = (e) => {
-      if (document.getElementById('touch-controls')?.classList.contains('hidden')) return;
-      let handled = false;
+      if (!this.enabled) return;
       for (const t of e.changedTouches) {
         if (t.identifier === this._joystick.id) {
-          handled = true;
           const dx = t.clientX - this._joystick.baseX;
           const dy = t.clientY - this._joystick.baseY;
           const max = 52;
@@ -200,7 +234,6 @@ export class Input {
           this._joystick.y = (dy / len) * cl;
           if (knob) knob.style.transform = `translate(${(dx / len) * cl * max}px, ${(dy / len) * cl * max}px)`;
         } else if (t.identifier === this._look.id) {
-          handled = true;
           const dx = t.clientX - this._look.lastX;
           const dy = t.clientY - this._look.lastY;
           this._look.lastX = t.clientX;
@@ -210,10 +243,11 @@ export class Input {
           this.mouse.dy += dy * 1.5;
         }
       }
-      if (handled) e.preventDefault();
+      e.preventDefault();
     };
 
     const onTouchEnd = (e) => {
+      if (!this.enabled) return;
       for (const t of e.changedTouches) {
         if (t.identifier === this._joystick.id) {
           this._joystick.active = false;
@@ -288,8 +322,17 @@ export class Input {
     this.sprint = this.keys.has('ControlLeft') || this.keys.has('ControlRight') ||
       (this.isTouch && this._joystick.active && Math.hypot(this._joystick.x, this._joystick.y) > 0.92);
     this.breakHeld = this.mouse.left || this._buttons.has('break');
-    this.placeHeld = this.mouse.right;
+    this.placeHeld = this.mouse.right || this._buttons.has('place');
   }
+
+  /** Нажатие, которое нужно обработать ровно один раз */
+  consumePress(code) {
+    if (!this.pressed.has(code)) return false;
+    this.pressed.delete(code);
+    return true;
+  }
+
+  clearPresses() { this.pressed.clear(); }
 
   consumeLook() {
     const dx = this.mouse.dx, dy = this.mouse.dy;

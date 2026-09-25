@@ -1,7 +1,6 @@
-// HTML-интерфейс: меню режимов, хотбар, крафт, HUD, настройки и тосты.
-import { BLOCKS } from './blocks.js';
-import { slotKey, itemName, ITEM_ICONS, RECIPES, ITEM } from './inventory.js';
-import { tileIcon, slabIcon, itemIcon } from './textures.js';
+// HTML-интерфейс: экраны, хотбар, HUD, тосты, настройки
+import { itemIconEl } from './icons.js';
+import { itemName, itemDef } from './items.js';
 
 export class UI {
   constructor(i18n) {
@@ -9,17 +8,22 @@ export class UI {
     this.handlers = {
       onPlay: null, onResume: null, onSaveQuit: null, onNewWorld: null,
       onSettingsChange: null, onReward: null, onSlot: null, onPauseBtn: null,
-      onToSpawn: null, onModeChange: null, onOpenInventory: null,
-      onCloseInventory: null, onCraft: null, onEat: null,
+      onToSpawn: null, onMode: null, onModeBack: null, onBag: null,
+      onModeChange: null, onCloseFurnace: null, onEat: null,
     };
-    this._screens = ['loading-screen', 'menu-screen', 'pause-screen', 'inventory-screen', 'howto-screen', 'settings-screen'];
+    this.mode = 'survival';
+    this._screens = ['loading-screen', 'menu-screen', 'mode-screen', 'pause-screen',
+      'howto-screen', 'settings-screen', 'inventory-screen', 'furnace-screen'];
     this._bind();
   }
 
   _bind() {
-    const click = (id, fn) => document.getElementById(id)?.addEventListener('click', (e) => {
-      e.stopPropagation(); fn?.();
-    });
+    const click = (id, fn) => {
+      document.getElementById(id)?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        fn?.();
+      });
+    };
     click('btn-play', () => this.handlers.onPlay?.());
     click('btn-new-world', () => this.handlers.onNewWorld?.());
     click('btn-resume', () => this.handlers.onResume?.());
@@ -33,16 +37,20 @@ export class UI {
     click('btn-reward2', () => this.handlers.onReward?.());
     click('btn-home', () => this.handlers.onToSpawn?.());
     click('btn-pause-hud', () => this.handlers.onPauseBtn?.());
-    click('btn-inventory-hud', () => this.handlers.onOpenInventory?.());
-    click('btn-inventory-back', () => this.handlers.onCloseInventory?.());
+    click('btn-bag', () => this.handlers.onBag?.());
+    click('btn-furnace-close', () => this.handlers.onCloseFurnace?.());
     click('btn-eat', () => this.handlers.onEat?.());
-
     for (const id of ['mode-menu', 'mode-pause']) {
       document.getElementById(id)?.addEventListener('change', (e) => {
-        this.setMode(e.target.value);
-        this.handlers.onModeChange?.(e.target.value);
+        this.setModeSelectors(e.target.value);
+        this.handlers.onModeChange?.(e.target.value, id);
       });
     }
+    click('btn-mode-survival', () => this.handlers.onMode?.('survival'));
+    click('btn-mode-creative', () => this.handlers.onMode?.('creative'));
+    click('btn-mode-back', () => this.handlers.onModeBack?.());
+
+    // Настройки
     const vol = document.getElementById('set-volume');
     const volLabel = document.getElementById('set-volume-label');
     vol?.addEventListener('input', () => {
@@ -50,8 +58,9 @@ export class UI {
       if (volLabel) volLabel.textContent = vol.value + '%';
       this.handlers.onSettingsChange?.({ volume: v });
     });
-    document.getElementById('set-lang')?.addEventListener('change', (e) => {
-      this.handlers.onSettingsChange?.({ lang: e.target.value });
+    const lang = document.getElementById('set-lang');
+    lang?.addEventListener('change', () => {
+      this.handlers.onSettingsChange?.({ lang: lang.value });
     });
     const vd = document.getElementById('set-viewdist');
     const vdLabel = document.getElementById('set-viewdist-label');
@@ -59,8 +68,13 @@ export class UI {
       if (vdLabel) vdLabel.textContent = vd.value;
       this.handlers.onSettingsChange?.({ viewDistance: Number(vd.value) });
     });
-    document.getElementById('set-sound')?.addEventListener('change', (e) => {
-      this.handlers.onSettingsChange?.({ sound: e.target.checked });
+    const fsBox = document.getElementById('set-fullscreen');
+    fsBox?.addEventListener('change', () => {
+      this.handlers.onSettingsChange?.({ fullscreen: fsBox.checked });
+    });
+    const snd = document.getElementById('set-sound');
+    snd?.addEventListener('change', () => {
+      this.handlers.onSettingsChange?.({ sound: snd.checked });
     });
   }
 
@@ -75,6 +89,8 @@ export class UI {
     if (vd) { vd.value = s.viewDistance ?? 5; if (vdLabel) vdLabel.textContent = vd.value; }
     const snd = document.getElementById('set-sound');
     if (snd) snd.checked = s.sound !== false;
+    const fsBox = document.getElementById('set-fullscreen');
+    if (fsBox) fsBox.checked = s.fullscreen !== false;
   }
 
   applyI18n() {
@@ -87,26 +103,43 @@ export class UI {
     });
     const volTitle = document.getElementById('set-volume-title');
     if (volTitle) volTitle.textContent = t('volume');
+    // Кнопка «Продолжить», если сейв есть
     const btnPlay = document.getElementById('btn-play');
     if (btnPlay && this._hasSave) btnPlay.textContent = t('continue');
-    this.setMode(this.mode || 'survival');
+    this.setModeSelectors(this.mode);
     document.title = `${t('title')} — ${t('tagline')}`;
   }
 
-  setHasSave(v) { this._hasSave = v; }
-
-  setMode(mode) {
+  /** Селекторы синхронизированы: смена режима доступна из меню и паузы. */
+  setModeSelectors(mode) {
     this.mode = mode === 'creative' ? 'creative' : 'survival';
     for (const id of ['mode-menu', 'mode-pause']) {
       const el = document.getElementById(id);
       if (el) el.value = this.mode;
     }
-    const label = document.getElementById('mode-label');
-    if (label) label.textContent = this.i18n.t(this.mode);
-    document.getElementById('hearts')?.classList.toggle('hidden', this.mode === 'creative');
-    document.getElementById('food-status')?.classList.toggle('hidden', this.mode === 'creative');
-    document.getElementById('xp-hud')?.classList.toggle('hidden', this.mode === 'creative');
-    document.getElementById('btn-fly')?.classList.toggle('hidden', this.mode !== 'creative');
+    this.showModeLabel(this.mode);
+  }
+
+  showModeLabel(mode) {
+    const el = document.getElementById('pause-mode');
+    if (el) el.textContent = this.i18n.t('mode_now');
+    const pause = document.getElementById('mode-pause');
+    if (pause) pause.value = mode;
+  }
+
+  setXP(level, xp, needed, mode = this.mode) {
+    const el = document.getElementById('xp-hud');
+    if (!el) return;
+    el.classList.toggle('hidden', mode === 'creative');
+    document.getElementById('xp-level').textContent = String(level);
+    document.getElementById('xp-fill').style.width = `${Math.max(0, Math.min(100, xp / needed * 100))}%`;
+  }
+
+  setHasSave(v) {
+    this._hasSave = v;
+    const btnPlay = document.getElementById('btn-play');
+    if (btnPlay) btnPlay.textContent = this.i18n.t(v ? 'continue' : 'play');
+    document.getElementById('btn-new-world')?.classList.toggle('hidden', !v);
   }
 
   showScreen(id, overlay = false) {
@@ -115,6 +148,10 @@ export class UI {
       document.getElementById(s)?.classList.toggle('hidden', s !== id);
     }
     document.getElementById('hud')?.classList.toggle('hidden', id !== 'game');
+    if (id === 'game') {
+      document.getElementById('hud')?.classList.remove('hidden');
+      for (const s of this._screens) document.getElementById(s)?.classList.add('hidden');
+    }
   }
 
   showGame() {
@@ -126,7 +163,11 @@ export class UI {
   setTouchVisible(v) {
     document.getElementById('touch-controls')?.classList.toggle('hidden', !v);
     document.getElementById('btn-pause-hud')?.classList.toggle('hidden', !v);
-    document.getElementById('btn-inventory-hud')?.classList.toggle('hidden', !v);
+  }
+
+  /** Кнопка полёта есть только в креативе */
+  setFlyButton(v) {
+    document.getElementById('btn-fly')?.classList.toggle('hidden', !v);
   }
 
   setLoading(p, text) {
@@ -136,114 +177,53 @@ export class UI {
     if (label && text) label.textContent = text;
   }
 
-  buildHotbar(ids, lang) {
+  // Хотбар: 9 ячеек инвентаря (слоты 0..8) с иконками и счётчиками
+  buildHotbar(slots, lang, opts = {}) {
     const bar = document.getElementById('hotbar');
     if (!bar) return;
-    this.palette = ids;
+    this._hotbarSlots = slots;
     bar.innerHTML = '';
-    ids.forEach((id, i) => {
+    for (let i = 0; i < slots.length; i++) {
+      const stack = slots[i];
       const slot = document.createElement('div');
       slot.className = 'slot';
       slot.dataset.index = i;
-      const def = typeof id === 'number' ? BLOCKS[id] : null;
-      if (def?.tiles) {
-        const icon = def.shape === 'slab' ? slabIcon(def.tiles[2], 44)
-          : tileIcon(def.tiles[3] ?? def.tiles[2], 44);
-        icon.className = 'slot-icon';
-        slot.appendChild(icon);
-      } else if (id === ITEM.BOW || id === ITEM.BREAD) {
-        const icon = itemIcon(id, 44);
-        icon.className = 'slot-icon';
-        slot.appendChild(icon);
-      } else {
-        const symbol = document.createElement('span');
-        symbol.className = 'slot-symbol';
-        symbol.textContent = ITEM_ICONS[id] || '?';
-        slot.appendChild(symbol);
+      let title = '';
+      if (stack) {
+        const icon = itemIconEl(stack.key, 44);
+        if (icon) slot.appendChild(icon);
+        title = itemName(stack.key, lang);
+        const inf = opts.creative && itemDef(stack.key)?.kind === 'block';
+        if (inf || stack.count > 1) {
+          const count = document.createElement('span');
+          count.className = 'slot-count';
+          count.textContent = inf ? '∞' : String(stack.count);
+          slot.appendChild(count);
+        }
       }
       const num = document.createElement('span');
       num.className = 'slot-num';
-      num.textContent = i < 9 ? i + 1 : '·';
+      num.textContent = String(i + 1);
       slot.appendChild(num);
-      const count = document.createElement('span');
-      count.className = 'slot-count';
-      slot.appendChild(count);
       const tip = document.createElement('div');
       tip.className = 'slot-tip';
-      tip.textContent = itemName(slotKey(id), lang);
+      tip.textContent = title;
       slot.appendChild(tip);
       slot.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.handlers.onSlot?.(i); });
       bar.appendChild(slot);
-    });
-  }
-
-  setHotbarCounts(inventory, mode) {
-    document.querySelectorAll('#hotbar .slot').forEach((slot) => {
-      const id = this.palette?.[Number(slot.dataset.index)];
-      const count = inventory.get(slotKey(id));
-      slot.classList.toggle('empty', mode !== 'creative' && count === 0);
-      slot.querySelector('.slot-count').textContent = mode === 'creative' ? '∞' : String(count || '');
-    });
+    }
   }
 
   setHotbarSelection(i) {
-    const bar = document.getElementById('hotbar');
-    if (!bar) return;
-    for (const el of bar.children) el.classList.toggle('selected', Number(el.dataset.index) === i);
-    const selected = bar.children[i];
-    if (!selected || bar.classList.contains('hidden')) return;
-    const a = selected.getBoundingClientRect(), b = bar.getBoundingClientRect();
-    if (a.left < b.left + 8) bar.scrollLeft += a.left - b.left - 8;
-    if (a.right > b.right - 8) bar.scrollLeft += a.right - b.right + 8;
-  }
-
-  showInventory(inventory, station, mode) {
-    const lang = this.i18n.lang;
-    const t = (k) => this.i18n.t(k);
-    const title = document.getElementById('inventory-title');
-    if (title) title.textContent = t(station === 'furnace' ? 'furnace_title' : 'inventory_title');
-    const stock = document.getElementById('inventory-stock');
-    if (stock) {
-      stock.innerHTML = '';
-      for (const [key, n] of Object.entries(inventory.counts)) {
-        if (n <= 0) continue;
-        const chip = document.createElement('span');
-        chip.className = 'stock-chip';
-        chip.textContent = `${itemName(key, lang)} ×${n}`;
-        stock.appendChild(chip);
-      }
-    }
-    const recipes = document.getElementById('inventory-recipes');
-    if (!recipes) return;
-    recipes.innerHTML = '';
-    if (mode === 'creative') {
-      const p = document.createElement('p');
-      p.textContent = t('creative_hint');
-      recipes.appendChild(p);
-      return;
-    }
-    for (const recipe of RECIPES) {
-      if (recipe.station && station !== 'furnace') continue;
-      const btn = document.createElement('button');
-      btn.className = 'recipe-btn';
-      btn.disabled = !inventory.canCraft(recipe);
-      const name = document.createElement('span');
-      name.textContent = `${itemName(recipe.output, lang)} ×${recipe.amount}`;
-      const ingredients = document.createElement('small');
-      ingredients.textContent = Object.entries(recipe.inputs)
-        .map(([key, n]) => `${itemName(key, lang)} ×${n}`).join(' + ') +
-        (recipe.fuel ? ` + ${t('fuel')}` : '');
-      btn.append(name, ingredients);
-      btn.addEventListener('click', () => this.handlers.onCraft?.(recipe.id));
-      recipes.appendChild(btn);
-    }
+    document.querySelectorAll('#hotbar .slot').forEach((el, k) => {
+      el.classList.toggle('selected', k === i);
+    });
   }
 
   toast(text, ms = 2600) {
     const el = document.getElementById('toast');
     if (!el) return;
     el.textContent = text;
-    el.classList.toggle('in-menu', this._screens.some((s) => !document.getElementById(s)?.classList.contains('hidden')));
     el.classList.add('visible');
     clearTimeout(this._toastT);
     this._toastT = setTimeout(() => el.classList.remove('visible'), ms);
@@ -269,9 +249,17 @@ export class UI {
       (this._built != null ? `  |  ${this.i18n.t('blocks_built')}: ${this._built}` : '');
   }
 
-  setBlocksBuilt(n) { this._built = n; }
-  setUnderwater(on) { document.getElementById('underwater')?.classList.toggle('visible', on); }
-  setRotateHint(on) { document.getElementById('rotate-hint')?.classList.toggle('hidden', !on); }
+  setBlocksBuilt(n) {
+    this._built = n;
+  }
+
+  setUnderwater(on) {
+    document.getElementById('underwater')?.classList.toggle('visible', on);
+  }
+
+  setRotateHint(on) {
+    document.getElementById('rotate-hint')?.classList.toggle('hidden', !on);
+  }
 
   setRewardButton(unlocked) {
     for (const id of ['btn-reward', 'btn-reward2']) {
@@ -283,7 +271,30 @@ export class UI {
     }
   }
 
-  showAdOverlay(on) { document.getElementById('ad-overlay')?.classList.toggle('hidden', !on); }
+  showAdOverlay(on) {
+    document.getElementById('ad-overlay')?.classList.toggle('hidden', !on);
+  }
+
+  setHealthVisible(v) {
+    const el = document.getElementById('hearts');
+    if (el) el.classList.toggle('hidden', !v);
+  }
+
+  blinkHearts() {
+    const el = document.getElementById('hearts');
+    if (!el) return;
+    el.classList.remove('blink');
+    void el.offsetWidth;
+    el.classList.add('blink');
+  }
+
+  shake() {
+    const el = document.getElementById('hud');
+    if (!el) return;
+    el.classList.remove('shake');
+    void el.offsetWidth;
+    el.classList.add('shake');
+  }
 
   setHealth(hp, max = 20) {
     const el = document.getElementById('hearts');
@@ -293,7 +304,8 @@ export class UI {
       el.innerHTML = '';
       for (let i = 0; i < n; i++) {
         const sp = document.createElement('span');
-        sp.textContent = '♥'; el.appendChild(sp);
+        sp.textContent = '♥';
+        el.appendChild(sp);
       }
     }
     for (let i = 0; i < n; i++) {
@@ -302,27 +314,36 @@ export class UI {
     }
   }
 
-  setFood(inventory) {
-    const el = document.getElementById('food-status');
-    if (el) el.textContent = `F  🍞 ×${inventory.get(ITEM.BREAD)}  🍎 ×${inventory.get(ITEM.APPLE)}   ➶ ×${inventory.get(ITEM.ARROW)}`;
+  /** Счётчик стрел в HUD (в креативе и без стрел скрыт) */
+  setArrows(n, mode = 'survival') {
+    const el = document.getElementById('arrows');
+    if (!el) return;
+    if (n <= 0 || mode === 'creative') { el.classList.add('hidden'); return; }
+    el.classList.remove('hidden');
+    el.textContent = '➤ ×' + n;
   }
 
-  setXP(level, xp, needed) {
-    const label = document.getElementById('xp-level');
-    const fill = document.getElementById('xp-fill');
-    if (label) label.textContent = level;
-    if (fill) fill.style.width = Math.min(100, xp / needed * 100) + '%';
+  setApples(n, mode = 'survival') {
+    const el = document.getElementById('apples');
+    if (!el) return;
+    if (n <= 0 || mode === 'creative') { el.classList.add('hidden'); return; }
+    el.classList.remove('hidden');
+    el.textContent = this.i18n.t('eat_hint') + ' ×' + n;
   }
 
   flashHurt() {
     const el = document.getElementById('hurt-flash');
     if (!el) return;
-    el.classList.remove('on'); void el.offsetWidth; el.classList.add('on');
+    el.classList.remove('on');
+    void el.offsetWidth;
+    el.classList.add('on');
   }
 
   flashLightning() {
     const el = document.getElementById('lightning');
     if (!el) return;
-    el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+    el.classList.remove('flash');
+    void el.offsetWidth; // рестарт анимации
+    el.classList.add('flash');
   }
 }

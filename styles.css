@@ -83,12 +83,10 @@ html, body {
   border-radius: 6px;
   max-width: 92vw;
   overflow-x: auto;
-  touch-action: pan-x;
   scrollbar-width: thin;
 }
 .slot {
   position: relative;
-  flex: 0 0 50px;
   width: 50px; height: 50px;
   background: rgba(20, 20, 30, 0.55);
   border: 2px solid rgba(255,255,255,0.3);
@@ -96,13 +94,6 @@ html, body {
   display: flex; align-items: center; justify-content: center;
   cursor: pointer;
 }
-.slot.empty { opacity: 0.48; }
-.slot-count {
-  position: absolute; right: 3px; bottom: 1px;
-  font: bold 12px/1 system-ui, sans-serif;
-  text-shadow: 1px 1px #000, -1px -1px #000;
-}
-.slot-symbol { font-size: 30px; line-height: 1; }
 .slot.selected {
   border-color: #fff;
   box-shadow: 0 0 0 2px rgba(255,255,255,0.55), 0 0 14px rgba(255,255,255,0.35);
@@ -138,7 +129,6 @@ html, body {
   pointer-events: auto;
   cursor: pointer;
 }
-#btn-inventory-hud { right: 64px; font-size: 12px; font-weight: 700; }
 
 /* ---------- Сенсорное управление ---------- */
 #touch-controls { position: fixed; inset: 0; z-index: 12; pointer-events: none; }
@@ -174,12 +164,11 @@ html, body {
   border: 2px solid rgba(255,255,255,0.4);
   background: rgba(0,0,0,0.4);
   color: #fff;
-  font: 700 13px/1 'Segoe UI', Arial, sans-serif;
-  letter-spacing: 0.2px;
+  font-size: 24px;
   cursor: pointer;
 }
 .touch-btn:active { background: rgba(255,255,255,0.3); }
-.touch-btn.small { width: 52px; height: 52px; font-size: 12px; align-self: center; justify-self: center; }
+.touch-btn.small { width: 52px; height: 52px; font-size: 18px; align-self: center; justify-self: center; }
 
 /* ---------- Экраны ---------- */
 .screen {
@@ -196,11 +185,6 @@ html, body {
   padding: 28px 40px;
   min-width: 320px;
   max-width: 90vw;
-  max-height: 94vh;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  touch-action: pan-y;
-  -webkit-overflow-scrolling: touch;
   text-align: center;
   box-shadow: 0 12px 48px rgba(0,0,0,0.5);
 }
@@ -215,30 +199,7 @@ html, body {
   text-shadow: 3px 3px 0 #2c4a1e, 6px 6px 0 rgba(0,0,0,0.35);
 }
 .logo span { color: #f4f4f4; text-shadow: 3px 3px 0 #333, 6px 6px 0 rgba(0,0,0,0.35); }
-.tagline { color: #aab4cc; margin-bottom: 16px; font-size: 14px; letter-spacing: 1px; }
-.mode-picker {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 12px; margin: 10px 0 14px; font-size: 14px;
-}
-.mode-picker select {
-  min-width: 134px; padding: 8px; background: #1d2c3c; color: #fff;
-  border: 1px solid #78ad61; border-radius: 6px; font: inherit; cursor: pointer;
-}
-.inventory-panel { width: min(620px, 95vw); text-align: left; }
-.inventory-panel h2 { text-align: center; }
-.inventory-panel h3 { color: #a3df80; margin: 14px 0 7px; font-size: 15px; }
-.inventory-hint { color: #c2c9d2; font-size: 13px; text-align: center; }
-#inventory-stock { display: flex; flex-wrap: wrap; gap: 6px; }
-.stock-chip { border-radius: 5px; background: #27344a; padding: 5px 8px; font-size: 12px; }
-#inventory-recipes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.recipe-btn {
-  padding: 8px; background: #284337; color: #fff; text-align: left;
-  border: 1px solid #559461; border-radius: 5px; cursor: pointer; font: 600 13px/1.35 system-ui, sans-serif;
-}
-.recipe-btn small { display: block; font-size: 11px; color: #d3dfd5; font-weight: 400; }
-.recipe-btn:disabled { background: #252d38; border-color: #445064; color: #acb2bf; cursor: default; }
-.recipe-btn:disabled small { color: #8995a4; }
-@media (max-width: 520px) { #inventory-recipes { grid-template-columns: 1fr; } }
+.tagline { color: #aab4cc; margin-bottom: 22px; font-size: 14px; letter-spacing: 1px; }
 
 .menu-buttons { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
 
@@ -323,7 +284,6 @@ html, body {
   text-align: center;
 }
 #toast.visible { opacity: 1; transform: translateX(-50%) translateY(0); }
-#toast.in-menu { top: 6%; }
 
 /* ---------- Реклама ---------- */
 #ad-overlay {
@@ -359,17 +319,7 @@ html, body {
 
 /* ---------- Вспышка молнии ---------- */
 /* Сердца, еда и урон */
-#status-row { position: absolute; left: 16px; bottom: 99px; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; pointer-events: none; }
-#mode-label { background: rgba(8, 13, 20, 0.66); padding: 2px 7px; border-radius: 5px; font-size: 11px; color: #afe793; }
-#food-status { background: rgba(8, 13, 20, 0.66); padding: 3px 7px; border-radius: 5px; font-size: 12px; }
-#xp-hud {
-  position: absolute; bottom: 76px; left: 50%; transform: translateX(-50%);
-  width: min(460px, 64vw); height: 14px;
-  display: flex; align-items: center; gap: 7px;
-  color: #b4fc68; font: bold 13px/1 system-ui, sans-serif; text-shadow: 1px 1px #000;
-}
-#xp-track { height: 9px; flex: 1; border: 1px solid #a5dc6f; background: #1d281a; border-radius: 5px; overflow: hidden; }
-#xp-fill { width: 0; height: 100%; background: linear-gradient(90deg, #5dc433, #a1ff5c); }
+#status-row { position: absolute; left: 16px; bottom: 84px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
 #hearts { display: flex; gap: 3px; }
 .heart { font-size: 18px; line-height: 1; color: #d33; text-shadow: 0 1px 2px #000; }
 .heart:not(.full):not(.half) { color: #3b3b42; }
@@ -379,11 +329,20 @@ html, body {
   background-clip: text;
   color: transparent;
 }
+#apples,
+#arrows {
+  align-self: flex-start;
+  background: rgba(12, 14, 20, 0.72);
+  color: #fff;
+  border-radius: 8px;
+  padding: 3px 8px;
+  font: 600 12px/1.4 system-ui, sans-serif;
+}
 #hurt-flash {
   position: absolute; inset: 0; pointer-events: none; opacity: 0;
-  background: radial-gradient(ellipse at center, transparent 40%, rgba(200, 20, 30, 0.55) 100%);
+  background: radial-gradient(ellipse at center, rgba(190, 15, 25, 0.3) 25%, rgba(200, 20, 30, 0.78) 100%);
 }
-#hurt-flash.on { animation: hurtflash 0.45s ease-out; }
+#hurt-flash.on { animation: hurtflash 0.5s ease-out; }
 @keyframes hurtflash { 0% { opacity: 1; } 100% { opacity: 0; } }
 
 #lightning {
@@ -407,21 +366,11 @@ html, body {
   .logo { font-size: 32px; }
   .panel { padding: 20px 22px; min-width: 280px; }
   .btn { min-width: 200px; padding: 12px 18px; font-size: 15px; }
-  .slot { flex-basis: 42px; width: 42px; height: 42px; }
+  .slot { width: 42px; height: 42px; }
   .slot-icon { width: 36px; height: 36px; }
-  #status-row { top: 12px; bottom: auto; left: 8px; }
-  #debug { top: 98px; }
-  #xp-hud { bottom: 66px; width: min(340px, 60vw); }
   #joystick { left: 60px; bottom: 70px; width: 104px; height: 104px; }
   #touch-buttons { right: 14px; bottom: 60px; grid-template-columns: repeat(2, 56px); }
-  .touch-btn { width: 56px; height: 56px; font-size: 12px; }
-  .touch-btn.small { font-size: 11px; }
-}
-
-/* На телефоне в альбомной ориентации высота мала даже при ширине > 760px. */
-@media (max-height: 550px) {
-  #status-row { top: 12px; bottom: auto; left: 8px; }
-  #debug { top: 98px; }
+  .touch-btn { width: 56px; height: 56px; font-size: 20px; }
 }
 
 /* ---------- Защита: ничего не двигается и не масштабируется ---------- */
@@ -434,3 +383,280 @@ html, body {
   text-size-adjust: 100%;
 }
 img, canvas { -webkit-user-drag: none; user-drag: none; }
+
+/* ================= Инвентарь, крафт, каталог ================= */
+#btn-bag { right: 66px; top: 12px; font-size: 20px; }
+
+.inv-screen { background: rgba(6, 10, 22, 0.62); z-index: 25; }
+.inv-window {
+  display: flex;
+  gap: 14px;
+  width: min(880px, 96vw);
+  max-height: 94vh;
+  padding: 14px;
+  background: rgba(14, 18, 36, 0.95);
+  border: 2px solid rgba(255,255,255,0.18);
+  border-radius: 12px;
+  box-shadow: 0 12px 48px rgba(0,0,0,0.55);
+}
+.inv-side {
+  width: 260px;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  background: rgba(8, 11, 22, 0.6);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.inv-side-title {
+  padding: 8px 10px;
+  font: 700 13px/1 'Segoe UI', sans-serif;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #9be064;
+  border-bottom: 1px solid rgba(255,255,255,0.12);
+}
+.inv-side-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  scrollbar-width: thin;
+}
+.inv-side-list.catalog { grid-template-columns: repeat(4, 1fr); }
+.recipe {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.05);
+  cursor: pointer;
+}
+.recipe.ok { border-color: #59c437; background: rgba(89, 196, 55, 0.18); }
+.recipe.ok:hover { background: rgba(89, 196, 55, 0.32); }
+.recipe:not(.ok) { opacity: 0.6; }
+.recipe-info { min-width: 0; }
+.recipe-name { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.recipe-ing { font-size: 10px; color: #aab4cc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cat-item {
+  position: relative;
+  aspect-ratio: 1;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(20, 20, 30, 0.6);
+  border: 2px solid rgba(255,255,255,0.18);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.cat-item:hover { border-color: #fff; background: rgba(255,255,255,0.16); }
+.cat-item.locked { opacity: 0.5; }
+.cat-lock { position: absolute; right: 2px; bottom: 0; font-size: 13px; }
+
+.inv-main { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.inv-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; color: #aab4cc; }
+.inv-mode { font-weight: 700; color: #9be064; letter-spacing: 1px; text-transform: uppercase; }
+.inv-tip { flex: 1; text-align: right; }
+.inv-close {
+  width: 30px; height: 30px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.3);
+  background: rgba(0,0,0,0.4);
+  color: #fff; font-size: 15px; cursor: pointer;
+}
+.inv-grid {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+  gap: 4px;
+  width: 100%;
+}
+.islot .slot-icon, .cat-item .slot-icon { width: 100%; height: 100%; }
+.islot { max-width: 56px; }
+.inv-hotbar { border-top: 2px solid rgba(255,255,255,0.18); padding-top: 8px; }
+.islot {
+  position: relative;
+  aspect-ratio: 1;
+  background: rgba(20, 20, 30, 0.65);
+  border: 2px solid rgba(255,255,255,0.22);
+  border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+}
+.islot:hover { border-color: #fff; }
+.islot.selected { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,0.45); }
+.islot-count {
+  position: absolute; right: 2px; bottom: 1px;
+  font: 700 11px/1 'Segoe UI', sans-serif;
+  color: #fff;
+  text-shadow: 1px 1px 0 #000, -1px 1px 0 #000;
+  pointer-events: none;
+}
+#cursor-item {
+  position: fixed;
+  width: 44px; height: 44px;
+  margin: -22px 0 0 -22px;
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: none;
+  z-index: 30;
+  filter: drop-shadow(0 2px 3px rgba(0,0,0,0.6));
+}
+#cursor-item .slot-icon { width: 40px; height: 40px; }
+.mode-btn { display: flex; flex-direction: column; gap: 3px; align-items: center; padding: 12px 20px; }
+.mode-btn-title { font-weight: 700; font-size: 16px; }
+.mode-btn-sub { font-size: 11px; opacity: 0.8; font-weight: 400; }
+
+/* Встряска интерфейса и мигание сердечек при уроне */
+#hud.shake { animation: hudshake 0.4s ease-out; }
+@keyframes hudshake {
+  0% { transform: translate(0, 0); }
+  15% { transform: translate(-7px, 4px); }
+  30% { transform: translate(6px, -5px); }
+  45% { transform: translate(-5px, -3px); }
+  60% { transform: translate(4px, 3px); }
+  80% { transform: translate(-2px, 1px); }
+  100% { transform: translate(0, 0); }
+}
+#hearts.blink .heart { animation: heartblink 0.45s steps(1, end) 2; }
+@keyframes heartblink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0.15; }
+}
+#hearts.blink .heart.full, #hearts.blink .heart.half { color: #ff4b4b; }
+
+@media (max-width: 760px) {
+  .inv-side { width: 190px; }
+  .inv-side-list.catalog { grid-template-columns: repeat(3, 1fr); }
+  .recipe-ing { display: none; }
+}
+
+/* Счётчик в слоте хотбара */
+.slot-count {
+  position: absolute; right: 3px; bottom: 1px;
+  font: 700 12px/1 'Segoe UI', sans-serif;
+  color: #fff;
+  text-shadow: 1px 1px 0 #000, -1px 1px 0 #000;
+  pointer-events: none;
+}
+.slot:has(.slot-count) .slot-num { opacity: 0.75; }
+
+/* ================= Сетка крафта и вкладки ================= */
+.inv-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 8px 0;
+}
+.inv-tab {
+  flex: 1;
+  padding: 7px 4px;
+  font: 700 11px/1 'Segoe UI', sans-serif;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: #c8d0e4;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.inv-tab.active { color: #0d1220; background: #9be064; border-color: #b6ef86; }
+.inv-tab:hover:not(.active) { background: rgba(255,255,255,0.14); }
+
+.craft-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 4px 4px;
+}
+.craft-block { display: flex; flex-direction: column; gap: 6px; }
+.craft-title {
+  font: 700 11px/1 'Segoe UI', sans-serif;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #9be064;
+}
+.craft-grid { display: grid; gap: 4px; }
+.craft-grid.size2 { grid-template-columns: repeat(2, 46px); }
+.craft-grid.size3 { grid-template-columns: repeat(3, 46px); }
+.craft-cell { width: 46px; height: 46px; }
+.craft-cell { max-width: none; }
+.craft-arrow { font-size: 22px; color: #9be064; opacity: 0.8; }
+.craft-result {
+  width: 56px; height: 56px;
+  max-width: none;
+  position: relative;
+}
+.craft-result.ready { border-color: #9be064; box-shadow: 0 0 12px rgba(155, 224, 100, 0.45); }
+.craft-result .slot-tip { bottom: 120%; }
+
+#inv-craft-grid .slot-icon { width: 36px; height: 36px; }
+.inv-tab .hidden { display: none !important; }
+
+/* Новые механики: меню режимов, печка и уровень опыта */
+.mode-picker {
+  justify-content: center;
+  margin: 6px 0 12px;
+  color: #d8e8cc;
+}
+.mode-picker select {
+  min-width: 146px;
+  padding: 7px 11px;
+  border-radius: 6px;
+  color: white;
+  background: #243248;
+  border: 1px solid #748394;
+  font: 600 13px/1.25 system-ui, sans-serif;
+}
+#xp-hud {
+  position: absolute;
+  left: 50%; bottom: 77px;
+  transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px;
+  width: min(440px, 75vw);
+  color: #a9e66b;
+  font: 700 13px system-ui, sans-serif;
+  text-shadow: 1px 1px 2px black;
+}
+#xp-bar {
+  flex: 1; height: 8px;
+  border-radius: 5px;
+  border: 1px solid #203311;
+  background: #182519;
+  overflow: hidden;
+}
+#xp-fill { width: 0; height: 100%; background: linear-gradient(#bcff71, #4cac29); }
+#furnace-screen .panel {
+  width: min(500px, 94vw);
+  max-height: 94vh;
+  overflow-y: auto;
+}
+#furnace-screen p { color: #bfcbb8; line-height: 1.4; }
+#furnace-stock { color: #d5e4c8; font-size: 13px; margin: 12px 0; }
+#furnace-recipes { display: grid; gap: 10px; margin-bottom: 16px; }
+.furnace-recipe {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px; background: #1e2830; border: 1px solid #5d685d;
+  border-radius: 8px; color: #f4f4f4; cursor: pointer; text-align: left;
+}
+.furnace-recipe:disabled { opacity: .5; cursor: default; }
+.furnace-recipe:not(:disabled):hover { border-color: #9be064; }
+.furnace-recipe .slot-icon { flex: none; }
+.furnace-recipe .recipe-info { flex: 1; }
+.furnace-recipe .recipe-ing { font-size: 12px; color: #aab4cc; }
+#btn-bag, #btn-pause-hud { font: 700 12px/1 system-ui, sans-serif; }
+.touch-btn { font: 700 12px/1 system-ui, sans-serif; }
+.touch-btn.small { font-size: 18px; }
+.screen { overflow-y: auto; }
+.panel { max-height: 94vh; overflow-y: auto; }
+#toast { z-index: 55; }
+@media (max-height: 550px) {
+  #status-row { top: 12px; bottom: auto; left: 8px; }
+  #debug { top: 100px; }
+  .panel { padding: 12px 20px; }
+  .logo { font-size: 32px; }
+  .tagline { margin-bottom: 8px; }
+  .menu-buttons { gap: 6px; margin-top: 8px; }
+  .btn { padding: 9px 15px; }
+  .touch-btn { font-size: 11px; }
+}

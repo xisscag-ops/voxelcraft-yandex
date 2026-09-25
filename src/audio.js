@@ -101,6 +101,27 @@ export class Sfx {
     this._tone({ freq: 180, dur: 0.06, gain: 0.06, type: 'triangle' });
   }
 
+  bowDraw() {
+    // Скрип дерева при натяжении
+    this._burst({ freq: 900, dur: 0.07, gain: 0.1, type: 'bandpass', q: 4, pitchDrop: 0.7 });
+  }
+
+  bowShoot(power = 1) {
+    // Щелчок тетивы + свист улетающей стрелы
+    this._tone({ freq: 900 + 500 * power, dur: 0.08, gain: 0.12, type: 'triangle', slide: -520 });
+    this._burst({ freq: 2400, dur: 0.18, gain: 0.2 * power, type: 'bandpass', q: 1.4, pitchDrop: 0.5 });
+    this._tone({ freq: 170, dur: 0.07, gain: 0.08, type: 'square', slide: -50 });
+  }
+
+  arrowHitBlock() {
+    this._burst({ freq: 1100, dur: 0.07, gain: 0.25, pitchDrop: 0.3 });
+    this._burst({ freq: 260, dur: 0.1, gain: 0.14, type: 'lowpass', pitchDrop: 0.5 });
+  }
+
+  arrowPickup() {
+    this._tone({ freq: 1050, dur: 0.05, gain: 0.07, type: 'square', slide: 180 });
+  }
+
   step(inWater = false) {
     if (inWater) this._burst({ freq: 900, dur: 0.1, gain: 0.12, type: 'bandpass', q: 3 });
     else this._burst({ freq: 420, dur: 0.06, gain: 0.1, pitchDrop: 0.5 });
@@ -189,9 +210,11 @@ export class Sfx {
   }
 
   hurt() {
-    // Боль: короткий низкий стон
-    this._tone({ freq: 190, dur: 0.2, gain: 0.16, type: 'sawtooth', slide: -70 });
-    this._burst({ freq: 320, dur: 0.1, gain: 0.14, pitchDrop: 0.5 });
+    // Боль: заметный низкий стон + резкий удар (громче прежнего)
+    this._tone({ freq: 210, dur: 0.3, gain: 0.3, type: 'sawtooth', slide: -95 });
+    this._tone({ freq: 120, dur: 0.22, gain: 0.22, type: 'square', slide: -40 });
+    this._burst({ freq: 420, dur: 0.16, gain: 0.32, pitchDrop: 0.4 });
+    this._burst({ freq: 1500, dur: 0.07, gain: 0.2, type: 'bandpass', q: 1.5 });
   }
 
   die() {
@@ -204,8 +227,101 @@ export class Sfx {
     this._burst({ freq: 520, dur: 0.08, gain: 0.3, pitchDrop: 0.5 });
   }
 
+  // Писк/блеяние раненого моба
+  mobHurt(type = 'bunny') {
+    if (type === 'bunny') {
+      this._tone({ freq: 1700, dur: 0.11, gain: 0.13, type: 'sine', slide: 900 });
+      setTimeout(() => this._tone({ freq: 2100, dur: 0.07, gain: 0.09, type: 'sine', slide: 500 }), 70);
+    } else if (type === 'sheep') {
+      this._tone({ freq: 340, dur: 0.28, gain: 0.13, type: 'sawtooth', slide: -120 });
+      setTimeout(() => this._tone({ freq: 280, dur: 0.2, gain: 0.1, type: 'sawtooth', slide: -80 }), 130);
+    } else if (type === 'slime') {
+      this._burst({ freq: 260, dur: 0.18, gain: 0.22, pitchDrop: 0.35, q: 3 });
+      setTimeout(() => this._burst({ freq: 900, dur: 0.09, gain: 0.16, type: 'bandpass', q: 2 }), 90);
+    } else if (type === 'gloom') {
+      this._burst({ freq: 620, dur: 0.3, gain: 0.16, type: 'bandpass', q: 8, pitchDrop: 0.5 });
+    } else {
+      this._tone({ freq: 900, dur: 0.1, gain: 0.1, type: 'triangle', slide: 300 });
+    }
+  }
+
   mobDie() {
     this._burst({ freq: 380, dur: 0.25, gain: 0.25, type: 'bandpass', q: 2, pitchDrop: 0.6 });
+  }
+
+  gloomGrowl(vol = 1) {
+    // Низкое рычание: дрожащий низкий тон + шумовой хрип
+    if (!this.enabled || !this._ensure() || this.ctx.state === 'suspended') return;
+    const t0 = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(88, t0);
+    osc.frequency.linearRampToValueAtTime(62, t0 + 0.85);
+    const trem = this.ctx.createOscillator();
+    trem.type = 'sine';
+    trem.frequency.value = 17;
+    const tremGain = this.ctx.createGain();
+    tremGain.gain.value = 0.4;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.linearRampToValueAtTime(0.17 * vol, t0 + 0.12);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.9);
+    trem.connect(tremGain);
+    tremGain.connect(g.gain);
+    osc.connect(g);
+    g.connect(this.master);
+    osc.start(t0); trem.start(t0);
+    osc.stop(t0 + 0.95); trem.stop(t0 + 0.95);
+    this._burst({ freq: 220, dur: 0.7, gain: 0.09 * vol, type: 'bandpass', q: 4, pitchDrop: 0.4 });
+  }
+
+  // ---- Новые мобы: паук, крипер, волк, рыба ----
+  bark(vol = 1) {
+    // Короткий лай: две резкие «гав»
+    this._burst({ freq: 900, dur: 0.07, gain: 0.14 * vol, type: 'bandpass', q: 1.4, pitchDrop: 0.35 });
+    setTimeout(() => this._burst({ freq: 760, dur: 0.08, gain: 0.12 * vol, type: 'bandpass', q: 1.4, pitchDrop: 0.3 }), 130);
+  }
+
+  hiss() {
+    // Шипение паука
+    this._burst({ freq: 2600, dur: 0.35, gain: 0.1, type: 'highpass', q: 0.9 });
+  }
+
+  fuse() {
+    // Крипер: нарастающее шипение перед взрывом
+    for (let i = 0; i < 5; i++) {
+      setTimeout(() => this._burst({ freq: 1800 + i * 300, dur: 0.09, gain: 0.09, type: 'highpass', q: 1.1 }), i * 130);
+    }
+  }
+
+  explode() {
+    this._burst({ freq: 220, dur: 0.55, gain: 0.5, pitchDrop: 0.25 });
+    setTimeout(() => this._burst({ freq: 90, dur: 0.5, gain: 0.35, pitchDrop: 0.4 }), 40);
+  }
+
+  flop(vol = 1) {
+    // Рыба бьётся на суше
+    this._burst({ freq: 700, dur: 0.08, gain: 0.1 * vol, type: 'bandpass', q: 1.6, pitchDrop: 0.5 });
+  }
+
+  swim(vol = 1) {
+    this._burst({ freq: 1200, dur: 0.14, gain: 0.05 * vol, type: 'bandpass', q: 1.2, pitchDrop: 0.5 });
+  }
+
+  // ---- Растения срываются мгновенно: сухой треск ----
+  grassRustle() {
+    for (let i = 0; i < 4; i++) {
+      setTimeout(() => {
+        this._burst({
+          freq: 1900 + Math.random() * 2800,
+          dur: 0.03 + Math.random() * 0.03,
+          gain: 0.16,
+          type: 'highpass',
+          q: 0.9,
+        });
+      }, i * 20 + Math.random() * 14);
+    }
+    this._burst({ freq: 3200, dur: 0.09, gain: 0.1, type: 'bandpass', q: 1.2, pitchDrop: 0.6 });
   }
 
   gloom(vol = 1) {
@@ -224,13 +340,21 @@ export class Sfx {
     setTimeout(() => this._burst({ freq: 700, dur: 0.07, gain: 0.28, pitchDrop: 0.3 }), 110);
   }
 
-  pickup() {
-    this._tone({ freq: 880, dur: 0.07, gain: 0.1, type: 'triangle', slide: 240 });
+  burp() {
+    // Довольная отрыжка после еды: низкий короткий «брр»
+    this._tone({ freq: 150, dur: 0.22, gain: 0.16, type: 'sawtooth', slide: -60 });
+    setTimeout(() => this._tone({ freq: 110, dur: 0.16, gain: 0.12, type: 'triangle', slide: -30 }), 130);
   }
 
-  bow() {
-    this._tone({ freq: 350, dur: 0.13, gain: 0.12, type: 'triangle', slide: -180 });
-    this._burst({ freq: 1200, dur: 0.07, gain: 0.1, pitchDrop: 0.6 });
+  craft() {
+    // «Молоток по верстаку»: два коротких стука и звон
+    this._burst({ freq: 700, dur: 0.05, gain: 0.3, pitchDrop: 0.6 });
+    setTimeout(() => this._burst({ freq: 520, dur: 0.06, gain: 0.26, pitchDrop: 0.5 }), 70);
+    setTimeout(() => this._tone({ freq: 1180, dur: 0.09, gain: 0.09, type: 'triangle', slide: 260 }), 130);
+  }
+
+  pickup() {
+    this._tone({ freq: 880, dur: 0.07, gain: 0.1, type: 'triangle', slide: 240 });
   }
 
   xp() {

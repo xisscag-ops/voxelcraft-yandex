@@ -1,6 +1,6 @@
 // Физика игрока: AABB против вокселей, ходьба, прыжки, плавание, полёт
 import { CONFIG } from './config.js';
-import { isSolid, isLiquid, blockBounds } from './blocks.js';
+import { isSolid, isLiquid, isSlab, blockBounds } from './blocks.js';
 
 const HW = CONFIG.PLAYER_WIDTH / 2;
 const PH = CONFIG.PLAYER_HEIGHT;
@@ -15,7 +15,6 @@ export class Player {
     this.pitch = 0;
     this.onGround = false;
     this.flying = false;
-    this.mode = 'survival';
     this.inWater = false;
     this.headInWater = false;
     this.sprinting = false;
@@ -27,6 +26,9 @@ export class Player {
     this.hp = 20; this.maxHp = 20;
     this.level = 0; this.xp = 0;
     this.hurtT = 0; this.regenT = 0; this._fallFrom = null;
+    // Режим игры: в креативе игрок бессмертен и умеет летать
+    this.invulnerable = false;
+    this.canFly = true;
   }
 
   lookDir() {
@@ -45,7 +47,7 @@ export class Player {
   xpNeeded() { return 5 + this.level * 3; }
 
   addXP(amount) {
-    this.xp += amount;
+    this.xp += Math.max(0, amount);
     let levels = 0;
     while (this.xp >= this.xpNeeded()) {
       this.xp -= this.xpNeeded();
@@ -57,7 +59,8 @@ export class Player {
 
   /** Урон с неуязвимостью 0.7 с. true — если урон прошёл */
   hurt(n) {
-    if (this.mode === 'creative' || this.hurtT > 0 || this.hp <= 0) return false;
+    if (this.invulnerable) return false;
+    if (this.hurtT > 0 || this.hp <= 0) return false;
     this.hp = Math.max(0, this.hp - n);
     this.hurtT = 0.7;
     this.regenT = 0;
@@ -126,7 +129,6 @@ export class Player {
     let mz = fz * input.forward + rz * input.right;
     const mlen = Math.hypot(mx, mz);
     this.moving = mlen > 0.05;
-    this.sprinting = this.moving && !!input.sprint && !this.flying && !this.inWater;
     if (mlen > 0) { mx /= mlen; mz /= mlen; }
 
     if (this.flying) {
@@ -185,33 +187,67 @@ export class Player {
     if (this.flying) this._wasFlying = true;
   }
 
+  /** Высота свободного полублока на пути: полный блок или низкий потолок не пускают. */
+  _slabStepTop(px, py, pz) {
+    const x0 = Math.floor(px - HW), x1 = Math.floor(px + HW - EPS);
+    const y0 = Math.floor(py), y1 = Math.floor(py + PH - EPS);
+    const z0 = Math.floor(pz - HW), z1 = Math.floor(pz + HW - EPS);
+    let top = null;
+    for (let y = y0; y <= y1; y++) {
+      for (let z = z0; z <= z1; z++) {
+        for (let x = x0; x <= x1; x++) {
+          const id = this.world.getBlock(x, y, z);
+          if (!isSolid(id)) continue;
+          const b = blockBounds(id);
+          if (px + HW <= x + b.minX || px - HW >= x + b.maxX ||
+              py + PH <= y + b.minY || py >= y + b.maxY) continue;
+          const height = y + b.maxY;
+          if (!isSlab(id) || height - py > 0.501 || height <= py) return null;
+          top = Math.max(top ?? -Infinity, height);
+        }
+      }
+    }
+    return top;
+  }
+
   _move(dt) {
+    const canStep = this.onGround && !this.flying && !this.inWater && this.vel.y <= 0;
     const step = (axis, amount) => {
       if (!amount) return;
-      // Подшаги предотвращают пролёт сквозь полублок при падении. При
-      // столкновении бинарно ищем границу, чтобы стоять ровно на высоте 0.5.
-      const dir = Math.sign(amount);
-      const count = Math.ceil(Math.abs(amount) / 0.2);
-      const part = amount / count;
-      for (let i = 0; i < count; i++) {
-        const from = this.pos[axis];
-        const p = { ...this.pos, [axis]: from + part };
-        if (!this.collides(p.x, p.y, p.z)) {
-          this.pos[axis] = p[axis];
-          continue;
-        }
-        let free = 0, blocked = Math.abs(part);
-        for (let j = 0; j < 10; j++) {
-          const mid = (free + blocked) / 2;
-          p[axis] = from + dir * mid;
-          if (this.collides(p.x, p.y, p.z)) blocked = mid;
-          else free = mid;
-        }
-        this.pos[axis] = from + dir * free;
-        this.vel[axis] = 0;
-        if (axis === 'y' && dir < 0) this.onGround = true;
-        break;
+      const p = { ...this.pos };
+      p[axis] += amount;
+      if (!this.collides(p.x, p.y, p.z)) {
+        this.pos[axis] = p[axis];
+        return;
       }
+      // На нижний полублок можно зашагнуть, если над ним нет препятствия.
+      if (canStep && (axis === 'x' || axis === 'z')) {
+        const top = this._slabStepTop(p.x, p.y, p.z);
+        if (top !== null) {
+          const raisedY = top + 0.001;
+          if (!this.collides(this.pos.x, raisedY, this.pos.z) &&
+              !this.collides(p.x, raisedY, p.z)) {
+            this.pos.y = raisedY;
+            this.pos[axis] = p[axis];
+            return;
+          }
+        }
+      }
+      // Шаг по чуть-чуть (тонкого туннеля не будет: скорость*dt < размера блока)
+      const dir = Math.sign(amount);
+      const rem = Math.abs(amount);
+      const stepSize = 0.05;
+      let moved = 0;
+      while (moved + stepSize <= rem) {
+        moved += stepSize;
+        const q = { ...this.pos };
+        q[axis] += dir * moved;
+        if (this.collides(q.x, q.y, q.z)) break;
+        this.pos[axis] = q[axis];
+      }
+      // Упираемся
+      this.vel[axis] = 0;
+      if (axis === 'y' && dir < 0) this.onGround = true;
     };
 
     this.onGround = false;
@@ -227,10 +263,15 @@ export class Player {
   }
 
   toggleFly() {
-    if (this.mode !== 'creative') return false;
+    if (!this.canFly) { this.flying = false; return false; }
     this.flying = !this.flying;
     if (this.flying) this.vel.y = 0;
     return this.flying;
+  }
+
+  /** Сброс полёта (например, при выходе из креатива) */
+  stopFly() {
+    this.flying = false;
   }
 
   serialize() {
@@ -247,8 +288,8 @@ export class Player {
     this.hp = d.hp != null ? d.hp : 20;
     if (this.hp <= 0) this.hp = this.maxHp;
     this.level = Math.max(0, d.level | 0);
-    this.xp = Math.max(0, d.xp | 0);
-    this.flying = this.mode === 'creative' && !!d.flying;
+    this.xp = Math.max(0, Math.min(this.xpNeeded() - 1, d.xp | 0));
+    this.flying = !!d.flying;
     this.vel = { x: 0, y: 0, z: 0 };
   }
 }
