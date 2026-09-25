@@ -1,5 +1,5 @@
 // Меширование вокселей: только видимые грани + ambient occlusion на вершинах
-import { BLOCKS, isOpaque, isLiquid, isDecor } from './blocks.js';
+import { BLOCKS, isOpaque, isLiquid, isDecor, isSlab, isTorch } from './blocks.js';
 import { tileUV } from './textures.js';
 
 // Яркость граней (классический «мультипликационный» свет)
@@ -102,6 +102,17 @@ export function meshChunk(THREE, world, cx, cz) {
         const def = BLOCKS[id];
         const liquid = isLiquid(id);
 
+        // Полублок — низкая плита
+        if (isSlab(id)) {
+          addSlabFaces(opaque, world, wx, y, wz, def);
+          continue;
+        }
+        // Факел — тонкий столбик со светом
+        if (isTorch(id)) {
+          addTorchQuads(opaque, world, wx, y, wz, def);
+          continue;
+        }
+
         // Декоративная растительность — два перекрёстных спрайта
         if (isDecor(id)) {
           addDecorQuads(opaque, world, wx, y, wz, def);
@@ -119,8 +130,8 @@ export function meshChunk(THREE, world, cx, cz) {
             // боковые грани воды — только против воздуха/непрозрачного выше? достаточно: не вода и не непрозрачный
           } else {
             if (isOpaque(nb)) continue;
-            // грань между двумя одинаковыми стеклянными/листьями — не рисуем
-            if (nb === id && (def.transparent || def.foliage)) continue;
+            // грань между двумя одинаковыми стеклянными/листьями/плитами — не рисуем
+            if (nb === id && (def.transparent || def.foliage || def.slab)) continue;
           }
 
           const tileIdx = def.tiles[face.face];
@@ -176,6 +187,97 @@ export function meshChunk(THREE, world, cx, cz) {
   }
 
   return { opaque, water };
+}
+
+function addSlabFaces(builder, world, wx, y, wz, def) {
+  const H = 0.5;
+  const tileIdx = def.tiles[2];
+  const [u0, v0, u1, v1] = tileUV(tileIdx);
+  // top at 0.5 if not blocked above, bottom always, sides half height
+  const faces = [
+    // top
+    { n: [0, 1, 0], pos: [[0, H, 0], [1, H, 0], [1, H, 1], [0, H, 1]], shade: FACE_SHADE.py },
+    // bottom
+    { n: [0, -1, 0], pos: [[0, 0, 1], [1, 0, 1], [1, 0, 0], [0, 0, 0]], shade: FACE_SHADE.ny },
+    // sides
+    { n: [1, 0, 0], pos: [[1, 0, 0], [1, 0, 1], [1, H, 1], [1, H, 0]], shade: FACE_SHADE.px },
+    { n: [-1, 0, 0], pos: [[0, 0, 1], [0, 0, 0], [0, H, 0], [0, H, 1]], shade: FACE_SHADE.nx },
+    { n: [0, 0, 1], pos: [[0, 0, 1], [1, 0, 1], [1, H, 1], [0, H, 1]], shade: FACE_SHADE.pz },
+    { n: [0, 0, -1], pos: [[1, 0, 0], [0, 0, 0], [0, H, 0], [1, H, 0]], shade: FACE_SHADE.nz },
+  ];
+  for (const f of faces) {
+    const n = f.n;
+    const nb = world.getBlock(wx + n[0], y + n[1], wz + n[2]);
+    // top face: if slab above or opaque block above, hide
+    if (n[1] === 1) {
+      if (isOpaque(nb) || world.getBlock(wx, y + 1, wz) !== 0 && isSlab(world.getBlock(wx, y + 1, wz))) continue;
+    } else if (n[1] === -1) {
+      if (isOpaque(nb)) continue;
+    } else {
+      if (isOpaque(nb)) continue;
+      // hide side if neighbor slab at same height
+      if (nb !== 0 && isSlab(nb)) continue;
+    }
+    const emissive = !!def.emissive;
+    const vi = [];
+    for (let i = 0; i < 4; i++) {
+      const p = [wx + f.pos[i][0], y + f.pos[i][1], wz + f.pos[i][2]];
+      // UV mapping: for top/bottom use x,z ; for sides use x,y etc
+      let u, v;
+      if (n[1] !== 0) { u = f.pos[i][0] === 0 ? u0 : u1; v = f.pos[i][2] === 0 ? v0 : v1; }
+      else if (n[0] !== 0) { u = f.pos[i][2] === 0 ? u0 : u1; v = f.pos[i][1] === 0 ? v1 : (f.pos[i][1] === H ? v0 : v1 - (v1 - v0) * 0.5); }
+      else { u = f.pos[i][0] === 0 ? u0 : u1; v = f.pos[i][1] === 0 ? v1 : v0; }
+      const shade = emissive ? 1.0 : f.shade;
+      vi.push(builder.vertex(p, u, v, shade));
+    }
+    builder.idx.push(vi[0], vi[1], vi[2], vi[0], vi[2], vi[3]);
+  }
+}
+
+function addTorchQuads(builder, world, wx, y, wz, def) {
+  const [u0, v0, u1, v1] = tileUV(def.tiles[2]);
+  const shade = 1.0; // emissive full bright
+  // тонкий стержень высотой 0.7, крест из двух плоскостей
+  const w = 0.12;
+  const cx = 0.5 - w / 2, cz = 0.5 - w / 2;
+  const cx2 = 0.5 + w / 2, cz2 = 0.5 + w / 2;
+  const y0 = 0.0, y1 = 0.62;
+  const planes = [
+    [[cx, cx], [cx2, cz2]],
+    [[cx2, cx], [cx, cz2]],
+  ];
+  // stem using torch side texture (brown) - but we use same tile: stretch
+  for (const [[ax, az], [bx, bz]] of planes) {
+    const vi = [];
+    vi.push(builder.vertex([wx + ax, y + y0, wz + az], u0, v1, shade));
+    vi.push(builder.vertex([wx + bx, y + y0, wz + bz], u1, v1, shade));
+    vi.push(builder.vertex([wx + bx, y + y1, wz + bz], u1, v0, shade));
+    vi.push(builder.vertex([wx + ax, y + y1, wz + az], u0, v0, shade));
+    builder.idx.push(vi[0], vi[1], vi[2], vi[0], vi[2], vi[3]);
+    builder.idx.push(vi[2], vi[1], vi[0], vi[3], vi[2], vi[0]);
+  }
+  // flame top - small bright quad
+  const fy0 = y1, fy1 = y1 + 0.22;
+  const fx0 = 0.5 - 0.11, fx1 = 0.5 + 0.11, fz0 = 0.5 - 0.11, fz1 = 0.5 + 0.11;
+  // flame faces as cross above stick
+  const flamePlanes = [
+    [[fx0, 0.5], [fx1, 0.5]],
+    [[0.5, fz0], [0.5, fz1]],
+  ];
+  // actually two vertical planes for flame
+  const flameVs = [
+    [[fx0, fy0, 0.5], [fx1, fy0, 0.5], [fx1, fy1, 0.5], [fx0, fy1, 0.5]],
+    [[0.5, fy0, fz0], [0.5, fy0, fz1], [0.5, fy1, fz1], [0.5, fy1, fz0]],
+  ];
+  for (const quad of flameVs) {
+    const vi = [];
+    vi.push(builder.vertex([wx + quad[0][0], y + quad[0][1], wz + quad[0][2]], u0, v1, shade));
+    vi.push(builder.vertex([wx + quad[1][0], y + quad[1][1], wz + quad[1][2]], u1, v1, shade));
+    vi.push(builder.vertex([wx + quad[2][0], y + quad[2][1], wz + quad[2][2]], u1, v0, shade));
+    vi.push(builder.vertex([wx + quad[3][0], y + quad[3][1], wz + quad[3][2]], u0, v0, shade));
+    builder.idx.push(vi[0], vi[1], vi[2], vi[0], vi[2], vi[3]);
+    builder.idx.push(vi[2], vi[1], vi[0], vi[3], vi[2], vi[0]);
+  }
 }
 
 /**

@@ -1,6 +1,6 @@
 // Физика игрока: AABB против вокселей, ходьба, прыжки, плавание, полёт
 import { CONFIG } from './config.js';
-import { isSolid, isLiquid } from './blocks.js';
+import { isSolid, isLiquid, isSlab } from './blocks.js';
 
 const HW = CONFIG.PLAYER_WIDTH / 2;
 const PH = CONFIG.PLAYER_HEIGHT;
@@ -60,7 +60,7 @@ export class Player {
     if (this.events.onHeal) this.events.onHeal(n);
   }
 
-  // Пересечение AABB с блоками
+  // Пересечение AABB с блоками (полублок — только нижние 0.5)
   collides(px, py, pz) {
     const x0 = Math.floor(px - HW), x1 = Math.floor(px + HW - EPS);
     const y0 = Math.floor(py), y1 = Math.floor(py + PH - EPS);
@@ -68,7 +68,19 @@ export class Player {
     for (let y = y0; y <= y1; y++) {
       for (let z = z0; z <= z1; z++) {
         for (let x = x0; x <= x1; x++) {
-          if (isSolid(this.world.getBlock(x, y, z))) return true;
+          const id = this.world.getBlock(x, y, z);
+          if (!isSolid(id)) continue;
+          if (isSlab(id)) {
+            const top = y + 0.5;
+            // игрок стоит ровно на верхней грани полублока — касание, не пересечение
+            if (py >= top - 1e-6) continue;
+            // игрок полностью под полублоком? полублок висит у потолка — тогда пересекается только если его низ перекрывается
+            if (py + PH <= y + 1e-6) continue;
+            // уже проверили что по Y есть перекрытие [y, top) vs [py, py+PH)
+            if (py >= top || py + PH <= y) continue;
+            return true;
+          }
+          return true;
         }
       }
     }
@@ -168,6 +180,34 @@ export class Player {
     if (this.flying) this._wasFlying = true;
   }
 
+  // есть ли перед игроком только полублок на уровне ног (на который можно зашагнуть)
+  _slabStepTop(px, py, pz) {
+    const x0 = Math.floor(px - HW), x1 = Math.floor(px + HW - EPS);
+    const y0 = Math.floor(py), y1 = Math.floor(py + PH - EPS);
+    const z0 = Math.floor(pz - HW), z1 = Math.floor(pz + HW - EPS);
+    let slabTop = null;
+    let hasFullBlocker = false;
+    for (let y = y0; y <= y1; y++) {
+      for (let z = z0; z <= z1; z++) {
+        for (let x = x0; x <= x1; x++) {
+          const id = this.world.getBlock(x, y, z);
+          if (!isSolid(id)) continue;
+          if (isSlab(id)) {
+            const top = y + 0.5;
+            if (py >= top - 1e-6) continue;
+            if (py + PH <= y + 1e-6) continue;
+            if (py >= top || py + PH <= y) continue;
+            slabTop = Math.max(slabTop ?? -Infinity, top);
+          } else {
+            hasFullBlocker = true;
+          }
+        }
+      }
+    }
+    if (hasFullBlocker) return null;
+    return slabTop;
+  }
+
   _move(dt) {
     const step = (axis, amount) => {
       if (!amount) return;
@@ -176,6 +216,24 @@ export class Player {
       if (!this.collides(p.x, p.y, p.z)) {
         this.pos[axis] = p[axis];
         return;
+      }
+      // автошаг на полублок: если впереди только полублок, поднимемся на него
+      if ((axis === 'x' || axis === 'z') && !this.flying && !this.inWater) {
+        const top = this._slabStepTop(p.x, p.y, p.z);
+        if (top !== null) {
+          const liftedY = top + 0.001;
+          // потолок над полублоком свободен?
+          if (!this.collides(p.x, liftedY, p.z) && !this.collides(this.pos.x, liftedY, this.pos.z)) {
+            this.pos.y = liftedY;
+            // пробуем снова горизонтальный шаг с новой высоты
+            if (!this.collides(p.x, this.pos.y, p.z)) {
+              this.pos[axis] = p[axis];
+              return;
+            }
+            // откат если всё равно упираемся (узкий потолок)
+            // оставляем y как есть, дальше упремся
+          }
+        }
       }
       // Шаг по чуть-чуть (тонкого туннеля не будет: скорость*dt < размера блока)
       const dir = Math.sign(amount);
@@ -200,7 +258,7 @@ export class Player {
     step('z', this.vel.z * dt);
     step('y', this.vel.y * dt);
     if (this.vel.y === 0 && this.onGround) {
-      // прилипание к земле
+      // прилипание к земле (учёт полублока)
       const q = { ...this.pos }; q.y -= 0.05;
       if (!this.collides(q.x, q.y, q.z)) this.onGround = false;
     }

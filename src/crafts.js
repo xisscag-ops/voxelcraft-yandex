@@ -11,6 +11,9 @@ const SAND = blockItem(BLOCK.SAND);
 const STONE = blockItem(BLOCK.STONE);
 const LEAVES = blockItem(BLOCK.LEAVES);
 const DIRT = blockItem(BLOCK.DIRT);
+const SLAB = blockItem(BLOCK.SLAB);
+const TORCH = blockItem(BLOCK.TORCH);
+const FURNACE = blockItem(BLOCK.FURNACE);
 
 // in — что тратится при крафте «кликом по рецепту»,
 // shapeless/patterns — как рецепт собирается в сетке крафта,
@@ -79,6 +82,30 @@ export const RECIPES = [
   {
     id: 'snow', in: { [SAND]: 1, [DIRT]: 1 }, out: { key: blockItem(BLOCK.SNOW), count: 1 },
     shapeless: { [SAND]: 1, [DIRT]: 1 },
+  },
+  {
+    id: 'slab', in: { [PLANKS]: 3 }, out: { key: SLAB, count: 6 },
+    patterns: [['AAA']], keys: { A: PLANKS },
+  },
+  {
+    id: 'torch', in: { [ITEM.COAL]: 1, [ITEM.STICK]: 1 }, out: { key: TORCH, count: 4 },
+    patterns: [['A', 'B']], keys: { A: ITEM.COAL, B: ITEM.STICK },
+  },
+  {
+    id: 'bread', in: { [ITEM.WHEAT]: 3 }, out: { key: ITEM.BREAD, count: 1 },
+    patterns: [['AAA']], keys: { A: ITEM.WHEAT },
+  },
+  {
+    id: 'furnace', in: { [COBBLE]: 8 }, out: { key: FURNACE, count: 1 },
+    patterns: [['AAA', 'A A', 'AAA']], keys: { A: COBBLE },
+  },
+  {
+    id: 'iron_ingot', in: { [ITEM.RAW_IRON]: 1, [ITEM.COAL]: 1 }, out: { key: ITEM.IRON_INGOT, count: 1 },
+    shapeless: { [ITEM.RAW_IRON]: 1, [ITEM.COAL]: 1 },
+  },
+  {
+    id: 'gold_ingot', in: { [ITEM.RAW_GOLD]: 1, [ITEM.COAL]: 1 }, out: { key: ITEM.GOLD_INGOT, count: 1 },
+    shapeless: { [ITEM.RAW_GOLD]: 1, [ITEM.COAL]: 1 },
   },
 ];
 

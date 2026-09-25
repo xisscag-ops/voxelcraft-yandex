@@ -156,10 +156,10 @@ function blinkEyes(v, dt) {
 }
 
 // ---------------------------------------------------------------- Новые мобы
-// Паук: восемь ног, два сегмента тела, красные глаза и жвала (выходит ночью)
+// Паук: восемь ног, два сегмента тела, красные глаза и жвала (выходит ночью) — теперь чёрный
 function buildSpider(mat, geoCache, eyeMat) {
-  const body = [0.26, 0.17, 0.14];
-  const dark = [0.17, 0.11, 0.1];
+  const body = [0.07, 0.07, 0.08];
+  const dark = [0.04, 0.04, 0.05];
   const g = new THREE.Group();
   const legs = [];
   for (const side of [-1, 1]) {
@@ -182,7 +182,7 @@ function buildSpider(mat, geoCache, eyeMat) {
   abdomen.position.set(0, 0.38, -0.22);
   const spots = fixedPart(mat, geoCache, 'sp-spots', 0.3, 0.24, 0.06, dark);
   spots.position.set(0, 0.44, 0.03);
-  const head = fixedPart(mat, geoCache, 'sp-head', 0.36, 0.3, 0.32, [0.32, 0.21, 0.17]);
+  const head = fixedPart(mat, geoCache, 'sp-head', 0.36, 0.3, 0.32, [0.09, 0.09, 0.10]);
   head.position.set(0, 0.36, 0.26);
   g.add(abdomen, spots, head);
   // Горящие красные глаза (материал свечения, как у Хмари)
@@ -482,55 +482,66 @@ function buildBird(mat, geoCache, ci) {
   };
 }
 
-// Хмарь — большой ночной охотник: балахон с капюшоном, светящиеся глаза,
-// оскал с зубами, когтистые лапы и рваный хвост из теней
+// Хмарь — ночной охотник: меньше ростом, но страшнее — узкое лицо, кровавый оскал
 function buildGloom(mat, geoCache, eyeMat) {
   const g = new THREE.Group();
-  const cloth = [0.105, 0.075, 0.155];     // тёмно-фиолетовая ткань — видно даже днём
-  const clothDark = [0.055, 0.04, 0.09];
+  const cloth = [0.095, 0.07, 0.145];
+  const clothDark = [0.05, 0.035, 0.085];
   const glow = { mat: eyeMat, color: [1, 1, 1] };
 
-  // Тело-балахон (расширяется книзу) + горб сверху
-  const body = fixedPart(mat, geoCache, 'gl-body', 0.66, 0.72, 0.5, cloth);
-  body.position.set(0, 0.5, 0);
-  const hem = fixedPart(mat, geoCache, 'gl-hem', 0.86, 0.2, 0.66, clothDark);
-  hem.position.set(0, 0.14, 0);
-  const hunch = fixedPart(mat, geoCache, 'gl-hunch', 0.54, 0.28, 0.44, clothDark);
-  hunch.position.set(0, 1.02, -0.06);
+  // Тело-балахон компактнее (раньше было слишком большим)
+  const body = fixedPart(mat, geoCache, 'gl-body', 0.56, 0.62, 0.44, cloth);
+  body.position.set(0, 0.44, 0);
+  const hem = fixedPart(mat, geoCache, 'gl-hem', 0.72, 0.16, 0.56, clothDark);
+  hem.position.set(0, 0.12, 0);
+  const hunch = fixedPart(mat, geoCache, 'gl-hunch', 0.46, 0.24, 0.38, clothDark);
+  hunch.position.set(0, 0.9, -0.05);
 
-  // Голова под капюшоном
-  const head = fixedPart(mat, geoCache, 'gl-head', 0.5, 0.4, 0.44, cloth);
-  head.position.set(0, 1.16, 0.02);
-  const hood = fixedPart(mat, geoCache, 'gl-hood', 0.62, 0.2, 0.56, clothDark);
-  hood.position.set(0, 1.34, -0.04);
-  const hoodTip = fixedPart(mat, geoCache, 'gl-hoodtip', 0.18, 0.24, 0.18, clothDark);
-  hoodTip.position.set(0, 1.44, -0.22);
-  hoodTip.rotation.x = 0.5;
+  // Голова уже и вытянутая, капюшон нависает зловеще
+  const head = fixedPart(mat, geoCache, 'gl-head', 0.42, 0.44, 0.38, cloth);
+  head.position.set(0, 1.02, 0.02);
+  const hood = fixedPart(mat, geoCache, 'gl-hood', 0.54, 0.18, 0.48, clothDark);
+  hood.position.set(0, 1.2, -0.04);
+  const hoodTip = fixedPart(mat, geoCache, 'gl-hoodtip', 0.15, 0.2, 0.15, clothDark);
+  hoodTip.position.set(0, 1.28, -0.19);
+  hoodTip.rotation.x = 0.55;
 
-  // Светящиеся глаза (по два с каждой стороны — жутко), под ними оскал с зубами
+  // СТРАШНОЕ ЛИЦО: огромные светящиеся глаза с узкими зрачками, кровавые подтеки, оскал шире
   const eyes = [];
   for (const s of [-1, 1]) {
-    const big = fixedPart(eyeMat, geoCache, 'gl-eye-big', 0.19, 0.14, 0.06, [1, 1, 1]);
-    big.position.set(s * 0.15, 1.22, 0.28);
-    const small = fixedPart(eyeMat, geoCache, 'gl-eye-small', 0.11, 0.08, 0.05, [1, 1, 1]);
-    small.position.set(s * 0.16, 1.06, 0.28);
-    const pupil = fixedPart(mat, geoCache, 'gl-pupil', 0.06, 0.09, 0.04, [0.02, 0.02, 0.03]);
-    pupil.position.set(s * 0.15, 1.22, 0.315);
-    g.add(big, small, pupil);
-    eyes.push(big, small, pupil);
+    const big = fixedPart(eyeMat, geoCache, 'gl-eye-big', 0.22, 0.16, 0.05, [1, 0.12, 0.12]); // кроваво-красные
+    big.position.set(s * 0.135, 1.12, 0.27);
+    const small = fixedPart(eyeMat, geoCache, 'gl-eye-small', 0.09, 0.06, 0.04, [1, 0.2, 0.15]);
+    small.position.set(s * 0.14, 0.98, 0.27);
+    const pupil = fixedPart(mat, geoCache, 'gl-pupil', 0.035, 0.13, 0.03, [0.01, 0.01, 0.02]); // вертикальная щель
+    pupil.position.set(s * 0.135, 1.12, 0.31);
+    // кровавые подтеки под глазами
+    const tear = fixedPart(mat, geoCache, 'gl-tear', 0.04, 0.18, 0.02, [0.55, 0.07, 0.07]);
+    tear.position.set(s * 0.135, 1.0, 0.295);
+    g.add(big, small, pupil, tear);
+    eyes.push(big, small, pupil, tear);
   }
-  const mouth = addMouth(g, mat, geoCache, 'gl', { y: 0.9, z: 0.29, w: 0.42, h: 0.1, teeth: 5, grin: true });
+  // широкий оскал с крупными клыками
+  const mouth = addMouth(g, mat, geoCache, 'gl', { y: 0.8, z: 0.28, w: 0.46, h: 0.12, teeth: 7, grin: true, color: [0.18, 0.04, 0.06], tooth: [0.98, 0.96, 0.88] });
+  // дополнительные клыки длиннее
+  for (const sx of [-1, 1]) {
+    const fang = fixedPart(mat, geoCache, 'gl-fang', 0.045, 0.12, 0.045, [0.98, 0.96, 0.88]);
+    fang.position.set(sx * 0.16, 0.84, 0.30);
+    fang.rotation.x = 0.35;
+    g.add(fang);
+    eyes.push(fang);
+  }
 
-  // Когтистые руки (качаются при полёте)
+  // Когтистые руки тоньше и длиннее — страшнее
   const arms = [];
   for (const s of [-1, 1]) {
-    const arm = pendulumPart(mat, geoCache, 'gl-arm', 0.14, 0.5, 0.14, cloth);
-    arm.position.set(s * 0.36, 0.86, 0.04);
-    arm.rotation.z = s * 0.25;
+    const arm = pendulumPart(mat, geoCache, 'gl-arm', 0.11, 0.46, 0.11, cloth);
+    arm.position.set(s * 0.32, 0.78, 0.04);
+    arm.rotation.z = s * 0.28;
     for (let i = -1; i <= 1; i++) {
-      const claw = fixedPart(mat, geoCache, 'gl-claw', 0.035, 0.16, 0.035, [0.62, 0.6, 0.68]);
-      claw.position.set(i * 0.06, -0.56, 0.03);
-      claw.rotation.z = i * 0.25;
+      const claw = fixedPart(mat, geoCache, 'gl-claw', 0.03, 0.14, 0.03, [0.7, 0.65, 0.72]);
+      claw.position.set(i * 0.05, -0.52, 0.02);
+      claw.rotation.z = i * 0.28;
       arm.add(claw);
     }
     arms.push(arm);
@@ -540,9 +551,9 @@ function buildGloom(mat, geoCache, eyeMat) {
   // Шипы на спине
   const spikes = [];
   for (let i = 0; i < 4; i++) {
-    const sp = fixedPart(mat, geoCache, 'gl-spike', 0.09, 0.22 - i * 0.03, 0.09, clothDark);
-    sp.position.set(0, 1.02 + i * 0.02, -0.3 - i * 0.02);
-    sp.rotation.x = -0.4 - i * 0.1;
+    const sp = fixedPart(mat, geoCache, 'gl-spike', 0.08, 0.18 - i * 0.02, 0.08, clothDark);
+    sp.position.set(0, 0.9 + i * 0.015, -0.26 - i * 0.018);
+    sp.rotation.x = -0.45 - i * 0.1;
     spikes.push(sp);
     g.add(sp);
   }
@@ -550,8 +561,8 @@ function buildGloom(mat, geoCache, eyeMat) {
   // Рваный хвост-дымка из трёх сегментов
   const wisps = [];
   for (let i = 0; i < 3; i++) {
-    const seg = fixedPart(mat, geoCache, `gl-wisp${i}`, 0.3 - i * 0.07, 0.34, 0.3 - i * 0.07, clothDark);
-    seg.position.set(Math.sin(i) * 0.08, -0.02 - i * 0.28, 0);
+    const seg = fixedPart(mat, geoCache, `gl-wisp${i}`, 0.26 - i * 0.06, 0.28, 0.26 - i * 0.06, clothDark);
+    seg.position.set(Math.sin(i) * 0.06, -0.02 - i * 0.24, 0);
     wisps.push(seg);
     g.add(seg);
   }
@@ -559,7 +570,7 @@ function buildGloom(mat, geoCache, eyeMat) {
   g.add(body, hem, hunch, head, hood, hoodTip);
   return {
     group: g, legs: [], head: null, ears: [], hop: false, gloom: true,
-    face: eyes, mouth, arms, spikes, wisps, hem, hood, scale: 1.7, blink: eyes,
+    face: eyes, mouth, arms, spikes, wisps, hem, hood, scale: 1.32, blink: eyes,
   };
 }
 
@@ -1334,8 +1345,25 @@ export class MobManager {
     return mob;
   }
 
+  _isVisibleSpawn(x, z, player) {
+    // моб виден игроку — не спавним прямо перед носом
+    const px = player.pos ? player.pos.x : player.x;
+    const pz = player.pos ? player.pos.z : player.z;
+    const yaw = player.yaw ?? 0;
+    const dx = x - px, dz = z - pz;
+    const dist = Math.hypot(dx, dz);
+    if (dist > 36) return false;
+    if (dist < 8) return true; // слишком близко всегда считаем видимым
+    const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
+    const dnx = dx / dist, dnz = dz / dist;
+    const dot = fx * dnx + fz * dnz;
+    // < 75° в стороны от взгляда считаем видимым
+    return dot > 0.26 && dist < 32;
+  }
+
   /** Рыба: ищем воду рядом с игроком */
-  trySpawnFish(playerPos) {
+  trySpawnFish(player) {
+    const playerPos = player.pos || player;
     if (this._count('fish') >= MOB_CAPS.fish) return null;
     for (let attempt = 0; attempt < 6; attempt++) {
       const ang = Math.random() * Math.PI * 2;
@@ -1347,20 +1375,24 @@ export class MobManager {
       const y = this.world.seaLevel - 1;
       if (this.world.getBlock(x, y, z) !== BLOCK.WATER) continue;
       if (this.world.getBlock(x, y + 1, z) !== BLOCK.WATER) continue;
+      if (this._isVisibleSpawn(x + 0.5, z + 0.5, player)) continue;
       return this._addMob('fish', x + 0.5, y + 0.5, z + 0.5);
     }
     return null;
   }
 
-  trySpawn(playerPos) {
+  trySpawn(player) {
+    const playerPos = player.pos || player;
     if (this.mobs.length >= this.max) return;
-    // Днём подселяем рыбу в ближайшую воду
-    if (!this.night && Math.random() < 0.4 && this.trySpawnFish(playerPos)) return;
-    for (let attempt = 0; attempt < 4; attempt++) {
+    // Днём подселяем рыбу в ближайшую воду — реже
+    if (!this.night && Math.random() < 0.25 && this.trySpawnFish(player)) return;
+    for (let attempt = 0; attempt < 8; attempt++) {
       const ang = Math.random() * Math.PI * 2;
-      const r = 16 + Math.random() * 18;
+      const r = 18 + Math.random() * 22;
       const x = playerPos.x + Math.sin(ang) * r;
       const z = playerPos.z + Math.cos(ang) * r;
+      // не спавним прямо перед глазами
+      if (this._isVisibleSpawn(x, z, player)) continue;
       const h = this.world.heightAt(Math.floor(x), Math.floor(z));
       let type = this._randomType();
       // Не превышаем лимит по каждому виду
@@ -1389,14 +1421,16 @@ export class MobManager {
     this.night = n;
   }
 
-  // Ночной спавн Хмари (и отдельный хук для тестов)
-  trySpawnGloom(playerPos) {
+  // Ночной спавн Хмари (и отдельный хук для тестов) — тоже только вне видимости
+  trySpawnGloom(player) {
+    const playerPos = player.pos || player;
     if (this.mobs.filter((m) => m.type === 'gloom').length >= 4) return null;
-    for (let attempt = 0; attempt < 6; attempt++) {
+    for (let attempt = 0; attempt < 10; attempt++) {
       const ang = Math.random() * Math.PI * 2;
-      const r = 8 + Math.random() * 10;
+      const r = 12 + Math.random() * 14;
       const x = playerPos.x + Math.sin(ang) * r;
       const z = playerPos.z + Math.cos(ang) * r;
+      if (this._isVisibleSpawn(x, z, player)) continue;
       const h = this.world.heightAt(Math.floor(x), Math.floor(z));
       if (h <= this.world.seaLevel) continue;
       return this.spawnGloomAt(x + 0.5, h + 1, z + 0.5);
@@ -1408,12 +1442,13 @@ export class MobManager {
     return this._addMob('gloom', x, y, z);
   }
 
-  update(dt, playerPos, active = true) {
-    // Спавн/деспавн
+  update(dt, player, active = true) {
+    const playerPos = player.pos || player;
+    // Спавн реже и только вне поля зрения (раз в 5-8 сек)
     this.spawnT -= dt;
     if (this.spawnT <= 0) {
-      this.spawnT = 2.5;
-      if (active) this.trySpawn(playerPos);
+      this.spawnT = 5 + Math.random() * 3.5;
+      if (active) this.trySpawn(player);
     }
     for (let i = this.mobs.length - 1; i >= 0; i--) {
       const m = this.mobs[i];

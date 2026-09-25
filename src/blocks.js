@@ -40,6 +40,9 @@ export const BLOCK = {
   // Прочее
   CACTUS: 33,
   OBSIDIAN: 34,
+  SLAB: 35,        // полублок
+  TORCH: 36,       // факел
+  FURNACE: 37,     // печка
 };
 
 // tiles: [top, bottom, side] — индексы тайлов атласа
@@ -80,6 +83,9 @@ export const BLOCKS = [
   { id: 32, name: 'spruce_leaves', solid: true, tiles: [42, 42, 42], break: 'fast', foliage: true, tool: 'wood' },
   { id: 33, name: 'cactus', solid: true, tiles: [44, 44, 43], break: 'default', tool: 'wood' },
   { id: 34, name: 'obsidian', solid: true, tiles: [45, 45, 45], break: 'slow', tool: 'stone' },
+  { id: 35, name: 'slab', solid: true, tiles: [46, 46, 46], break: 'default', tool: 'wood', slab: true },
+  { id: 36, name: 'torch', solid: false, tiles: [50, 50, 50], break: 'fast', transparent: true, torch: true, emissive: true, decor: true },
+  { id: 37, name: 'furnace', solid: true, tiles: [47, 47, 48], break: 'slow', tool: 'stone', interactive: 'furnace' },
 ];
 
 // Названия для UI
@@ -93,7 +99,7 @@ export const BLOCK_NAMES = {
     21: 'Угольная руда', 22: 'Железная руда', 23: 'Золотая руда', 24: 'Алмазная руда',
     25: 'Гравий', 26: 'Песчаник', 27: 'Лёд', 28: 'Мшистый камень',
     29: 'Берёза', 30: 'Берёзовая листва', 31: 'Ель', 32: 'Еловая хвоя',
-    33: 'Кактус', 34: 'Обсидиан',
+    33: 'Кактус', 34: 'Обсидиан', 35: 'Полублок', 36: 'Факел', 37: 'Печка',
   },
   en: {
     1: 'Grass', 2: 'Dirt', 3: 'Stone', 4: 'Cobblestone', 5: 'Sand',
@@ -104,7 +110,7 @@ export const BLOCK_NAMES = {
     21: 'Coal ore', 22: 'Iron ore', 23: 'Gold ore', 24: 'Diamond ore',
     25: 'Gravel', 26: 'Sandstone', 27: 'Ice', 28: 'Mossy stone',
     29: 'Birch log', 30: 'Birch leaves', 31: 'Spruce log', 32: 'Spruce needles',
-    33: 'Cactus', 34: 'Obsidian',
+    33: 'Cactus', 34: 'Obsidian', 35: 'Slab', 36: 'Torch', 37: 'Furnace',
   },
 };
 
@@ -116,7 +122,7 @@ export const BUILDER_PALETTE = [
   BLOCK.BIRCH_LOG, BLOCK.BIRCH_LEAVES, BLOCK.SPRUCE_LOG, BLOCK.SPRUCE_LEAVES,
   BLOCK.SANDSTONE, BLOCK.MOSSY, BLOCK.GRAVEL, BLOCK.ICE, BLOCK.CACTUS,
   BLOCK.COAL_ORE, BLOCK.IRON_ORE, BLOCK.GOLD_ORE, BLOCK.DIAMOND_ORE,
-  BLOCK.OBSIDIAN,
+  BLOCK.OBSIDIAN, BLOCK.SLAB, BLOCK.TORCH, BLOCK.FURNACE,
 ];
 
 export function isSolid(id) {
@@ -137,6 +143,13 @@ export function isLiquid(id) {
 /** Блок открывает свой интерфейс при использовании (верстак — крафт 3x3) */
 export function interactiveKind(id) {
   return (id !== 0 && BLOCKS[id] && BLOCKS[id].interactive) || null;
+}
+
+export function isSlab(id) {
+  return !!(id !== 0 && BLOCKS[id] && BLOCKS[id].slab);
+}
+export function isTorch(id) {
+  return !!(id !== 0 && BLOCKS[id] && BLOCKS[id].torch);
 }
 
 export function breakKind(id) {

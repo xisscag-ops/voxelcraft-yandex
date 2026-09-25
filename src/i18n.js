@@ -111,6 +111,13 @@ export const STRINGS = {
     hint_inventory: 'E — инвентарь и крафт',
     hint_eat: 'Яблоко: удерживайте ЛКМ, чтобы съесть (или F — сразу)',
     hint_table: '4 доски в сетке крафта → верстак: на нём открывается крафт 3×3',
+    toggle_mode: 'Сменить режим: Выживание/Креатив',
+    mode_switched_survival: 'Режим: Выживание',
+    mode_switched_creative: 'Режим: Креатив',
+    wheat_get: 'Пшеница подобрана (3 → хлеб)',
+    bread_get: 'Хлеб подобран',
+    furnace_hint: 'Печка: положи уголь + руду в крафт, чтобы получить слиток',
+    xp_get: 'Опыт получен',
   },
   en: {
     title: 'VoxelCraft',
@@ -223,6 +230,13 @@ export const STRINGS = {
     hint_inventory: 'E — inventory & crafting',
     hint_eat: 'Apple: hold LMB to eat it (or press F instantly)',
     hint_table: '4 planks in the crafting grid → crafting table with 3×3 recipes',
+    toggle_mode: 'Switch mode: Survival/Creative',
+    mode_switched_survival: 'Mode: Survival',
+    mode_switched_creative: 'Mode: Creative',
+    wheat_get: 'Wheat picked up (3 → bread)',
+    bread_get: 'Bread picked up',
+    furnace_hint: 'Furnace: put coal + ore in crafting to get ingot',
+    xp_get: 'XP gained',
   },
 };
 
