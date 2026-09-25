@@ -504,9 +504,11 @@ export class World {
         const x = Math.round(Math.cos(a) * r * 3);
         const z = Math.round(Math.sin(a) * r * 3);
         const h = this.heightAt(x, z);
-        if (h > SEA + 1) {
-          return { x: x + 0.5, y: h + 1.2, z: z + 0.5 };
-        }
+        if (h <= SEA + 1) continue;
+        // Не спавнимся над лазом в пещеру: под ногами должна быть целая порода
+        if (this.getBlock(x, h - 1, z) === BLOCK.AIR) continue;
+        if (this.getBlock(x, h - 2, z) === BLOCK.AIR) continue;
+        return { x: x + 0.5, y: h + 1.2, z: z + 0.5 };
       }
     }
     return { x: 0.5, y: H - 8, z: 0.5 };

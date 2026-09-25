@@ -828,7 +828,7 @@ function tryEat() {
   inventory.remove(ITEM.APPLE, 1);
   refreshHotbar();
   sfx.crunch();
-  player.heal(4);
+  player.heal(foodValue(ITEM.APPLE));
   ui.setHealth(player.hp, player.maxHp);
   ui.toast(i18n.t('eat_ok'), 1600);
 }

@@ -69,6 +69,11 @@ check('edit survives regen', c0b.get(0, h + 2, 0) === 10);
 // Спавн
 const spawn = world.findSpawn();
 check('spawn above water', spawn.y > 22);
+check('спавн не над лазом в пещеру', (() => {
+  const sx = Math.floor(spawn.x), sz = Math.floor(spawn.z);
+  const h = world.heightAt(sx, sz);
+  return world.getBlock(sx, h - 1, sz) !== BLOCK.AIR && world.getBlock(sx, h - 2, sz) !== BLOCK.AIR;
+})());
 
 // Сериализация правок
 const ser = world.serializeEdits();
