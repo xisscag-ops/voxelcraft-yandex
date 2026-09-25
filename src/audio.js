@@ -101,6 +101,27 @@ export class Sfx {
     this._tone({ freq: 180, dur: 0.06, gain: 0.06, type: 'triangle' });
   }
 
+  bowDraw() {
+    // Скрип дерева при натяжении
+    this._burst({ freq: 900, dur: 0.07, gain: 0.1, type: 'bandpass', q: 4, pitchDrop: 0.7 });
+  }
+
+  bowShoot(power = 1) {
+    // Щелчок тетивы + свист улетающей стрелы
+    this._tone({ freq: 900 + 500 * power, dur: 0.08, gain: 0.12, type: 'triangle', slide: -520 });
+    this._burst({ freq: 2400, dur: 0.18, gain: 0.2 * power, type: 'bandpass', q: 1.4, pitchDrop: 0.5 });
+    this._tone({ freq: 170, dur: 0.07, gain: 0.08, type: 'square', slide: -50 });
+  }
+
+  arrowHitBlock() {
+    this._burst({ freq: 1100, dur: 0.07, gain: 0.25, pitchDrop: 0.3 });
+    this._burst({ freq: 260, dur: 0.1, gain: 0.14, type: 'lowpass', pitchDrop: 0.5 });
+  }
+
+  arrowPickup() {
+    this._tone({ freq: 1050, dur: 0.05, gain: 0.07, type: 'square', slide: 180 });
+  }
+
   step(inWater = false) {
     if (inWater) this._burst({ freq: 900, dur: 0.1, gain: 0.12, type: 'bandpass', q: 3 });
     else this._burst({ freq: 420, dur: 0.06, gain: 0.1, pitchDrop: 0.5 });
@@ -252,6 +273,55 @@ export class Sfx {
     osc.start(t0); trem.start(t0);
     osc.stop(t0 + 0.95); trem.stop(t0 + 0.95);
     this._burst({ freq: 220, dur: 0.7, gain: 0.09 * vol, type: 'bandpass', q: 4, pitchDrop: 0.4 });
+  }
+
+  // ---- Новые мобы: паук, крипер, волк, рыба ----
+  bark(vol = 1) {
+    // Короткий лай: две резкие «гав»
+    this._burst({ freq: 900, dur: 0.07, gain: 0.14 * vol, type: 'bandpass', q: 1.4, pitchDrop: 0.35 });
+    setTimeout(() => this._burst({ freq: 760, dur: 0.08, gain: 0.12 * vol, type: 'bandpass', q: 1.4, pitchDrop: 0.3 }), 130);
+  }
+
+  hiss() {
+    // Шипение паука
+    this._burst({ freq: 2600, dur: 0.35, gain: 0.1, type: 'highpass', q: 0.9 });
+  }
+
+  fuse() {
+    // Крипер: нарастающее шипение перед взрывом
+    for (let i = 0; i < 5; i++) {
+      setTimeout(() => this._burst({ freq: 1800 + i * 300, dur: 0.09, gain: 0.09, type: 'highpass', q: 1.1 }), i * 130);
+    }
+  }
+
+  explode() {
+    this._burst({ freq: 220, dur: 0.55, gain: 0.5, pitchDrop: 0.25 });
+    setTimeout(() => this._burst({ freq: 90, dur: 0.5, gain: 0.35, pitchDrop: 0.4 }), 40);
+  }
+
+  flop(vol = 1) {
+    // Рыба бьётся на суше
+    this._burst({ freq: 700, dur: 0.08, gain: 0.1 * vol, type: 'bandpass', q: 1.6, pitchDrop: 0.5 });
+  }
+
+  swim(vol = 1) {
+    this._burst({ freq: 1200, dur: 0.14, gain: 0.05 * vol, type: 'bandpass', q: 1.2, pitchDrop: 0.5 });
+  }
+
+  // ---- Растения срываются мгновенно: сухой треск ----
+  grassRustle() {
+    for (let i = 0; i < 4; i++) {
+      setTimeout(() => {
+        this._burst({
+          freq: 1900 + Math.random() * 2800,
+          dur: 0.03 + Math.random() * 0.03,
+          gain: 0.16,
+          type: 'highpass',
+          q: 0.9,
+        });
+      }, i * 20 + Math.random() * 14);
+    }
+    this._burst({ freq: 3200, dur: 0.09, gain: 0.1, type: 'bandpass', q: 1.2, pitchDrop: 0.6 });
   }
 
   gloom(vol = 1) {

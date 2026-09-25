@@ -36,6 +36,7 @@ const settings = {
   sound: true,
   lang: 'ru',
   viewDistance: CONFIG.VIEW_DISTANCE,
+  fullscreen: true,               // просить полный экран и захватывать клавиши
   paletteUnlocked: false,
 };
 
@@ -85,6 +86,7 @@ const items = new ItemDrops(scene);
 // Выживание
 let attackCd = 0;
 let shakeT = 0;                  // встряска камеры при уроне
+let decorBreakCd = 0;            // пауза между мгновенными срывами растений
 let gloomT = 6;
 let gloomWarned = false;
 // Звуки мобов с затуханием по расстоянию
@@ -98,6 +100,11 @@ mobManager.onSound = (kind, dist, type) => {
   else if (kind === 'gloom') sfx.gloom(vol);
   else if (kind === 'die') sfx.mobDie();
   else if (kind === 'burn') sfx.burn();
+  else if (kind === 'hiss') sfx.hiss();
+  else if (kind === 'bark') sfx.bark(vol);
+  else if (kind === 'fuse') sfx.fuse();
+  else if (kind === 'flop') sfx.flop(vol);
+  else if (kind === 'swim') sfx.swim(vol);
 };
 
 // Счётчик построенных блоков (лидерборд Яндекса)
@@ -447,10 +454,37 @@ function hitMob(m) {
   }
 }
 
+// Трава, цветы, папоротник, клевер срываются мгновенно: сухой треск, горсть частиц,
+// без стадий трещин и без замены блока (как в Minecraft)
+function breakDecor(hit) {
+  const id = world.getBlock(hit.x, hit.y, hit.z);
+  if (!isDecor(id)) return;
+  world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
+  particles.burst(hit.x + 0.15, hit.y + 0.1, hit.z + 0.15, tileColor(BLOCKS[id].tiles[0]), 10);
+  sfx.grassRustle();
+  swingHand(0.45);
+  decorBreakCd = 0.12;
+  breakTarget = null;
+  breakProgress = 0;
+  breakQuick = false;
+  crackMesh.visible = false;
+  ui.setBreakProgress(0);
+  // В выживании сорванное растение падает в инвентарь
+  if (isSurvival()) {
+    const drop = blockDropItem(id);
+    if (drop) {
+      const left = inventory.add(drop, 1);
+      refreshHotbar();
+      if (left > 0) ui.toast(i18n.t('inv_full'), 1600);
+    }
+  }
+}
+
 function doBreak(hit) {
   if (!hit) return;
   const id = world.getBlock(hit.x, hit.y, hit.z);
   if (!id || id === BLOCK.WATER) return;
+  if (isDecor(id)) return breakDecor(hit);
   world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
   particles.burst(hit.x, hit.y, hit.z, tileColor(BLOCKS[id].tiles[0]), 16);
   sfx.breakBlock(breakKind(id));
@@ -568,6 +602,7 @@ function buildSave() {
       sound: settings.sound,
       lang: settings.lang,
       viewDistance: settings.viewDistance,
+      fullscreen: settings.fullscreen !== false,
     },
   };
 }
@@ -583,16 +618,60 @@ function attachPlayerEvents() {
     if (!isSurvival()) return;             // в креативе игрок бессмертен
     const dx = player.pos.x - mob.pos.x, dz = player.pos.z - mob.pos.z;
     const dl = Math.hypot(dx, dz) || 1;
-    if (player.hurt(3)) {
+    if (player.hurt(mob.type === 'gloom' ? 3 : 2)) {
       player.vel.x = (dx / dl) * 5;
       player.vel.z = (dz / dl) * 5;
       player.vel.y = 3;
       ui.setHealth(player.hp, player.maxHp);
     }
   };
+  // Крипер взорвался: урон по площади, разлетающиеся частицы и разрушение мягких блоков
+  mobManager.onExplode = (mob) => {
+    const ex = mob.pos.x, ey = mob.pos.y + 0.4, ez = mob.pos.z;
+    sfx.explode();
+    ui.shake();
+    shakeT = 0.55;
+    particles.burst(ex, ey, ez, 0xd8dcd8, 34);
+    particles.burst(ex, ey + 0.4, ez, 0x4a4a4a, 18);
+    // Урон игроку по расстоянию
+    if (isSurvival()) {
+      const dx = player.pos.x - ex, dy = player.pos.y + 1 - ey, dz = player.pos.z - ez;
+      const d = Math.hypot(dx, dy, dz);
+      if (d < 4.5) {
+        const dmg = Math.max(2, Math.round(7 - d));
+        const dl = Math.hypot(dx, dz) || 1;
+        if (player.hurt(dmg)) {
+          player.vel.x = (dx / dl) * 8;
+          player.vel.z = (dz / dl) * 8;
+          player.vel.y = 5;
+          ui.setHealth(player.hp, player.maxHp);
+        }
+      }
+    }
+    // Разрушаем блоки вокруг (обсидиан взрыв не берёт)
+    const R = 2;
+    const bx = Math.floor(ex), by = Math.floor(ey), bz = Math.floor(ez);
+    for (let x = bx - R; x <= bx + R; x++) {
+      for (let y = Math.max(1, by - R); y <= by + R; y++) {
+        for (let z = bz - R; z <= bz + R; z++) {
+          const dist = Math.hypot(x + 0.5 - ex, y + 0.5 - ey, z + 0.5 - ez);
+          if (dist > R + 0.4) continue;
+          const id = world.getBlock(x, y, z);
+          if (!id || id === BLOCK.WATER || id === BLOCK.OBSIDIAN) continue;
+          world.setBlock(x, y, z, BLOCK.AIR);
+        }
+      }
+    }
+    particles.burst(ex, ey, ez, 0x8a8a8a, 12);
+  };
+
   mobManager.onDeath = (mob) => {
     sfx.mobDie();
-    const color = mob.type === 'gloom' ? 0x2a2140 : 0xd03232;
+    const color = mob.type === 'gloom' ? 0x2a2140
+      : mob.type === 'creeper' ? 0x6cc24a
+        : mob.type === 'spider' ? 0x4a2f26
+          : mob.type === 'wolf' ? 0xd6d2ca
+            : mob.type === 'fish' ? 0xb8ccd8 : 0xd03232;
     particles.burst(mob.pos.x, mob.pos.y + mob.centerY(), mob.pos.z, color, 16);
   };
   items.onPickup = (kind) => {
@@ -749,6 +828,8 @@ async function startWorld(opts = {}) {
       settings.sound = data.settings.sound !== false;
       settings.lang = data.settings.lang || settings.lang;
       settings.viewDistance = data.settings.viewDistance || settings.viewDistance;
+    settings.fullscreen = data.settings.fullscreen !== false;
+    input.allowFullscreen = settings.fullscreen;
     }
     if (data.time != null) sky.setTime(data.time);
     i18n.setLang(settings.lang);
@@ -942,6 +1023,12 @@ ui.handlers.onSettingsChange = (delta) => {
     sky.viewDistance = delta.viewDistance;
     lastPlayerChunk = null; // пересобрать очередь чанков
   }
+  if (delta.fullscreen != null) {
+    input.allowFullscreen = delta.fullscreen !== false;
+    settings.fullscreen = input.allowFullscreen;
+    if (settings.fullscreen) input.enterFullscreen();
+    else { input.exitFullscreen(); ui.toast(i18n.t('fullscreen_off')); }
+  }
   saveGame();
 };
 
@@ -982,8 +1069,11 @@ input.handlers.onScroll = (dir) => {
 };
 input.handlers.onActionBreak = () => {
   if (state !== 'game') return;
+  if (findMobTarget()) return;          // тап по мобу — удар, а не ломание
   const hit = pickTarget();
   if (!hit) return;
+  // Растения срываются мгновенно, без трещин
+  if (isDecor(hit.id)) return breakDecor(hit);
   // Тап — быстрое ломание с короткой анимацией трещин
   breakTarget = { x: hit.x, y: hit.y, z: hit.z };
   breakProgress = 0;
@@ -1016,6 +1106,12 @@ document.addEventListener('pointerlockchange', () => {
     pauseGame();
   }
 });
+
+// Браузер сам вышел из полного экрана (Esc в Safari/Firefox или удержание Esc в Chrome)
+// — показываем меню паузы вместо «молчаливого» выброса из игры
+input.handlers.onFullscreenChange = (on) => {
+  if (!on && state === 'game') pauseGame();
+};
 
 function checkOrientation() {
   const portrait = window.innerHeight > window.innerWidth && input.isTouch;
@@ -1111,7 +1207,16 @@ function frame() {
 
     // Ломание: удержание ЛКМ/кнопки или быстрое по тапу (с анимацией трещин)
     let breaking = null;
-    if (hit && !mobTarget) {
+    decorBreakCd = Math.max(0, decorBreakCd - dt);
+    if (hit && !mobTarget && isDecor(hit.id)) {
+      // Растения: мгновенный срыв удержанием кнопки, трещины не показываем
+      if (input.breakHeld && decorBreakCd <= 0) breakDecor(hit);
+      breakTarget = null;
+      breakProgress = 0;
+      breakQuick = false;
+      crackMesh.visible = false;
+      ui.setBreakProgress(0);
+    } else if (hit && !mobTarget) {
       const same = breakTarget && breakTarget.x === hit.x && breakTarget.y === hit.y && breakTarget.z === hit.z;
       if (breakQuick) {
         if (same) breaking = hit;
@@ -1278,6 +1383,8 @@ function applyLoadedSettings(s) {
   settings.sound = s.sound !== false;
   settings.lang = s.lang || settings.lang;
   settings.viewDistance = s.viewDistance || settings.viewDistance;
+  settings.fullscreen = s.fullscreen !== false;
+  input.allowFullscreen = settings.fullscreen;
   i18n.setLang(settings.lang);
   sfx.setVolume(settings.sound ? settings.volume : 0);
   sfx.setEnabled(settings.sound);

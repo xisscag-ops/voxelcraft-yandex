@@ -102,7 +102,9 @@ check('AO varies (some dark, some bright)', (() => {
   return mx - mn > 0.1;
 })());
 
-// Обход треугольников: нормали верхних граней должны смотреть вверх
+// Обход треугольников: нормали верхних граней должны смотреть вверх.
+// Пещеры дают законные «потолочные» грани, поэтому верхних должно быть заметно больше,
+// но не обязательно вдвое.
 check('winding: up-facing triangles dominate', (() => {
   let up = 0, down = 0;
   for (let t = 0; t < opaque.idx.length; t += 3) {
@@ -116,7 +118,7 @@ check('winding: up-facing triangles dominate', (() => {
     if (ny > 0.5) up++;
     if (ny < -0.5) down++;
   }
-  return up > 100 && up > down * 2;
+  return up > 100 && up > down * 1.3;
 })());
 
 // Рейкаст: взгляд сверху вниз попадает в блок с нормалью +Y
@@ -131,10 +133,12 @@ check('raycast misses up to sky', (() => {
 })());
 
 // ---- Декоративная трава ----
+// Мир состоит из биомов (пустыни, горы, снег), поэтому травяные участки ищем
+// на площадке пошире — в радиусе 6 чанков они точно есть
 const wd = new World(987654);
 let decorCount = 0;
-for (let cz = -2; cz <= 2; cz++) {
-  for (let cx = -2; cx <= 2; cx++) {
+for (let cz = -6; cz <= 6; cz++) {
+  for (let cx = -6; cx <= 6; cx++) {
     const c = wd.getChunk(cx, cz);
     for (const v of c.blocks) if (v >= 15 && v <= 19) decorCount++;
   }
