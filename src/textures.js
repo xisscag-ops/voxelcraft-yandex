@@ -3,7 +3,7 @@ import { makeRng } from './noise.js';
 
 export const TILE = 16;
 export const ATLAS_COLS = 8;
-export const ATLAS_ROWS = 4;
+export const ATLAS_ROWS = 8;
 
 // Индексы тайлов
 export const T = {
@@ -16,6 +16,14 @@ export const T = {
   GRASS_TUFT: 22, FLOWER_RED: 23, FLOWER_YELLOW: 24, FERN: 25, CLOVER: 26,
   // Верстак (крафт 3x3)
   TABLE_TOP: 27, TABLE_SIDE: 28,
+  // Руды, породы камня и лёд
+  COAL_ORE: 29, IRON_ORE: 30, GOLD_ORE: 31, DIAMOND_ORE: 32,
+  GRAVEL: 33, SANDSTONE: 34, ICE: 35, MOSSY: 36,
+  // Деревья разных пород
+  BIRCH_SIDE: 37, BIRCH_TOP: 38, BIRCH_LEAVES: 39,
+  SPRUCE_SIDE: 40, SPRUCE_TOP: 41, SPRUCE_LEAVES: 42,
+  // Прочее
+  CACTUS_SIDE: 43, CACTUS_TOP: 44, OBSIDIAN: 45,
 };
 
 export const CRACK_TILES = [17, 18, 19, 20, 21];
@@ -35,6 +43,37 @@ function noisyFill(data, rng, base, vary, alpha = 255) {
         Math.max(0, Math.min(255, base[0] + v)),
         Math.max(0, Math.min(255, base[1] + v)),
         Math.max(0, Math.min(255, base[2] + v)), alpha);
+    }
+  }
+}
+
+// Вкрапления руды в каменной основе
+function oreBlobs(data, rng, color, n = 7) {
+  for (let i = 0; i < n; i++) {
+    const cx = 2 + ((rng() * 12) | 0);
+    const cy = 2 + ((rng() * 12) | 0);
+    const w = 2 + ((rng() * 2) | 0);
+    const h = 2 + ((rng() * 2) | 0);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const v = (rng() - 0.5) * 26;
+        px(data, cx + x, cy + y, color[0] + v, color[1] + v, color[2] + v);
+      }
+    }
+  }
+}
+
+// Листва с просветами
+function leavesFill(data, rng, base, holes = 0.14) {
+  noisyFill(data, rng, base, 22);
+  for (let i = 0; i < 26; i++) {
+    const x = (rng() * TILE) | 0, y = (rng() * TILE) | 0;
+    const v = (rng() - 0.5) * 34;
+    px(data, x, y, base[0] + v * 0.6, base[1] + v * 0.6, base[2] + v * 0.4);
+  }
+  for (let y = 0; y < TILE; y++) {
+    for (let x = 0; x < TILE; x++) {
+      if (rng() < holes) px(data, x, y, 0, 0, 0, 0);
     }
   }
 }
@@ -335,6 +374,128 @@ const painters = {
     for (let x = 3; x < 13; x++) px(data, x, 8, 84, 60, 36);
     for (let y = 4; y <= 7; y++) px(data, 6, y, 176, 176, 184);
     for (let y = 5; y <= 7; y++) px(data, 9, y, 124, 92, 52);
+  },
+
+// ---- Руды и камни ----
+  [T.COAL_ORE](data, rng) { painters[T.STONE](data, rng); oreBlobs(data, rng, [38, 36, 40], 8); },
+  [T.IRON_ORE](data, rng) { painters[T.STONE](data, rng); oreBlobs(data, rng, [196, 150, 118], 7); },
+  [T.GOLD_ORE](data, rng) { painters[T.STONE](data, rng); oreBlobs(data, rng, [232, 196, 76], 6); },
+  [T.DIAMOND_ORE](data, rng) { painters[T.STONE](data, rng); oreBlobs(data, rng, [110, 226, 226], 6); },
+  [T.GRAVEL](data, rng) {
+    noisyFill(data, rng, [124, 118, 112], 18);
+    for (let i = 0; i < 22; i++) {
+      const x = (rng() * TILE) | 0, y = (rng() * TILE) | 0;
+      const v = (rng() - 0.5) * 30;
+      px(data, x, y, 100 + v, 94 + v, 88 + v);
+      if (rng() < 0.5) px(data, (x + 1) % TILE, y, 146 + v, 140 + v, 134 + v);
+    }
+  },
+  [T.SANDSTONE](data, rng) {
+    noisyFill(data, rng, [220, 206, 152], 10);
+    for (const by of [3, 8, 13]) {
+      for (let x = 0; x < TILE; x++) {
+        const v = (rng() - 0.5) * 14;
+        px(data, x, by, 198 + v, 182 + v, 128 + v);
+        px(data, x, by + 1, 206 + v, 190 + v, 136 + v);
+      }
+    }
+  },
+  [T.ICE](data, rng) {
+    noisyFill(data, rng, [172, 208, 236], 10);
+    for (let i = 0; i < 10; i++) {
+      let x = (rng() * TILE) | 0, y = (rng() * TILE) | 0;
+      for (let k = 0; k < 4 + rng() * 5; k++) {
+        px(data, x, y, 210, 234, 250);
+        x = (x + (rng() < 0.5 ? 1 : 0)) % TILE;
+        y = (y - 1 + TILE) % TILE;
+      }
+    }
+  },
+  [T.MOSSY](data, rng) {
+    painters[T.COBBLE](data, rng);
+    for (let i = 0; i < 60; i++) {
+      const x = (rng() * TILE) | 0, y = (rng() * TILE) | 0;
+      if (rng() < 0.75) {
+        const v = (rng() - 0.5) * 26;
+        px(data, x, y, 74 + v, 122 + v, 58 + v);
+      }
+    }
+  },
+  // ---- Деревья разных пород ----
+  [T.BIRCH_SIDE](data, rng) {
+    noisyFill(data, rng, [219, 216, 205], 8);
+    for (let i = 0; i < 12; i++) {
+      const y = (rng() * TILE) | 0;
+      const x = (rng() * 10) | 0;
+      const w = 1 + ((rng() * 3) | 0);
+      for (let k = 0; k < w; k++) px(data, x + k, y, 66, 60, 54);
+    }
+  },
+  [T.BIRCH_TOP](data, rng) {
+    noisyFill(data, rng, [206, 198, 178], 8);
+    for (let y = 0; y < TILE; y++) {
+      for (let x = 0; x < TILE; x++) {
+        const d = Math.hypot(x - 7.5, y - 7.5);
+        if (d > 6.5) px(data, x, y, 226, 222, 210);
+        else if (((d * 1.6) | 0) % 2 === 0) {
+          const v = (rng() - 0.5) * 10;
+          px(data, x, y, 176 + v, 166 + v, 142 + v);
+        }
+      }
+    }
+  },
+  [T.BIRCH_LEAVES](data, rng) { leavesFill(data, rng, [124, 178, 84], 0.15); },
+  [T.SPRUCE_SIDE](data, rng) {
+    noisyFill(data, rng, [72, 52, 34], 10);
+    for (let x = 0; x < TILE; x++) {
+      if (rng() < 0.4) {
+        const v = (rng() - 0.5) * 14;
+        for (let y = 0; y < TILE; y++) px(data, x, y, 52 + v, 36 + v, 22 + v);
+      }
+    }
+  },
+  [T.SPRUCE_TOP](data, rng) {
+    noisyFill(data, rng, [128, 96, 62], 8);
+    for (let y = 0; y < TILE; y++) {
+      for (let x = 0; x < TILE; x++) {
+        const d = Math.hypot(x - 7.5, y - 7.5);
+        if (((d * 1.5) | 0) % 2 === 0) {
+          const v = (rng() - 0.5) * 10;
+          px(data, x, y, 96 + v, 70 + v, 44 + v);
+        }
+      }
+    }
+  },
+  [T.SPRUCE_LEAVES](data, rng) { leavesFill(data, rng, [58, 108, 72], 0.16); },
+  // ---- Кактус, верстак, обсидиан ----
+  [T.CACTUS_SIDE](data, rng) {
+    noisyFill(data, rng, [78, 142, 68], 10);
+    for (const x of [1, 5, 10, 14]) {
+      for (let y = 0; y < TILE; y++) {
+        const v = (rng() - 0.5) * 12;
+        px(data, x, y, 54 + v, 112 + v, 48 + v);
+      }
+    }
+    for (let i = 0; i < 16; i++) px(data, (rng() * TILE) | 0, (rng() * TILE) | 0, 226, 232, 210);
+  },
+  [T.CACTUS_TOP](data, rng) {
+    noisyFill(data, rng, [86, 150, 74], 10);
+    for (let y = 0; y < TILE; y++) {
+      for (let x = 0; x < TILE; x++) {
+        const d = Math.hypot(x - 7.5, y - 7.5);
+        if (d > 5.5) px(data, x, y, 58, 116, 50);
+        if (d < 3) px(data, x, y, 112, 178, 92);
+      }
+    }
+  },
+  [T.OBSIDIAN](data, rng) {
+    noisyFill(data, rng, [26, 22, 38], 8);
+    for (let i = 0; i < 14; i++) {
+      const x = (rng() * TILE) | 0, y = (rng() * TILE) | 0;
+      const v = (rng() - 0.5) * 20;
+      px(data, x, y, 62 + v, 44 + v, 108 + v);
+    }
+    for (let i = 0; i < 6; i++) px(data, (rng() * TILE) | 0, (rng() * TILE) | 0, 128, 112, 190);
   },
 };
 
