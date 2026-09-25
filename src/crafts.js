@@ -100,6 +100,10 @@ export const RECIPES = [
     id: 'furnace', in: { [COBBLE]: 8 }, out: { key: blockItem(BLOCK.FURNACE), count: 1 },
     patterns: [['AAA', 'A A', 'AAA']], keys: { A: COBBLE },
   },
+  {
+    id: 'chest', in: { [PLANKS]: 8 }, out: { key: blockItem(BLOCK.CHEST), count: 1 },
+    patterns: [['AAA', 'A A', 'AAA']], keys: { A: PLANKS },
+  },
   // Рецепты основной ветки остаются доступными и после добавления экрана печки.
   { id: 'bread', in: { [ITEM.WHEAT]: 3 }, out: { key: ITEM.BREAD, count: 1 },
     patterns: [['AAA']], keys: { A: ITEM.WHEAT } },

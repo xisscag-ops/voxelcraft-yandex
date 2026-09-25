@@ -25,6 +25,10 @@ export const T = {
   // Прочее
   CACTUS_SIDE: 43, CACTUS_TOP: 44, OBSIDIAN: 45,
   FURNACE_TOP: 46, FURNACE_SIDE: 47, FURNACE_FRONT: 48, TORCH: 49,
+  // Плотная листва для внутренних граней кроны (без просветов)
+  LEAVES_DENSE: 50, BIRCH_LEAVES_DENSE: 51, SPRUCE_LEAVES_DENSE: 52,
+  // Сундук
+  CHEST_TOP: 53, CHEST_SIDE: 54, CHEST_FRONT: 55,
 };
 
 export const CRACK_TILES = [17, 18, 19, 20, 21];
@@ -527,7 +531,65 @@ const painters = {
     }
     px(data, 8, 1, 255, 245, 151); px(data, 8, 4, 255, 248, 160);
   },
+  [T.LEAVES_DENSE](data) { denseLeaves(data, T.LEAVES); },
+  [T.BIRCH_LEAVES_DENSE](data) { denseLeaves(data, T.BIRCH_LEAVES); },
+  [T.SPRUCE_LEAVES_DENSE](data) { denseLeaves(data, T.SPRUCE_LEAVES); },
+  // ---- Сундук: доски, тёмная окантовка, крышка и железная защёлка ----
+  [T.CHEST_TOP](data, rng) {
+    chestWood(data, rng);
+    for (let i = 0; i < TILE; i++) {
+      for (const k of [0, 15]) { px(data, i, k, 74, 46, 20); px(data, k, i, 74, 46, 20); }
+    }
+  },
+  [T.CHEST_SIDE](data, rng) {
+    chestWood(data, rng);
+    for (let i = 0; i < TILE; i++) {
+      for (const k of [0, 15]) { px(data, i, k, 74, 46, 20); px(data, k, i, 74, 46, 20); }
+      px(data, i, 5, 62, 38, 16);          // щель между крышкой и корпусом
+      px(data, i, 6, 92, 58, 26);
+    }
+  },
+  [T.CHEST_FRONT](data, rng) {
+    painters[T.CHEST_SIDE](data, rng);
+    for (let y = 4; y <= 8; y++) {
+      for (let x = 6; x <= 9; x++) {
+        const rim = x === 6 || x === 9 || y === 4 || y === 8;
+        px(data, x, y, ...(rim ? [58, 58, 64] : [196, 198, 206]));
+      }
+    }
+    px(data, 7, 7, 40, 40, 44); px(data, 8, 7, 40, 40, 44);
+  },
 };
+
+function chestWood(data, rng) {
+  noisyFill(data, rng, [158, 106, 52], 12);
+  for (let y = 3; y < TILE; y += 4) {
+    for (let x = 0; x < TILE; x++) {
+      const v = (rng() - 0.5) * 10;
+      px(data, x, y, 118 + v, 76 + v, 34 + v);
+    }
+  }
+}
+
+// Плотная версия листвы: те же пиксели, просветы закрыты тёмной зеленью
+function denseLeaves(data, source) {
+  painters[source](data, makeRng(1000 + source * 77));
+  let r = 0, g = 0, b = 0, n = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] > 0) { r += data[i]; g += data[i + 1]; b += data[i + 2]; n++; }
+  }
+  r /= n || 1; g /= n || 1; b /= n || 1;
+  const rng = makeRng(4242 + source);
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] === 0) {
+      const v = 0.52 + rng() * 0.14;
+      data[i] = r * v; data[i + 1] = g * v; data[i + 2] = b * v;
+    } else {
+      data[i] *= 0.86; data[i + 1] *= 0.86; data[i + 2] *= 0.86;
+    }
+    data[i + 3] = 255;
+  }
+}
 
 // Растущие трещины: чем выше стадия, тем гуще сетка
 function drawCracks(data, rng, stage) {

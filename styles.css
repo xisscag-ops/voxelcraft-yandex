@@ -713,3 +713,25 @@ img, canvas { -webkit-user-drag: none; user-drag: none; }
   .furnace-arrow { font-size: 27px; }
   .furnace-status { font-size: 11px; }
 }
+
+/* ================= Сундук ================= */
+.inv-window.chest-open { width: min(560px, 96vw); }
+.inv-window.chest-open .inv-main { width: 100%; }
+.chest-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: rgba(92, 60, 26, 0.28);
+  border: 1px solid rgba(214, 160, 90, 0.35);
+  border-radius: 8px;
+}
+.chest-panel.hidden { display: none !important; }
+.chest-title {
+  font: 700 11px/1 'Segoe UI', sans-serif;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #e8b66a;
+}
+.chest-grid .islot { background: rgba(38, 24, 10, 0.7); border-color: rgba(232, 182, 106, 0.3); }
+.chest-grid .islot:hover { border-color: #e8b66a; }

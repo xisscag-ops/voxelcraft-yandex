@@ -1,6 +1,6 @@
 // Смоук-тест логики мира и мешера без браузера (node smoke-test.mjs)
 import { World } from './src/world.js';
-import { meshChunk, buildSkylight } from './src/mesher.js';
+import { meshChunk, buildSkylight, SKY_LIGHT_LEVELS } from './src/mesher.js';
 import { Weather, WEATHER_LIFECYCLE } from './src/weather.js';
 import * as THREEReal from 'three';
 import { ItemDrops, ITEM_MAGNET_RANGE, ITEM_PICKUP_RANGE } from './src/items.js';
@@ -38,9 +38,9 @@ const THREE = {
 };
 
 let failed = 0;
-function check(name, cond) {
+function check(name, cond, detail = '') {
   if (cond) console.log('OK  ', name);
-  else { console.log('FAIL', name); failed++; }
+  else { console.log('FAIL', name, detail ? `(${detail})` : ''); failed++; }
 }
 
 const runShakeTest = { duration: 0, strength: 0 };
@@ -194,10 +194,16 @@ const caveWorld = (withTorch) => {
 };
 const darkCaveMesh = meshChunk(THREE, caveWorld(false), 0, 0).opaque;
 const litCaveMesh = meshChunk(THREE, caveWorld(true), 0, 0).opaque;
-const caveTopShade = (mesh) => Math.max(...mesh.col.slice(24, 36));
-check('без факела закрытая пещера остаётся тёмной', caveTopShade(darkCaveMesh) < 0.2);
-check('факел локально освещает пещеру без плоского спрайта', caveTopShade(litCaveMesh) > caveTopShade(darkCaveMesh) * 5
+// Внутренние грани пещеры: пол (верх нижнего камня) и потолок (низ верхнего камня)
+const caveTopShade = (mesh) => Math.max(...mesh.col.slice(0, 12), ...mesh.col.slice(36, 48));
+const caveTorchLight = (mesh) => Math.max(...mesh.torch.slice(0, 4), ...mesh.torch.slice(12, 16));
+check('без факела закрытая пещера остаётся тёмной', caveTopShade(darkCaveMesh) < 0.2 && caveTorchLight(darkCaveMesh) === 0);
+check('факел локально освещает пещеру без плоского спрайта', caveTorchLight(litCaveMesh) > 0.3
+  && caveTorchLight(litCaveMesh) > caveTopShade(darkCaveMesh) * 5
   && litCaveMesh.pos.length === darkCaveMesh.pos.length);
+check('свет факелов — отдельный канал на каждую вершину', litCaveMesh.torch.length === litCaveMesh.pos.length / 3
+  && litCaveMesh.torch.every((v) => v >= 0 && v <= 1));
+check('свет факела не меняет небесный канал', caveTopShade(litCaveMesh) === caveTopShade(darkCaveMesh));
 
 // ---- Небесный свет: плавное затухание с глубиной и полная темнота в глубине ----
 {
@@ -214,9 +220,9 @@ check('факел локально освещает пещеру без плос
   };
   const sky = buildSkylight(tunnelWorld, 0, 0, S2, H2);
   const level = (x, y) => sky.sample(x + 0.5, y + 0.5, 11.5);
-  check('под открытым небом полный свет', level(0, 3) === 15);
-  check('свет уходит вглубь пещеры постепенно', [1, 2, 3, 4, 5, 6].every((x) => level(x, 3) === 15 - x));
-  check('через 15 блоков от входа — полная темнота', level(16, 3) === 0 && level(20, 3) === 0);
+  check('под открытым небом полный свет', level(0, 3) === SKY_LIGHT_LEVELS);
+  check('свет уходит вглубь пещеры постепенно', [1, 2, 3, 4, 5, 6, 10, 15].every((x) => level(x, 3) === SKY_LIGHT_LEVELS - x));
+  check('через 20 блоков от входа — полная темнота', level(SKY_LIGHT_LEVELS, 3) === 0 && level(21, 3) === 0);
   const sealed = { chunkSize: S2, worldHeight: H2, getBlock: (x, y, z) => (y <= 2 ? BLOCK.STONE : BLOCK.AIR) };
   const sealedSky = buildSkylight(sealed, 0, 0, S2, H2);
   check('замурованная каверна без источников света черна', sealedSky.sample(4.5, 1.5, 4.5) === 0);
@@ -548,7 +554,7 @@ check('инвентарь полон → лишнее не влезает', (() 
 
 // ---- Крафт ----
 check('рецепты без ошибок', validateRecipes().length === 0, validateRecipes().join('; '));
-check('24 рецепта (включая два топора, плиты, верстак, лук, стрелы и блоки)', RECIPES.length === 24, 'их ' + RECIPES.length);
+check('25 рецептов (включая два топора, плиты, верстак, сундук, лук, стрелы и блоки)', RECIPES.length === 25, 'их ' + RECIPES.length);
 function craftWith(input, id) {
   const i = new Inventory(CONFIG.INV_SIZE);
   for (const [k, n] of Object.entries(input)) i.add(k, n);
@@ -960,6 +966,95 @@ check('печь: разметка содержит три слота и пане
   && html.includes('data-furnace-slot="output"'));
 const css = await (await import('node:fs/promises')).readFile(new URL('./styles.css', import.meta.url), 'utf8');
 check('печь: панель имеет стили', css.includes('.furnace-layout') && css.includes('#furnace-progress-fill'));
+
+check('сундук: разметка и стили панели', html.includes('id="inv-chest-panel"') && html.includes('id="inv-chest-grid"')
+  && css.includes('.chest-panel'));
+
+// ---- Новые механики: сундук, настенные факелы, плотная листва, пещеры-«черви», свет через границу чанков ----
+{
+  const { serializeChests, deserializeChests, createChest, CHEST_SIZE } = await import('./src/chest.js');
+  const { torchSupport, wallTorchSide, WALL_TORCH_BY_SIDE, CHEST_BY_FRONT, isChest, DENSE_FOLIAGE_TILE } = await import('./src/blocks.js');
+  const { addToRange } = await import('./src/inventory-ui.js');
+
+  // Сундук: рецепт 3×3 из 8 досок, 27 ячеек, сохранение по координатам
+  const P = blockItem(BLOCK.PLANKS);
+  const ring = [P, P, P, P, null, P, P, P, P].map((k) => (k ? { key: k, count: 1 } : null));
+  check('сундук крафтится из 8 досок на верстаке', gridResult(ring, 3)?.out.key === blockItem(BLOCK.CHEST));
+  const chest = createChest();
+  chest.add(ITEM.COAL, 10);
+  chest.add(blockItem(BLOCK.STONE), 70);
+  const restored = deserializeChests(serializeChests(new Map([['1,2,3', chest], ['4,5,6', createChest()]])));
+  check('сундук: 27 ячеек и сохранение содержимого', CHEST_SIZE === 27 && restored.get('1,2,3')?.count(ITEM.COAL) === 10
+    && restored.get('1,2,3')?.count(blockItem(BLOCK.STONE)) === 70 && !restored.has('4,5,6'));
+  check('все варианты сундука — сундук, выпадает один предмет', Object.values(CHEST_BY_FRONT).every((id) => isChest(id)
+    && blockDropItem(id) === blockItem(BLOCK.CHEST) && BLOCKS[id].interactive === 'chest'));
+
+  // Быстрое перемещение в хотбар/рюкзак: сначала докладываем в стопки, потом в пустые
+  const qinv = new Inventory();
+  qinv.setStack(0, { key: blockItem(BLOCK.DIRT), count: 60 });
+  qinv.setStack(12, { key: blockItem(BLOCK.DIRT), count: 10 });
+  const left = addToRange(qinv, 0, 9, blockItem(BLOCK.DIRT), 10);
+  check('shift-перемещение: докладывает в стопки диапазона', left === 0 && qinv.get(0).count === 64 && qinv.get(1)?.count === 6);
+
+  // Настенные факелы: 4 модели, каждая держится за свою стену
+  const wallWorld = (solid) => ({ getBlock: (x, y, z) => (solid.has(`${x},${y},${z}`) ? BLOCK.STONE : BLOCK.AIR) });
+  const w4 = wallWorld(new Set(['1,0,0', '-1,0,0', '0,0,1', '0,0,-1']));
+  check('настенный факел: 4 варианта со своей стороной', ['px', 'nx', 'pz', 'nz'].every((side) =>
+    torchSupport(WALL_TORCH_BY_SIDE[side], w4, 0, 0, 0) === side && wallTorchSide(w4, 0, 0, 0, WALL_TORCH_BY_SIDE[side]) === side));
+  const onlyWest = wallWorld(new Set(['-1,0,0']));
+  check('настенный факел без своей стены теряет опору', torchSupport(WALL_TORCH_BY_SIDE.px, onlyWest, 0, 0, 0) === null
+    && torchSupport(WALL_TORCH_BY_SIDE.nx, onlyWest, 0, 0, 0) === 'nx');
+  check('настенные факелы выпадают обычным факелом', Object.values(WALL_TORCH_BY_SIDE).every((id) => blockDropItem(id) === blockItem(BLOCK.TORCH)));
+
+  // Плотная листва: внутренние грани кроны рисуются (плотной текстурой), а не пропадают
+  const leafWorld = (n) => ({ chunkSize: 4, worldHeight: 4, getBlock: (x, y, z) => (y === 1 && z === 1 && x >= 1 && x < 1 + n ? BLOCK.LEAVES : BLOCK.AIR) });
+  const oneLeaf = meshChunk(THREE, leafWorld(1), 0, 0).opaque.idx.length / 6;
+  const twoLeaves = meshChunk(THREE, leafWorld(2), 0, 0).opaque.idx.length / 6;
+  check('листва: внутренние грани между блоками кроны не выбрасываются', oneLeaf === 6 && twoLeaves === 12);
+  check('листва: для внутренних граней есть плотные тайлы', [BLOCK.LEAVES, BLOCK.BIRCH_LEAVES, BLOCK.SPRUCE_LEAVES]
+    .every((id) => DENSE_FOLIAGE_TILE[BLOCKS[id].tiles[0]] > 0));
+
+  // Свет из входа в соседнем чанке доходит сюда без обрыва на границе
+  const borderWorld = {
+    chunkSize: 16, worldHeight: 12,
+    getBlock(x, y, z) {
+      if (y < 0) return BLOCK.STONE;
+      if (y >= 12) return BLOCK.AIR;
+      if (x === -6 && z === 5) return BLOCK.AIR;         // колодец к небу в соседнем чанке
+      return y >= 6 ? BLOCK.STONE : (y >= 2 && z >= 3 && z <= 7 ? BLOCK.AIR : BLOCK.STONE);
+    },
+  };
+  const bsky = buildSkylight(borderWorld, 0, 0, 16, 12);
+  check('свет из соседнего чанка проходит через границу', bsky.sample(0.5, 3.5, 5.5) === SKY_LIGHT_LEVELS - 6
+    && bsky.sample(3.5, 3.5, 5.5) === SKY_LIGHT_LEVELS - 9);
+
+  // Пещеры конечны: не сплошной слой, а отдельные ходы на разной глубине
+  const cw = new World(777);
+  const S = CONFIG.CHUNK_SIZE;
+  let cols = 0, withCave = 0, deep = 0, high = 0;
+  for (let cx = -3; cx <= 3; cx++) {
+    for (let cz = -3; cz <= 3; cz++) {
+      const c = cw.getChunk(cx, cz);
+      for (let x = 0; x < S; x++) {
+        for (let z = 0; z < S; z++) {
+          const h = cw.heightAt(cx * S + x, cz * S + z);
+          cols++;
+          let any = false;
+          for (let y = 5; y < h - 3; y++) {
+            if (c.get(x, y, z) !== BLOCK.AIR) continue;
+            any = true;
+            if (y <= 9) deep++;
+            if (y >= 16) high++;
+          }
+          if (any) withCave++;
+        }
+      }
+    }
+  }
+  const share = withCave / cols;
+  check('пещеры: отдельные ходы, а не сплошной слой', share > 0.08 && share < 0.6, (share * 100).toFixed(1) + '% колонок');
+  check('пещеры: ходы уходят в глубину и поднимаются выше', deep > 300 && high > 100, 'глубоко ' + deep + ', высоко ' + high);
+}
 
 console.log(failed === 0 ? '\nВсе проверки пройдены' : `\nПровалено проверок: ${failed}`);
 process.exit(failed ? 1 : 0);

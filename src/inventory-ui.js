@@ -19,7 +19,7 @@ export class InventoryUI {
     this.tab = 'craft';       // 'craft' | 'catalog'
     this.gridSize = 2;        // 2 — инвентарь, 3 — верстак
     this.grid = emptyGrid(2);
-    this.station = null;      // { type: 'furnace', machine }
+    this.station = null;      // { type: 'furnace', machine } | { type: 'chest', inv }
     this._furnaceSignature = '';
     this._paint = null;       // мазок зажатой кнопкой по клеткам (как в Minecraft)
     this.handlers = {
@@ -44,6 +44,8 @@ export class InventoryUI {
       cursor: document.getElementById('cursor-item'),
       tabs: document.getElementById('inv-tabs'),
       furnacePanel: document.getElementById('inv-furnace-panel'),
+      chestPanel: document.getElementById('inv-chest-panel'),
+      chestGrid: document.getElementById('inv-chest-grid'),
       furnaceStatus: document.getElementById('furnace-status'),
       furnaceBurn: document.getElementById('furnace-burn-fill'),
       furnaceProgress: document.getElementById('furnace-progress-fill'),
@@ -175,20 +177,26 @@ export class InventoryUI {
     if (!this.inv) return;
     const els = this._els;
     const furnaceOpen = this.station?.type === 'furnace';
+    const chestOpen = this.station?.type === 'chest';
     els.window?.classList.toggle('furnace-open', furnaceOpen);
-    els.side?.classList.toggle('hidden', furnaceOpen);
-    els.craftRow?.classList.toggle('hidden', furnaceOpen);
+    els.window?.classList.toggle('chest-open', chestOpen);
+    els.side?.classList.toggle('hidden', furnaceOpen || chestOpen);
+    els.craftRow?.classList.toggle('hidden', furnaceOpen || chestOpen);
     els.furnacePanel?.classList.toggle('hidden', !furnaceOpen);
+    els.chestPanel?.classList.toggle('hidden', !chestOpen);
     if (els.modeLabel) {
       els.modeLabel.textContent = furnaceOpen
         ? this.i18n.t('furnace_title')
-        : this.i18n.t(this.creative ? 'mode_creative' : 'mode_survival');
+        : chestOpen ? this.i18n.t('chest_title')
+          : this.i18n.t(this.creative ? 'mode_creative' : 'mode_survival');
     }
     if (els.tip) {
       els.tip.textContent = furnaceOpen
         ? this.i18n.t('furnace_ui_hint')
-        : this.tab === 'catalog' ? this.i18n.t('catalog_hint') : this.i18n.t('craft_hint');
+        : chestOpen ? this.i18n.t('chest_hint')
+          : this.tab === 'catalog' ? this.i18n.t('catalog_hint') : this.i18n.t('craft_hint');
     }
+    if (chestOpen) this._renderGrid(els.chestGrid, 0, this.station.inv.size, this.station.inv, 'chest');
     // Вкладки: каталог есть только в креативе
     els.tabs?.querySelectorAll('.inv-tab').forEach((btn) => {
       const isCatalog = btn.dataset.tab === 'catalog';
@@ -271,6 +279,30 @@ export class InventoryUI {
     e.stopPropagation();
     const machine = this.station?.machine;
     if (!machine) return;
+    if (e.shiftKey && !this.carry) {
+      // Shift+клик: содержимое слота печи сразу в инвентарь
+      const slot = machine.getSlot(name);
+      if (slot) {
+        const amount = Math.min(slot.count, this.inv.spaceFor(slot.key));
+        if (amount > 0) {
+          if (name === 'output') {
+            const taken = machine.takeOutput(amount);
+            if (taken) this.inv.add(taken.key, taken.count);
+          } else {
+            const key = slot.key;
+            const rest = slot.count - amount;
+            machine.setStack(name, rest > 0 ? { key, count: rest } : null);
+            this.inv.add(key, amount);
+          }
+          this.handlers.onSound?.('pickup');
+        } else ui_toast_full();
+      }
+      this._paint = null;
+      this.render();
+      this.handlers.onChange?.();
+      this.handlers.onStationChange?.();
+      return;
+    }
     if (name === 'output') {
       const output = machine.getSlot('output');
       if (!output) return;
@@ -354,9 +386,22 @@ export class InventoryUI {
     out.onpointerdown = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      this._takeResult(e.button === 2);
+      if (e.shiftKey) this._shiftTakeResult();
+      else this._takeResult(e.button === 2);
     };
     out.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+
+  /** Shift+клик по результату: скрафтить сколько получится сразу в инвентарь */
+  _shiftTakeResult() {
+    const out = craftFromGrid(this.grid, this.gridSize, this.inv, true);
+    if (out === 'full') {
+      // На всю стопку места нет — пробуем по одному
+      if (craftFromGrid(this.grid, this.gridSize, this.inv, false) !== 'ok') { ui_toast_full(this); return; }
+    } else if (out !== 'ok') return;
+    this.handlers.onSound?.('craft');
+    this.render();
+    this.handlers.onChange?.();
   }
 
   _takeResult(all = false) {
@@ -379,21 +424,22 @@ export class InventoryUI {
     this.handlers.onChange?.();
   }
 
-  _renderGrid(container, from, to) {
-    if (!container) return;
+  _renderGrid(container, from, to, inv = this.inv, kind = 'inv') {
+    if (!container || !inv) return;
     container.innerHTML = '';
     for (let i = from; i < to; i++) {
       const slot = document.createElement('div');
       slot.className = 'islot';
       slot.dataset.index = String(i);
-      if (i < HOTBAR_SIZE && i === this.hotbarIndex) slot.classList.add('selected');
-      const stack = this.inv.get(i);
+      slot.dataset.container = kind;
+      if (kind === 'inv' && i < HOTBAR_SIZE && i === this.hotbarIndex) slot.classList.add('selected');
+      const stack = inv.get(i);
       if (stack) {
         slot.title = `${itemName(stack.key, this.i18n.lang)} ×${stack.count}\n${itemDescription(stack.key, this.i18n.lang)}`;
         const icon = itemIconEl(stack.key, 40);
         if (icon) slot.appendChild(icon);
         const def = itemDef(stack.key);
-        const infinite = this.creative && def?.kind === 'block';
+        const infinite = kind === 'inv' && this.creative && def?.kind === 'block';
         if (infinite || stack.count > 1) {
           const cnt = document.createElement('span');
           cnt.className = 'islot-count';
@@ -401,7 +447,7 @@ export class InventoryUI {
           slot.appendChild(cnt);
         }
       }
-      slot.addEventListener('pointerdown', (e) => this._onSlotDown(e, i));
+      slot.addEventListener('pointerdown', (e) => (kind === 'chest' ? this._onChestSlot(e, i) : this._onSlotDown(e, i)));
       slot.addEventListener('contextmenu', (e) => e.preventDefault());
       container.appendChild(slot);
     }
@@ -514,6 +560,13 @@ export class InventoryUI {
     e.preventDefault();
     e.stopPropagation();
     if (!this.inv) return;
+    if (e.shiftKey && !this.carry) {
+      this.quickMoveFromInventory(i);
+      this._paint = null;
+      this.render();
+      this.handlers.onChange?.();
+      return;
+    }
     if (i < HOTBAR_SIZE && e.button === 0 && !this.carry) {
       this.hotbarIndex = i;
       this.handlers.onSelect?.(i);
@@ -522,6 +575,104 @@ export class InventoryUI {
     this._startPaint('inv', i);          // зажатой кнопкой можно вести по ячейкам
     this.render();
     this.handlers.onChange?.();
+  }
+
+  /** Ячейка сундука: обычные ЛКМ/ПКМ, Shift+клик — сразу в инвентарь */
+  _onChestSlot(e, i) {
+    e.preventDefault();
+    e.stopPropagation();
+    const chest = this.station?.type === 'chest' ? this.station.inv : null;
+    if (!chest || !this.inv) return;
+    if (e.shiftKey && !this.carry) {
+      const stack = chest.get(i);
+      if (stack) {
+        const left = this.inv.add(stack.key, stack.count);
+        if (left === stack.count) ui_toast_full();
+        else {
+          chest.setStack(i, left > 0 ? { key: stack.key, count: left } : null);
+          this.handlers.onSound?.('pickup');
+        }
+      }
+      this._paint = null;
+    } else {
+      this._mutate(chest, i, e.button === 2);
+      this._startPaint('chest', i);
+    }
+    this.render();
+    this.handlers.onChange?.();
+    this.handlers.onStationChange?.();
+  }
+
+  /**
+   * Быстрое перемещение (Shift+клик) стопки из инвентаря игрока:
+   *  • открыт сундук — в сундук;
+   *  • открыта печь — в слот сырья или топлива (что подходит);
+   *  • открыт верстак — в сетку крафта;
+   *  • иначе (или некуда) — между хотбаром и рюкзаком.
+   * @returns {boolean} удалось ли что-то переложить
+   */
+  quickMoveFromInventory(i) {
+    const stack = this.inv?.get(i);
+    if (!stack) return false;
+    const key = stack.key;
+    let count = stack.count;
+    const st = this.station;
+    if (st?.type === 'chest') {
+      count = st.inv.add(key, count);
+    } else if (st?.type === 'furnace') {
+      const machine = st.machine;
+      for (const name of ['input', 'fuel']) {
+        if (count <= 0 || !machine.accepts(name, key)) continue;
+        const cur = machine.getSlot(name);
+        if (!cur) {
+          const put = Math.min(count, maxStack(key));
+          machine.setStack(name, { key, count: put });
+          count -= put;
+        } else if (cur.key === key) {
+          const put = Math.min(count, maxStack(key) - cur.count);
+          if (put > 0) { machine.setStack(name, { key, count: cur.count + put }); count -= put; }
+        }
+      }
+      if (count !== stack.count) this.handlers.onStationChange?.();
+    } else if (this.gridSize === 3) {
+      count = this._addToGrid(key, count);
+    }
+    if (count === stack.count) {
+      // Станции нет или ей не подходит предмет — хотбар ⇄ рюкзак
+      const [from, to] = i < HOTBAR_SIZE ? [HOTBAR_SIZE, this.inv.size] : [0, HOTBAR_SIZE];
+      this.inv.clearSlot(i);
+      count = addToRange(this.inv, from, to, key, count);
+      if (count > 0) {
+        // остаток возвращаем на место
+        this.inv.setStack(i, { key, count });
+        if (count === stack.count) return false;
+      }
+    } else {
+      this.inv.setStack(i, count > 0 ? { key, count } : null);
+    }
+    this.handlers.onSound?.('place');
+    return true;
+  }
+
+  /** Кладёт предметы в сетку крафта: сначала в такие же стопки, потом в пустую клетку */
+  _addToGrid(key, count) {
+    const max = maxStack(key);
+    for (let k = 0; k < this.grid.length && count > 0; k++) {
+      const c = this.grid[k];
+      if (c && c.key === key && c.count < max) {
+        const put = Math.min(count, max - c.count);
+        c.count += put;
+        count -= put;
+      }
+    }
+    for (let k = 0; k < this.grid.length && count > 0; k++) {
+      if (!this.grid[k]) {
+        const put = Math.min(count, max);
+        this.grid[k] = { key, count: put };
+        count -= put;
+      }
+    }
+    return count;
   }
 
   /** Обёртка сетки крафта в виде контейнера для общей логики кликов */
@@ -537,6 +688,18 @@ export class InventoryUI {
   _onGridCell(e, i) {
     e.preventDefault();
     e.stopPropagation();
+    if (e.shiftKey && !this.carry && this.grid[i]) {
+      // Shift+клик по клетке крафта — вернуть стопку в инвентарь
+      const s = this.grid[i];
+      const left = this.inv.add(s.key, s.count);
+      this.grid[i] = left > 0 ? { key: s.key, count: left } : null;
+      if (left > 0) ui_toast_full();
+      else this.handlers.onSound?.('pickup');
+      this._paint = null;
+      this.render();
+      this.handlers.onChange?.();
+      return;
+    }
     this._mutate(this._gridContainer(), i, e.button === 2, true);
     this._startPaint('craft', i);        // дальше можно вести курсором по клеткам
     this.render();
@@ -564,11 +727,13 @@ export class InventoryUI {
     const cell = el.closest('.craft-cell, .islot');
     if (!cell || !cell.dataset || cell.dataset.index == null) return;
     const isCraftCell = cell.classList.contains('craft-cell');
-    if ((p.kind === 'craft') !== isCraftCell) return;
+    const kind = isCraftCell ? 'craft' : cell.dataset.container === 'chest' ? 'chest' : 'inv';
+    if (p.kind !== kind) return;
     const i = Number(cell.dataset.index);
     if (!Number.isFinite(i) || p.visited.has(i)) return;
     p.visited.add(i);
-    const container = isCraftCell ? this._gridContainer() : this.inv;
+    const container = isCraftCell ? this._gridContainer()
+      : kind === 'chest' ? (this.station?.type === 'chest' ? this.station.inv : null) : this.inv;
     if (!container) return;
     // В каждую новую клетку — ровно один предмет из стопки «в руке»
     this._mutate(container, i, true, isCraftCell);
@@ -620,6 +785,27 @@ export class InventoryUI {
     this.carry = tmp;
     this.handlers.onSound?.('click');
   }
+}
+
+/** Добавить предметы только в ячейки [from, to): сначала в такие же стопки, затем в пустые */
+export function addToRange(inv, from, to, key, count) {
+  const max = maxStack(key);
+  for (let k = from; k < to && count > 0; k++) {
+    const c = inv.get(k);
+    if (c && c.key === key && c.count < max) {
+      const put = Math.min(count, max - c.count);
+      c.count += put;
+      count -= put;
+    }
+  }
+  for (let k = from; k < to && count > 0; k++) {
+    if (!inv.get(k)) {
+      const put = Math.min(count, max);
+      inv.setStack(k, { key, count: put });
+      count -= put;
+    }
+  }
+  return count;
 }
 
 // Подсказка «нет места» — выносим в отдельную функцию, чтобы не тянуть ui внутрь класса

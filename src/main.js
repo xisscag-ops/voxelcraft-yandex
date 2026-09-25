@@ -1,17 +1,18 @@
 // VoxelCraft — точка входа: игровой цикл, чанки, строительство, сохранения
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
-import { BLOCK, BLOCKS, STARTER_PALETTE, BUILDER_PALETTE, breakKind, isSolid, isDecor, isWallTorch, isTorch, wallTorchSide } from './blocks.js';
+import { BLOCK, BLOCKS, STARTER_PALETTE, BUILDER_PALETTE, breakKind, isSolid, isDecor, isTorch, isChest, isVariantBlock, wallTorchSide, WALL_TORCH_BY_SIDE, CHEST_BY_FRONT } from './blocks.js';
 import { ITEM, blockItem, blockIdOf, blockDropItem, breakTime, itemDamage, itemName, placeBlockId, isBlockItem, itemDef, foodValue } from './items.js';
 import { Inventory, HOTBAR_SIZE } from './inventory.js';
 import { craft, needsTable } from './crafts.js';
 import { Furnace, serializeFurnaces, deserializeFurnaces } from './furnace.js';
+import { createChest, serializeChests, deserializeChests } from './chest.js';
 import { InventoryUI, setFullToast } from './inventory-ui.js';
-import { itemIconCanvas } from './icons.js';
+import { itemIconCanvas, spritePixels } from './icons.js';
 import { buildAtlas, tileColor, tileTexture, CRACK_TILES } from './textures.js';
 import { World } from './world.js';
 import { migrateSave } from './save-migration.js';
-import { meshChunk } from './mesher.js';
+import { meshChunk, TORCH_LIGHT_RADIUS } from './mesher.js';
 import { MobManager } from './mobs.js';
 import { Player } from './physics.js';
 import { raycastVoxel } from './raycast.js';
@@ -53,6 +54,7 @@ let mode = 'creative';           // 'survival' | 'creative'
 let difficulty = 'normal';       // 'peaceful' | 'easy' | 'normal' | 'hard'
 let inventory = new Inventory(CONFIG.INV_SIZE);
 let furnaceStates = new Map(); // координаты печи -> сохранённая плавильная камера
+let chestStates = new Map();   // координаты сундука -> содержимое (Inventory на 27 ячеек)
 let hotbarIndex = 0;
 let saveData = null;
 let worldProfile = emptyWorldProfile();
@@ -158,10 +160,56 @@ atlasTex.generateMipmaps = false;
 atlasTex.colorSpace = THREE.SRGBColorSpace;
 
 const terrainMat = new THREE.MeshBasicMaterial({ map: atlasTex, vertexColors: true, alphaTest: 0.5 });
+// Факел в руке светит так же, как поставленный: та же формула яркости, что и
+// запечённый в вершины свет факела (см. torchBrightness в mesher.js), но считается
+// в шейдере от позиции игрока — свет едет вместе с ним.
+const heldLightUniforms = {
+  uHeldLightPos: { value: new THREE.Vector3() },
+  uHeldLight: { value: 0 },
+  uHeldLightRadius: { value: TORCH_LIGHT_RADIUS },
+};
+function addHeldLight(material) {
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, heldLightUniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+attribute float torchLight;
+varying float vTorchLight;
+varying vec3 vHeldWorldPos;`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+vTorchLight = torchLight;
+vHeldWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+varying float vTorchLight;
+varying vec3 vHeldWorldPos;
+uniform vec3 uHeldLightPos;
+uniform float uHeldLight;
+uniform float uHeldLightRadius;`)
+      // Итоговая освещённость = max(небо × оттенок времени суток, факелы).
+      // Факелы (поставленные — из вершин, в руке — по расстоянию) не зависят
+      // от времени суток: ночью светят так же, днём не пересвечивают.
+      .replace('#include <color_fragment>', `#if defined( USE_COLOR ) || defined( USE_COLOR_ALPHA )
+  float torchL = vTorchLight;
+  if (uHeldLight > 0.0) {
+    float heldD = distance(vHeldWorldPos, uHeldLightPos);
+    float heldF = clamp(1.0 - heldD / uHeldLightRadius, 0.0, 1.0);
+    vec3 heldN = normalize(cross(dFdx(vHeldWorldPos), dFdy(vHeldWorldPos)));
+    float heldShade = heldN.y > 0.5 ? 1.0 : (heldN.y < -0.5 ? 0.5 : (abs(heldN.x) > 0.5 ? 0.72 : 0.88));
+    torchL = max(torchL, heldF * heldF * heldShade * uHeldLight);
+  }
+  vec3 skyL = diffuse * vColor.rgb;
+  vec3 lightL = max(skyL, torchL * vec3(1.0, 0.93, 0.82));
+  diffuseColor.rgb = diffuseColor.rgb / max(diffuse, vec3(0.001)) * lightL;
+#endif`);
+  };
+}
+addHeldLight(terrainMat);
 const waterMat = new THREE.MeshBasicMaterial({
   map: atlasTex, vertexColors: true, transparent: true, opacity: 0.72,
   depthWrite: false, side: THREE.DoubleSide,
 });
+addHeldLight(waterMat);
 
 const sky = new Sky(THREE, scene);
 sky.viewDistance = settings.viewDistance;
@@ -171,7 +219,7 @@ const weather = new Weather(THREE, scene);
 const items = new ItemDrops(scene, {
   tileMaterial: (idx) => dropTileMaterial(idx),
   iconMaterial: (key) => dropIconMaterial(key),
-  modelFor: (key) => (blockIdOf(key) === BLOCK.TORCH || blockIdOf(key) === BLOCK.WALL_TORCH
+  modelFor: (key) => (isBlockItem(key) && isTorch(blockIdOf(key))
     ? buildDropTorchModel()
     : null),
 });
@@ -390,6 +438,72 @@ function buildToolModel(kind, tier) {
   return g;
 }
 
+// Объёмный пиксель-арт: картинка предмета из инвентаря, выдавленная в толщину
+// (каждый пиксель — брусочек 1/16). Модель в руке выглядит так же, как иконка.
+const EXTRUDED_GEOS = new Map();
+const extrudedMat = new THREE.MeshBasicMaterial({
+  vertexColors: true, transparent: true, opacity: 1, depthTest: false, depthWrite: false,
+});
+extrudedMat.userData.baseColor = 0xffffff;
+const EXTRUDE_SHADE = { front: 1, back: 0.82, top: 0.95, bottom: 0.62, left: 0.78, right: 0.7 };
+
+function extrudedGeometry(name) {
+  if (EXTRUDED_GEOS.has(name)) return EXTRUDED_GEOS.get(name);
+  const pixels = spritePixels(name);
+  if (!pixels || !pixels.length) { EXTRUDED_GEOS.set(name, null); return null; }
+  const filled = new Set(pixels.map((p) => p.x + ',' + p.y));
+  const has = (x, y) => filled.has(x + ',' + y);
+  const P = 1 / 16, D = P / 2;
+  const pos = [], col = [], idx = [];
+  const color = new THREE.Color();
+  const quad = (a, b, c, d, shade) => {
+    const base = pos.length / 3;
+    for (const v of [a, b, c, d]) {
+      pos.push(v[0], v[1], v[2]);
+      col.push(color.r * shade, color.g * shade, color.b * shade);
+    }
+    idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  };
+  for (const { x, y, color: css } of pixels) {
+    color.set(css);
+    const x0 = x * P - 0.5, x1 = x0 + P;
+    const y1 = 0.5 - y * P, y0 = y1 - P;
+    quad([x0, y0, D], [x1, y0, D], [x1, y1, D], [x0, y1, D], EXTRUDE_SHADE.front);
+    quad([x1, y0, -D], [x0, y0, -D], [x0, y1, -D], [x1, y1, -D], EXTRUDE_SHADE.back);
+    if (!has(x, y - 1)) quad([x0, y1, D], [x1, y1, D], [x1, y1, -D], [x0, y1, -D], EXTRUDE_SHADE.top);
+    if (!has(x, y + 1)) quad([x0, y0, -D], [x1, y0, -D], [x1, y0, D], [x0, y0, D], EXTRUDE_SHADE.bottom);
+    if (!has(x - 1, y)) quad([x0, y0, -D], [x0, y0, D], [x0, y1, D], [x0, y1, -D], EXTRUDE_SHADE.left);
+    if (!has(x + 1, y)) quad([x1, y0, D], [x1, y0, -D], [x1, y1, -D], [x1, y1, D], EXTRUDE_SHADE.right);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  geo.setIndex(idx);
+  // Точка хвата — низ рукояти (левый нижний угол картинки)
+  geo.translate(0.22, 0.34, 0);
+  geo.computeBoundingSphere();
+  EXTRUDED_GEOS.set(name, geo);
+  return geo;
+}
+
+/**
+ * Предмет в руке из пиксель-арта иконки. Картинка повёрнута так, что рукоять
+ * смотрит вниз в ладонь, а рабочая часть — вверх и к прицелу.
+ */
+function buildExtrudedItem(name) {
+  const geo = extrudedGeometry(name);
+  if (!geo) return null;
+  const mesh = new THREE.Mesh(geo, extrudedMat);
+  mesh.rotation.z = Math.PI / 4;          // диагональ картинки → вертикаль
+  mesh.renderOrder = 2000;
+  const g = new THREE.Group();
+  g.add(mesh);
+  g.scale.setScalar(0.55);
+  g.rotation.set(-0.18, -0.62, 0.62);
+  g.position.set(0.12, -0.25, -0.3);
+  return g;
+}
+
 /** Объёмное яблоко: плод, черенок и листик */
 function buildAppleModel() {
   const g = new THREE.Group();
@@ -425,27 +539,24 @@ function buildHeldMesh(key) {
     mesh = buildHeldTorchModel();
   } else if (def.kind === 'block') {
     const b = BLOCKS[def.block];
-    const [top, bottom, side] = b.tiles;
+    const [top, bottom, side, front = side] = b.tiles;
     const mats = [
       tileMaterial(side), tileMaterial(side),
       tileMaterial(top), tileMaterial(bottom),
-      tileMaterial(side), tileMaterial(side),
+      tileMaterial(front), tileMaterial(side),
     ];
     mesh = new THREE.Mesh(heldGeo.cube, mats);
     mesh.scale.setScalar(0.24);
     mesh.rotation.set(0.25, -0.75, 0.12);
     mesh.position.set(0.02, -0.02, -0.32);
+  } else if ((def.kind === 'tool' || def.icon === 'stick' || def.icon === 'arrow') && extrudedGeometry(def.icon)) {
+    // Инструменты, палка и стрела — выдавленная иконка: в руке та же картинка, что в инвентаре
+    mesh = buildExtrudedItem(def.icon);
   } else if (def.kind === 'tool') {
-    // Инструменты — объёмные модели: рукоять, голова, гарда. Крупнее иконки и с наклоном
     mesh = buildToolModel(def.tool, def.tier);
     mesh.scale.setScalar(0.6);
     mesh.rotation.set(-0.22, -0.55, 0.72);
     mesh.position.set(0.05, -0.08, -0.32);
-  } else if (def.icon === 'stick') {
-    mesh = buildToolModel('stick', 'wood');
-    mesh.scale.setScalar(0.55);
-    mesh.rotation.set(-0.22, -0.55, 0.78);
-    mesh.position.set(0.04, -0.07, -0.32);
   } else if (def.icon === 'apple') {
     mesh = buildAppleModel();
     mesh.scale.setScalar(0.5);
@@ -762,12 +873,12 @@ function buildTorchVisuals(cx, cz, chunk) {
   const plane = S * S;
   for (let i = 0; i < chunk.blocks.length; i++) {
     const id = chunk.blocks[i];
-    if (id !== BLOCK.TORCH && id !== BLOCK.WALL_TORCH) continue;
+    if (!BLOCKS[id]?.torch) continue;
     const x = i % S;
     const z = Math.floor(i / S) % S;
     const y = Math.floor(i / plane);
     const wx = cx * S + x, wz = cz * S + z;
-    const side = id === BLOCK.WALL_TORCH ? (wallTorchSide(world, wx, y, wz) || 'px') : null;
+    const side = BLOCKS[id].wallTorch ? (wallTorchSide(world, wx, y, wz, id) || 'px') : null;
     appendTorchVisual(root, wx, y, wz, side);
   }
   if (root.userData.torches.length) {
@@ -791,6 +902,18 @@ function updateTorchVisuals(dt) {
       torch.light.intensity = 0.85 + flicker * 0.55;
     }
   }
+}
+
+/** Факел в руке освещает мир вокруг игрока (с лёгким мерцанием, как у поставленного) */
+function updateHeldLight(now) {
+  const holding = !!(world && player && (state === 'game' || state === 'inventory')
+    && heldKey && isBlockItem(heldKey) && isTorch(blockIdOf(heldKey)));
+  const u = heldLightUniforms;
+  if (!holding) { u.uHeldLight.value = 0; return; }
+  const flicker = 0.5 + 0.5 * Math.sin(now * 0.008) * Math.cos(now * 0.0034);
+  u.uHeldLight.value = 0.9 + 0.1 * flicker;
+  const eye = player.eyePos();
+  u.uHeldLightPos.value.set(eye.x, eye.y - 0.25, eye.z);
 }
 
 function buildChunkMesh(cx, cz) {
@@ -835,7 +958,7 @@ function disposeChunkMeshes(c) {
 // Каталог креатива: все блоки (кроме воздуха и воды) и предметы
 // Настенный факел получается сам при установке факела на стену — в каталоге он не нужен
 const CATALOG_KEYS = [
-  ...BLOCKS.filter((b) => b.id !== BLOCK.AIR && b.id !== BLOCK.WATER && b.id !== BLOCK.WALL_TORCH).map((b) => blockItem(b.id)),
+  ...BLOCKS.filter((b) => b.id !== BLOCK.AIR && b.id !== BLOCK.WATER && !b.variant).map((b) => blockItem(b.id)),
   ITEM.STICK, ITEM.APPLE, ITEM.BOW, ITEM.ARROW,
   ITEM.WOOD_PICKAXE, ITEM.WOOD_AXE, ITEM.WOOD_SWORD, ITEM.STONE_PICKAXE, ITEM.STONE_AXE, ITEM.STONE_SWORD,
   ITEM.COAL, ITEM.RAW_IRON, ITEM.RAW_GOLD, ITEM.DIAMOND, ITEM.BREAD, ITEM.WHEAT, ITEM.IRON_INGOT, ITEM.GOLD_INGOT,
@@ -844,7 +967,7 @@ const CATALOG_KEYS = [
 function catalogEntries() {
   const unlocked = settings.paletteUnlocked;
   // новые блоки (полублок, факел, печка) доступны сразу, остальной строительный набор — за рекламу
-  const alwaysUnlocked = new Set([BLOCK.SLAB, BLOCK.TORCH, BLOCK.FURNACE]);
+  const alwaysUnlocked = new Set([BLOCK.SLAB, BLOCK.TORCH, BLOCK.FURNACE, BLOCK.CHEST]);
   return CATALOG_KEYS.map((key) => ({
     key,
     locked: !unlocked && isBlockItem(key) && BUILDER_PALETTE.includes(blockIdOf(key)) && !alwaysUnlocked.has(blockIdOf(key)),
@@ -1085,16 +1208,72 @@ function openFurnace(hit) {
   openInventory(2, { type: 'furnace', machine, key });
 }
 
+function openChest(hit) {
+  const key = `${hit.x},${hit.y},${hit.z}`;
+  let chest = chestStates.get(key);
+  if (!chest) {
+    chest = createChest();
+    chestStates.set(key, chest);
+  }
+  sfx.uiOk();
+  openInventory(2, { type: 'chest', inv: chest, key });
+}
+
+/** Содержимое хранилища высыпается предметами, когда его блок исчезает */
+function spillContainer(x, y, z, previous) {
+  const key = `${x},${y},${z}`;
+  const stacks = [];
+  if (isChest(previous)) {
+    const chest = chestStates.get(key);
+    if (chest) for (const s of chest.slots) if (s) stacks.push(s);
+    chestStates.delete(key);
+  } else if (previous === BLOCK.FURNACE) {
+    const machine = furnaceStates.get(key);
+    if (machine) for (const name of ['input', 'fuel', 'output']) {
+      const s = machine.getSlot(name);
+      if (s) stacks.push(s);
+    }
+    furnaceStates.delete(key);
+  }
+  for (const s of stacks) {
+    for (let n = 0; n < s.count; n++) {
+      items.spawn(x + 0.3 + Math.random() * 0.4, y + 0.4 + Math.random() * 0.3, z + 0.3 + Math.random() * 0.4, s.key);
+    }
+  }
+}
+
+/** Настенный факел: крепится к той стене, по которой кликнули */
+function wallTorchFor(hit) {
+  if (hit.nx === 1) return WALL_TORCH_BY_SIDE.nx;
+  if (hit.nx === -1) return WALL_TORCH_BY_SIDE.px;
+  if (hit.nz === 1) return WALL_TORCH_BY_SIDE.nz;
+  if (hit.nz === -1) return WALL_TORCH_BY_SIDE.pz;
+  return BLOCK.TORCH;
+}
+
+/** Сундук ставится лицевой стороной к игроку */
+function chestFacingPlayer(x, z) {
+  const dx = player.pos.x - (x + 0.5), dz = player.pos.z - (z + 0.5);
+  if (Math.abs(dx) > Math.abs(dz)) return dx > 0 ? CHEST_BY_FRONT.px : CHEST_BY_FRONT.nx;
+  return dz > 0 ? CHEST_BY_FRONT.pz : CHEST_BY_FRONT.nz;
+}
+
 function doPlace(hit) {
   if (!hit) return;
   swingHand(0.6);
+  // Shift (присед) + ПКМ по верстаку/печи/сундуку — поставить блок рядом, а не открыть меню
+  const useStation = !(input.sneak && placeBlockId(heldItem()));
   // Верстак: использование открывает крафт 3×3 (с паузой, чтобы не открывался повторно)
-  if (hit.id === BLOCK.TABLE) {
+  if (useStation && hit.id === BLOCK.TABLE) {
     if (performance.now() - tableClosedT > 400) openTable();
     return;
   }
-  if (hit.id === BLOCK.FURNACE) {
+  if (useStation && hit.id === BLOCK.FURNACE) {
     openFurnace(hit);
+    return;
+  }
+  if (useStation && isChest(hit.id)) {
+    openChest(hit);
     return;
   }
   // Прицел на траве/цветке — ставим блок на её место
@@ -1114,7 +1293,8 @@ function doPlace(hit) {
   let id = placeBlockId(held);
   if (!id) { swingHand(0.6); return; }   // в руке не блок — ставить нечего
   // Факел в стену вешается настенным вариантом — со своей моделью и наклоном
-  if (isTorch(id) && (hit.nx || hit.nz)) id = BLOCK.WALL_TORCH;
+  if (isTorch(id) && !onDecor && (hit.nx || hit.nz)) id = wallTorchFor(hit);
+  if (isChest(id)) id = chestFacingPlayer(x, z);
   if (overlap && isSolid(id)) return;
   if (isDecor(cur)) {
     // Трава автоматически ломается при установке блока
@@ -1148,6 +1328,7 @@ function buildSave() {
     seed: world.seed,
     edits: world.serializeEdits(),
     furnaces: serializeFurnaces(furnaceStates),
+    chests: serializeChests(chestStates),
     player: player.serialize(),
     time: sky.serialize(),
     blocksBuilt,
@@ -1495,6 +1676,12 @@ async function startWorld(opts = {}) {
     }
   };
   furnaceStates = data ? deserializeFurnaces(data.furnaces) : new Map();
+  chestStates = data ? deserializeChests(data.chests) : new Map();
+  world.onBlockReplaced = (x, y, z, previous, id) => {
+    if (previous === id) return;
+    if (isChest(previous) && isChest(id)) return;
+    if (isChest(previous) || previous === BLOCK.FURNACE) spillContainer(x, y, z, previous);
+  };
   player = new Player(world);
   mobManager.clear();
   items.clear();
@@ -2071,7 +2258,7 @@ function frame() {
     }
 
     // ПКМ по интерактивному блоку важнее лука: даже с луком можно открыть верстак/печь.
-    const interactiveTarget = hit && (hit.id === BLOCK.TABLE || hit.id === BLOCK.FURNACE);
+    const interactiveTarget = hit && (hit.id === BLOCK.TABLE || hit.id === BLOCK.FURNACE || isChest(hit.id));
     // Лук: удержание ПКМ (или кнопки на тач-экране) натягивает тетиву, отпускание — выстрел
     const bowSel = isBowSelected() && !interactiveTarget;
     if (bowSel && input.placeHeld) {
@@ -2189,6 +2376,7 @@ function frame() {
 
   if (state !== 'game') eat.reset();
   updateTorchVisuals(dt);
+  updateHeldLight(now);
   updateHand(dt, sky.lightLevel ?? 1);
   renderer.render(scene, camera);
 }
