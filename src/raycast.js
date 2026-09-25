@@ -1,5 +1,5 @@
 // DDA-рейкаст по вокселям с точным пересечением полублоков и узких факелов.
-import { BLOCK, blockBounds } from './blocks.js';
+import { BLOCK, blockBounds, isWallTorch, wallTorchSide } from './blocks.js';
 
 function rayBox(bounds, cell, origin, dir) {
   let enter = -Infinity, leave = Infinity;
@@ -44,7 +44,9 @@ export function raycastVoxel(world, ox, oy, oz, dx, dy, dz, maxDist) {
     const end = Math.min(nextX, nextY, nextZ, maxDist);
     const id = world.getBlock(x, y, z);
     if (id !== BLOCK.AIR && id !== BLOCK.WATER) {
-      const hit = rayBox(blockBounds(id), [x, y, z], origin, dir);
+      // Настенный факел занимает узкую часть клетки у своей стены
+      const side = isWallTorch(id) ? (wallTorchSide(world, x, y, z) || 'px') : 'px';
+      const hit = rayBox(blockBounds(id, side), [x, y, z], origin, dir);
       if (hit) {
         const at = Math.max(0, hit.enter);
         if (at >= t - 1e-6 && at <= end + 1e-6 && at <= hit.leave + 1e-6) {

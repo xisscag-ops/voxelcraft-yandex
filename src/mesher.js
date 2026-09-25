@@ -80,42 +80,138 @@ class MeshBuilder {
   }
 }
 
+// Полный уровень небесного света. Свет гаснет на 1 уровень за блок,
+// поэтому от входа в пещеру темнота наступает плавно, а через 15 блоков
+// без источников остаётся полная темнота.
+export const SKY_LIGHT_LEVELS = 15;
+
+/**
+ * Поле небесного света для чанка с запасом в один блок по сторонам.
+ * 1. Колонки, открытые небу, получают полный уровень; под первым непрозрачным
+ *    блоком свет обрывается.
+ * 2. Свет распространяется по прозрачным блокам (воздух, вода, листва, стекло)
+ *    с затуханием за блок: два-три растровых прохода по шести направлениям дают
+ *    ту же картину, что честный заливной свет, но без очереди.
+ * @returns {{ sample: (px: number, py: number, pz: number) => number }}
+ */
+export function buildSkylight(world, ox, oz, S, H) {
+  const W = S + 2;                       // область с запасом 1 блок: свет идёт из соседних чанков
+  const total = W * W * H;
+  const grid = new Uint8Array(total);    // уровень света 0..15
+  const opaque = new Uint8Array(total);  // 1 — блок не пропускает свет
+  const index = (ix, iy, iz) => (ix * W + iz) * H + iy;
+  let lowY = H, highY = -1;
+
+  for (let iz = 0; iz < W; iz++) {
+    for (let ix = 0; ix < W; ix++) {
+      const wx = ox - 1 + ix, wz = oz - 1 + iz;
+      let open = true;
+      for (let y = H - 1; y >= 0; y--) {
+        const solid = isOpaque(world.getBlock(wx, y, wz));
+        const i = index(ix, y, iz);
+        if (solid) opaque[i] = 1;
+        if (solid) open = false;
+        if (open) {
+          grid[i] = SKY_LIGHT_LEVELS;
+          if (y < lowY) lowY = y;
+          if (y > highY) highY = y;
+        }
+      }
+    }
+  }
+  if (highY < 0) {
+    return { sample: () => 0, grid, W, H };
+  }
+
+  const y0 = Math.max(0, lowY - SKY_LIGHT_LEVELS);
+  const y1 = Math.min(H - 1, highY);
+
+  // Прямой проход: свет приходит сверху и со сторон -x/-z.
+  const forwardPass = () => {
+    for (let y = y1; y >= y0; y--) {
+      for (let z = 0; z < W; z++) {
+        for (let x = 0; x < W; x++) {
+          const i = index(x, y, z);
+          if (opaque[i]) continue;
+          let v = grid[i];
+          if (x > 0) { const n = grid[i - W * H]; if (n - 1 > v) v = n - 1; }
+          if (z > 0) { const n = grid[i - H]; if (n - 1 > v) v = n - 1; }
+          if (y + 1 < H) { const n = grid[i + 1]; if (n - 1 > v) v = n - 1; }
+          if (v !== grid[i]) grid[i] = v;
+        }
+      }
+    }
+  };
+  // Обратный проход: свет со сторон +x/+z и снизу вверх (козырьки, навесы).
+  const backwardPass = () => {
+    for (let y = y0; y <= y1; y++) {
+      for (let z = W - 1; z >= 0; z--) {
+        for (let x = W - 1; x >= 0; x--) {
+          const i = index(x, y, z);
+          if (opaque[i]) continue;
+          let v = grid[i];
+          if (x + 1 < W) { const n = grid[i + W * H]; if (n - 1 > v) v = n - 1; }
+          if (z + 1 < W) { const n = grid[i + H]; if (n - 1 > v) v = n - 1; }
+          if (y > 0) { const n = grid[i - 1]; if (n - 1 > v) v = n - 1; }
+          if (v !== grid[i]) grid[i] = v;
+        }
+      }
+    }
+  };
+  forwardPass();
+  backwardPass();
+  forwardPass();
+
+  const at = (ix, iy, iz) => grid[index(ix, iy, iz)];
+  const sample = (px, py, pz) => {
+    const iy = Math.floor(py);
+    if (iy < 0) return 0;
+    if (iy >= H) return SKY_LIGHT_LEVELS;
+    // Билинейная интерполяция по горизонтали: мягкие переходы на стыке
+    // освещённой поверхности и пещеры. По вертикали — уровень своей клетки.
+    const gx = px - ox + 1;
+    const gz = pz - oz + 1;
+    const x0 = Math.min(W - 2, Math.max(0, Math.floor(gx - 0.5)));
+    const z0 = Math.min(W - 2, Math.max(0, Math.floor(gz - 0.5)));
+    const tx = Math.min(1, Math.max(0, gx - 0.5 - x0));
+    const tz = Math.min(1, Math.max(0, gz - 0.5 - z0));
+    const c00 = at(x0, iy, z0);
+    const c10 = at(x0 + 1, iy, z0);
+    const c01 = at(x0, iy, z0 + 1);
+    const c11 = at(x0 + 1, iy, z0 + 1);
+    const c0 = c00 + (c10 - c00) * tx;
+    const c1 = c01 + (c11 - c01) * tx;
+    return c0 + (c1 - c0) * tz;
+  };
+  return { sample, grid, W, H };
+}
+
+/** Яркость по уровню света: 15 → 1, 0 → 0 (в глубине — абсолютная темнота) */
+function lightBrightness(level) {
+  if (level <= 0) return 0;
+  const t = Math.min(1, level / SKY_LIGHT_LEVELS);
+  return t * t * (3 - 2 * t);   // smoothstep: ровная середина, мягкий вход и выход
+}
+
 function createLighting(world, ox, oz, S, H) {
-  const skyColumns = new Map();
+  const skylight = buildSkylight(world, ox, oz, S, H);
   const torches = [];
   // Правки мира — быстрый источник факелов; при пересборке чанк уже знает их позиции.
   if (world.edits?.[Symbol.iterator]) {
     for (const [key, id] of world.edits) {
-      if (id !== BLOCK.TORCH) continue;
+      if (id !== BLOCK.TORCH && id !== BLOCK.WALL_TORCH) continue;
       const [x, y, z] = key.split(',').map(Number);
       if (x < ox - 9 || x > ox + S + 9 || z < oz - 9 || z > oz + S + 9) continue;
       torches.push({ x: x + 0.5, y: y + 0.72, z: z + 0.5 });
     }
   }
 
-  function skyVisibleAt(px, py, pz, normal) {
-    // Чуть выносим пробу за грань, чтобы не считать сам блок преградой для света.
-    const bx = Math.floor(px + normal[0] * 0.02);
-    const by = Math.floor(py + normal[1] * 0.02);
-    const bz = Math.floor(pz + normal[2] * 0.02);
-    if (by >= H) return 1;
-    if (by < 0) return 0.1;
-    const key = `${bx},${bz}`;
-    let column = skyColumns.get(key);
-    if (!column) {
-      column = new Uint8Array(H);
-      let blocked = false;
-      for (let y = H - 1; y >= 0; y--) {
-        if (isOpaque(world.getBlock(bx, y, bz))) blocked = true;
-        column[y] = blocked ? 0 : 1;
-      }
-      skyColumns.set(key, column);
-    }
-    return column[by] ? 1 : 0.1;
-  }
-
   return (p, normal, skyProbe = p) => {
-    let brightness = skyVisibleAt(skyProbe[0], skyProbe[1], skyProbe[2], normal);
+    let brightness = lightBrightness(skylight.sample(
+      skyProbe[0] + (normal[0] || 0) * 0.02,
+      skyProbe[1] + (normal[1] || 0) * 0.02,
+      skyProbe[2] + (normal[2] || 0) * 0.02,
+    ));
     for (const torch of torches) {
       const d = Math.hypot(p[0] - torch.x, p[1] - torch.y, p[2] - torch.z);
       if (d >= 8.5) continue;

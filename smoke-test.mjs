@@ -1,6 +1,6 @@
 // Смоук-тест логики мира и мешера без браузера (node smoke-test.mjs)
 import { World } from './src/world.js';
-import { meshChunk } from './src/mesher.js';
+import { meshChunk, buildSkylight } from './src/mesher.js';
 import { Weather, WEATHER_LIFECYCLE } from './src/weather.js';
 import * as THREEReal from 'three';
 import { ItemDrops, ITEM_MAGNET_RANGE, ITEM_PICKUP_RANGE } from './src/items.js';
@@ -161,13 +161,14 @@ check('uv count matches', opaque.uv.length / 2 === opaque.pos.length / 3);
 check('color count matches', opaque.col.length === opaque.pos.length);
 check('triangles in groups of 3', opaque.idx.length % 3 === 0);
 check('no NaN in positions', !opaque.pos.some((v) => Number.isNaN(v)));
-check('shades in range', opaque.col.every((v) => v >= 0.015 && v <= 4.1));
+check('shades in range', opaque.col.every((v) => v >= 0 && v <= 4.1));
 const topSlabMesh = meshChunk(THREE, {
   chunkSize: 1, worldHeight: 4, getBlock: (x, y, z) => x === 0 && z === 0 && y === 2 ? BLOCK.PLANK_SLAB_TOP : BLOCK.AIR,
 }, 0, 0).opaque;
 const topSlabYs = topSlabMesh.pos.filter((_, i) => i % 3 === 1);
 check('верхняя плита занимает верхнюю половину блока', Math.min(...topSlabYs) === 2.5 && Math.max(...topSlabYs) === 3);
 
+// Замкнутая пещера: колодец в скале, со всех сторон камень — свету взяться неоткуда
 const caveWorld = (withTorch) => {
   const blocks = new Map([
     ['0,1,0', BLOCK.STONE],
@@ -185,7 +186,9 @@ const caveWorld = (withTorch) => {
     getBlock(x, y, z) {
       if (y < 0) return BLOCK.SLATE;
       if (y >= 6) return BLOCK.AIR;
-      return blocks.get(`${Math.floor(x)},${y},${Math.floor(z)}`) || BLOCK.AIR;
+      // Порода вокруг колодца: сюда небесный свет не добирается
+      if (Math.floor(x) !== 0 || Math.floor(z) !== 0) return BLOCK.STONE;
+      return blocks.get(`0,${y},0`) || BLOCK.AIR;
     },
   };
 };
@@ -195,6 +198,29 @@ const caveTopShade = (mesh) => Math.max(...mesh.col.slice(24, 36));
 check('без факела закрытая пещера остаётся тёмной', caveTopShade(darkCaveMesh) < 0.2);
 check('факел локально освещает пещеру без плоского спрайта', caveTopShade(litCaveMesh) > caveTopShade(darkCaveMesh) * 5
   && litCaveMesh.pos.length === darkCaveMesh.pos.length);
+
+// ---- Небесный свет: плавное затухание с глубиной и полная темнота в глубине ----
+{
+  const S2 = 22, H2 = 12;
+  // Широкий горизонтальный ход: слева открытая колонка (полный свет), дальше — под скалой
+  const tunnelWorld = {
+    chunkSize: S2,
+    worldHeight: H2,
+    getBlock(x, y, z) {
+      if (y < 0) return BLOCK.STONE;
+      if (y >= H2) return BLOCK.AIR;
+      return Math.floor(x) === 0 ? BLOCK.AIR : (y >= 6 ? BLOCK.STONE : BLOCK.AIR);
+    },
+  };
+  const sky = buildSkylight(tunnelWorld, 0, 0, S2, H2);
+  const level = (x, y) => sky.sample(x + 0.5, y + 0.5, 11.5);
+  check('под открытым небом полный свет', level(0, 3) === 15);
+  check('свет уходит вглубь пещеры постепенно', [1, 2, 3, 4, 5, 6].every((x) => level(x, 3) === 15 - x));
+  check('через 15 блоков от входа — полная темнота', level(16, 3) === 0 && level(20, 3) === 0);
+  const sealed = { chunkSize: S2, worldHeight: H2, getBlock: (x, y, z) => (y <= 2 ? BLOCK.STONE : BLOCK.AIR) };
+  const sealedSky = buildSkylight(sealed, 0, 0, S2, H2);
+  check('замурованная каверна без источников света черна', sealedSky.sample(4.5, 1.5, 4.5) === 0);
+}
 
 check('ясная погода длится дольше дождя', WEATHER_LIFECYCLE.clear[0] > WEATHER_LIFECYCLE.rain[1] * 2);
 const weatherScene = new THREEReal.Scene();
@@ -273,7 +299,8 @@ check('raycast misses up to sky', (() => {
             }
             if (b === BLOCK.SLATE && c.get(x, y + 1, z) === BLOCK.AIR) spikes++;
           }
-          if (h > SEA + 2 && c.get(x, h - 1, z) === BLOCK.AIR && c.get(x, h - 2, z) === BLOCK.AIR) mouths++;
+          // вход открыт сверху: дёрн снят, под ним пустота
+          if (h > SEA + 2 && c.get(x, h, z) === BLOCK.AIR && c.get(x, h - 1, z) === BLOCK.AIR) mouths++;
         }
       }
     }
@@ -283,6 +310,100 @@ check('raycast misses up to sky', (() => {
   check('пещеры: воздух распределён по глубине', deepHollow > 200, 'считано ' + deepHollow);
   check('пещеры: есть входы с поверхности', mouths >= 2, 'входов ' + mouths + ' на ' + columns + ' колонок');
   check('пещеры: в залах есть натёки из сланца', spikes > 10, 'натёков ' + spikes);
+
+  // Входы должны быть проходимы: внутри лаза — ступени по 1–2 блока вниз,
+  // а не отвесная яма до самого пола пещеры
+  const airAt = (c, x, y, z) => c.get(x, y, z) === BLOCK.AIR;
+  const solidAt = (c, x, y, z) => {
+    const b = c.get(x, y, z);
+    return b !== BLOCK.AIR && b !== BLOCK.WATER && b !== BLOCK.ICE;
+  };
+  let mouths2 = 0, walkable = 0, worstStep = 0;
+  for (let cx = -2; cx <= 2; cx++) {
+    for (let cz = -2; cz <= 2; cz++) {
+      const c = cw.getChunk(cx, cz);
+      const ox = cx * S, oz = cz * S;
+      for (let x = 0; x < S; x++) {
+        for (let z = 0; z < S; z++) {
+          const h = cw.heightAt(ox + x, oz + z);
+          if (h <= SEA + 2) continue;
+          if (!airAt(c, x, h, z) || !airAt(c, x, h - 1, z) || !airAt(c, x, h - 2, z)) continue;
+          mouths2++;
+          let bestSteps = 0, bestStep = 0;
+          for (const gx of [x - 1, x]) {
+            for (const gz of [z - 1, z]) {
+              if (gx < 0 || gz < 0 || gx + 1 >= S || gz + 1 >= S) continue;
+              const cols = [[gx, gz], [gx + 1, gz], [gx, gz + 1], [gx + 1, gz + 1]];
+              let top = 0;
+              for (const [px, pz] of cols) top = Math.max(top, cw.heightAt(ox + px, oz + pz));
+              let y = top - 1, steps = 0, maxStep = 0;
+              while (steps < 40) {
+                let drop = 0;
+                for (const d of [1, 2]) {
+                  if (y - d < 3) continue;
+                  const found = cols.some(([px, pz]) => solidAt(c, px, y - d, pz)
+                    && airAt(c, px, y - d + 1, pz) && airAt(c, px, y - d + 2, pz));
+                  if (found) { drop = d; break; }
+                }
+                if (!drop) break;
+                maxStep = Math.max(maxStep, drop);
+                y -= drop;
+                steps++;
+              }
+              if (steps > bestSteps) { bestSteps = steps; bestStep = maxStep; }
+            }
+          }
+          if (bestSteps >= 4) walkable++;
+          if (bestStep > worstStep) worstStep = bestStep;
+        }
+      }
+    }
+  }
+  check('пещеры: входы со ступенями, а не отвесные ямы',
+    mouths2 > 0 && walkable === mouths2 && worstStep <= 2,
+    'входов ' + mouths2 + ', со ступенями ' + walkable + ', худший шаг ' + worstStep);
+
+  // Пол пещер выровнен: глубокие ямы рядом с проходимым полом — редкость,
+  // спускаться и подниматься можно ступенями (это требование «без резких перепадов»)
+  const solidW = (wx, wy, wz) => {
+    const b = cw.getBlock(wx, wy, wz);
+    return b !== BLOCK.AIR && b !== BLOCK.WATER && b !== BLOCK.ICE;
+  };
+  let stand = 0, deepPits = 0, deepest = 0;
+  for (let cx = -2; cx <= 2; cx++) {
+    for (let cz = -2; cz <= 2; cz++) {
+      const ox = cx * S, oz = cz * S;
+      for (let x = 0; x < S; x++) {
+        for (let z = 0; z < S; z++) {
+          const wx = ox + x, wz = oz + z;
+          const h = cw.heightAt(wx, wz);
+          if (cw.getBlock(wx, h - 1, wz) === BLOCK.AIR) continue;     // колонна лаза — не пол пещеры
+          for (let y = 5; y < Math.min(42, h - 3); y++) {
+            if (cw.getBlock(wx, y, wz) !== BLOCK.AIR || !solidW(wx, y - 1, wz)) continue;
+            if (cw.getBlock(wx, y + 1, wz) !== BLOCK.AIR) continue;
+            stand++;
+            for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+              const nx = wx + dx, nz = wz + dz;
+              if (cw.heightAt(nx, nz) <= y) continue;
+              if (cw.getBlock(nx, y, nz) !== BLOCK.AIR || cw.getBlock(nx, y - 1, nz) !== BLOCK.AIR) continue;
+              let floor = -1;
+              for (let ny = y - 1; ny > 2; ny--) {
+                if (solidW(nx, ny, nz)) { floor = ny + 1; break; }
+                if (cw.getBlock(nx, ny, nz) === BLOCK.WATER) { floor = -2; break; }
+              }
+              if (floor < 0) continue;
+              const d = y - floor;
+              if (d > deepest) deepest = d;
+              if (d >= 5) deepPits++;
+            }
+          }
+        }
+      }
+    }
+  }
+  check('пещеры: рядом с полом почти нет глубоких ям',
+    stand > 500 && deepPits / stand < 0.01 && deepest <= 8,
+    'мест ' + stand + ', глубоких ям ' + deepPits + ' (' + (100 * deepPits / stand).toFixed(2) + '%), глубочайшая ' + deepest);
 
   // Пещеры детерминированы: тот же сид — тот же мир
   const cw2 = new World(4242);
@@ -783,17 +904,44 @@ check('лук не стакается', maxStack(ITEM.BOW) === 1);
     return mx - mn > 0.5 && mxHead - mnHead > 0.01;
   })());
 
-  // Смерть: не исчезает мгновенно, а заваливается на бок и только потом убирается
-  const dead = new mobs.Mob(flat, { group: new THREE.Group(), legs: [], head: null, ears: [] }, 'spider', 0.5, 31, 0.5);
-  dead.hurt(99);
+  // Смерть: долгая анимация — моб краснеет, заваливается на бок и только потом убирается
+  const mkDead = () => {
+    const d = new mobs.Mob(flat, mobs.makeMobVisuals('spider'), 'spider', 0.5, 31, 0.5);
+    d.hurt(99);
+    return d;
+  };
+  const dead = mkDead();
   check('смертельный урон включает анимацию, а не мгновенное исчезновение', dead.dying === 0 && !dead.dead);
+  check('умирающий моб становится красным', dead.hurtMats.size > 0
+    && [...dead.hurtMats.values()].every((m) => m.color.r > m.color.g && m.color.r > m.color.b));
   const baseScale = dead.v.group.scale.x;
-  dead.updateDeath(0.35);
-  dead.updateDeath(0.35);                       // почти вся анимация (~0.75 с)
+  dead.updateDeath(mobs.MOB_DEATH_TIME * 0.62);     // к этому времени моб уже лежит
   const tilt = Math.abs(dead.v.group.rotation.z);
+  const midRed = [...dead.hurtMats.values()][0]?.color.r ?? 0;
   check('моб заваливается на бок', tilt > 1 && dead.v.group.scale.x < baseScale && !dead.dead);
-  for (let i = 0; i < 60 && !dead.dead; i++) dead.updateDeath(1 / 60);
+  check('анимация смерти длится дольше вспышки урона', mobs.MOB_DEATH_TIME >= 1.5);
+  dead.updateDeath(mobs.MOB_DEATH_TIME);            // анимация доводится до конца
   check('после анимации моб убирается из мира', dead.dead);
+  const endRed = [...dead.hurtMats.values()][0]?.color.r ?? 0;
+  check('моб темнеет к концу анимации смерти', endRed > 0.2 && endRed < midRed);
+
+  // Отсчёт падения не превращается в «урон из ниоткуда»: заплыв и полёт его сбрасывают
+  const swimWorld = { getBlock: (x, y, z) => (y <= 0 ? BLOCK.STONE : BLOCK.WATER) };
+  const swimmer = new Player(swimWorld);
+  swimmer.pos.y = 8;
+  for (let i = 0; i < 240; i++) swimmer.update({ forward: 0, right: 0, jump: 0, sneak: 0, sprint: false }, 1 / 60);
+  check('в воде урон от падения не накапливается', swimmer.hp === 20 && swimmer._fallFrom === null);
+  const flyer = new Player(swimWorld);
+  flyer.pos.y = 40;
+  flyer.toggleFly();
+  for (let i = 0; i < 120; i++) flyer.update({ forward: 0, right: 0, jump: 0, sneak: 0, sprint: false }, 1 / 60);
+  check('в полёте отсчёт падения сброшен', flyer._fallFrom === null);
+
+  // Креатив: урон и вовсе не проходит
+  const god = new Player({ getBlock: () => BLOCK.AIR });
+  god.invulnerable = true;
+  god.hp = 20;
+  check('в креативе урон не проходит и здоровье полное', god.hurt(5, 'fall') === false && god.hp === 20);
 }
 
 // Разметка экранов и локальная 3D-молния (без полноэкранного flash overlay)

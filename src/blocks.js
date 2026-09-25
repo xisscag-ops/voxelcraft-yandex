@@ -48,6 +48,7 @@ export const BLOCK = {
   PLANK_SLAB_TOP: 38,
   COBBLE_SLAB: 39,
   COBBLE_SLAB_TOP: 40,
+  WALL_TORCH: 41,   // факел, закреплённый на стене (сторона берётся из соседнего блока)
 };
 
 // tiles: [top, bottom, side] — индексы тайлов атласа
@@ -94,6 +95,7 @@ export const BLOCKS = [
   { id: 38, name: 'plank_slab_top', solid: true, tiles: [8, 8, 8], break: 'default', tool: 'wood', shape: 'slab', slab: true, half: 'top' },
   { id: 39, name: 'cobble_slab', solid: true, tiles: [4, 4, 4], break: 'slow', tool: 'stone', shape: 'slab', slab: true, half: 'bottom' },
   { id: 40, name: 'cobble_slab_top', solid: true, tiles: [4, 4, 4], break: 'slow', tool: 'stone', shape: 'slab', slab: true, half: 'top' },
+  { id: 41, name: 'wall_torch', solid: false, tiles: [49, 49, 49], break: 'fast', shape: 'torch', torch: true, wallTorch: true, decor: true, transparent: true, emissive: true },
 ];
 
 // Названия для UI
@@ -110,6 +112,7 @@ export const BLOCK_NAMES = {
     33: 'Кактус', 34: 'Обсидиан',
     35: 'Деревянный полублок', 36: 'Факел', 37: 'Печка',
     38: 'Деревянный полублок', 39: 'Каменный полублок', 40: 'Каменный полублок',
+    41: 'Настенный факел',
   },
   en: {
     1: 'Grass', 2: 'Dirt', 3: 'Stone', 4: 'Cobblestone', 5: 'Sand',
@@ -123,6 +126,7 @@ export const BLOCK_NAMES = {
     33: 'Cactus', 34: 'Obsidian',
     35: 'Wooden slab', 36: 'Torch', 37: 'Furnace',
     38: 'Wooden slab', 39: 'Stone slab', 40: 'Stone slab',
+    41: 'Wall torch',
   },
 };
 
@@ -145,9 +149,35 @@ const LOWER = Object.freeze({ ...FULL_BOUNDS, maxY: 0.5 });
 const UPPER = Object.freeze({ ...FULL_BOUNDS, minY: 0.5 });
 const TORCH_BOUNDS = Object.freeze({ minX: 0.36, minY: 0, minZ: 0.36, maxX: 0.64, maxY: 0.84, maxZ: 0.64 });
 const DECOR_BOUNDS = Object.freeze({ minX: 0.2, minY: 0, minZ: 0.2, maxX: 0.8, maxY: 0.55, maxZ: 0.8 });
-export function blockBounds(id) {
+// Настенный факел: узкая часть у стены, на которую он опирается
+const WALL_TORCH_BOUNDS = {
+  px: Object.freeze({ minX: 0.62, minY: 0.3, minZ: 0.4, maxX: 1, maxY: 0.88, maxZ: 0.6 }),
+  nx: Object.freeze({ minX: 0, minY: 0.3, minZ: 0.4, maxX: 0.38, maxY: 0.88, maxZ: 0.6 }),
+  pz: Object.freeze({ minX: 0.4, minY: 0.3, minZ: 0.62, maxX: 0.6, maxY: 0.88, maxZ: 1 }),
+  nz: Object.freeze({ minX: 0.4, minY: 0.3, minZ: 0, maxX: 0.6, maxY: 0.88, maxZ: 0.38 }),
+};
+export function isWallTorch(id) { return BLOCKS[id]?.wallTorch === true; }
+export function isTorch(id) { return BLOCKS[id]?.torch === true; }
+
+/** На какое твёрдое основание опирается блок: 'py' — снизу, иначе сторона стены. */
+export function torchSupport(id, world, x, y, z) {
+  if (!isWallTorch(id)) return isSolid(world.getBlock(x, y - 1, z)) ? 'ny' : null;
+  for (const [side, dx, dy, dz] of [['px', 1, 0, 0], ['nx', -1, 0, 0], ['pz', 0, 0, 1], ['nz', 0, 0, -1]]) {
+    if (isSolid(world.getBlock(x + dx, y + dy, z + dz))) return side;
+  }
+  return null;
+}
+
+/** Сторона стены, к которой прикреплён настенный факел (или null) */
+export function wallTorchSide(world, x, y, z) {
+  const side = torchSupport(BLOCKS.WALL_TORCH, world, x, y, z);
+  return side === 'ny' ? null : side;
+}
+
+export function blockBounds(id, side = 'px') {
   const b = BLOCKS[id];
   if (b?.shape === 'slab') return b.half === 'top' ? UPPER : LOWER;
+  if (b?.wallTorch) return WALL_TORCH_BOUNDS[side] || WALL_TORCH_BOUNDS.px;
   if (b?.shape === 'torch') return TORCH_BOUNDS;
   return b?.decor ? DECOR_BOUNDS : FULL_BOUNDS;
 }

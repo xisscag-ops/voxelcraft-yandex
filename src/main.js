@@ -1,7 +1,7 @@
 // VoxelCraft — точка входа: игровой цикл, чанки, строительство, сохранения
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
-import { BLOCK, BLOCKS, STARTER_PALETTE, BUILDER_PALETTE, breakKind, isSolid, isDecor } from './blocks.js';
+import { BLOCK, BLOCKS, STARTER_PALETTE, BUILDER_PALETTE, breakKind, isSolid, isDecor, isWallTorch, isTorch, wallTorchSide } from './blocks.js';
 import { ITEM, blockItem, blockIdOf, blockDropItem, breakTime, itemDamage, itemName, placeBlockId, isBlockItem, itemDef, foodValue } from './items.js';
 import { Inventory, HOTBAR_SIZE } from './inventory.js';
 import { craft, needsTable } from './crafts.js';
@@ -73,11 +73,14 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 400);
 camera.rotation.order = 'YXZ';
 
-// Объёмный факел: деревянная рукоять, два слоя пламени, мягкий ореол и локальная лампа.
-const torchStemGeo = new THREE.CylinderGeometry(0.055, 0.075, 0.64, 6);
-const torchOuterFlameGeo = new THREE.ConeGeometry(0.135, 0.3, 6);
-const torchInnerFlameGeo = new THREE.ConeGeometry(0.075, 0.2, 5);
+// Объёмный факел: прямоугольная рукоять из брусков, два слоя пламени,
+// мягкий ореол и локальная лампа. Модель одна — и для пола, и для стены.
+const torchStemGeo = new THREE.BoxGeometry(0.11, 0.56, 0.11);
+const torchCollarGeo = new THREE.BoxGeometry(0.15, 0.09, 0.15);
+const torchOuterFlameGeo = new THREE.BoxGeometry(0.18, 0.22, 0.18);
+const torchInnerFlameGeo = new THREE.BoxGeometry(0.1, 0.13, 0.1);
 const torchStemMat = new THREE.MeshBasicMaterial({ color: 0x744925 });
+const torchCollarMat = new THREE.MeshBasicMaterial({ color: 0xb8763a });
 const torchOuterFlameMat = new THREE.MeshBasicMaterial({ color: 0xff701b });
 const torchInnerFlameMat = new THREE.MeshBasicMaterial({ color: 0xffe17a });
 const torchGlowCanvas = document.createElement('canvas');
@@ -96,15 +99,56 @@ const torchGlowMat = new THREE.SpriteMaterial({
   depthWrite: false, blending: THREE.AdditiveBlending,
 });
 const heldTorchStemMat = new THREE.MeshBasicMaterial({ color: 0x744925, transparent: true, depthTest: false, depthWrite: false });
+const heldTorchCollarMat = new THREE.MeshBasicMaterial({ color: 0xb8763a, transparent: true, depthTest: false, depthWrite: false });
 const heldTorchOuterMat = new THREE.MeshBasicMaterial({ color: 0xff701b, transparent: true, depthTest: false, depthWrite: false });
 const heldTorchInnerMat = new THREE.MeshBasicMaterial({ color: 0xffe17a, transparent: true, depthTest: false, depthWrite: false });
 const heldTorchGlowMat = torchGlowMat.clone();
 heldTorchGlowMat.depthTest = false;
 heldTorchGlowMat.depthWrite = false;
-for (const material of [heldTorchStemMat, heldTorchOuterMat, heldTorchInnerMat, heldTorchGlowMat]) {
+for (const material of [heldTorchStemMat, heldTorchCollarMat, heldTorchOuterMat, heldTorchInnerMat, heldTorchGlowMat]) {
   material.userData.emissive = true;
 }
+// Материалы факела для мира и для выпавшего предмета (глубина как у обычных блоков)
+const worldTorchMats = {
+  stem: torchStemMat, collar: torchCollarMat, outer: torchOuterFlameMat, inner: torchInnerFlameMat,
+};
+const heldTorchMats = {
+  stem: heldTorchStemMat, collar: heldTorchCollarMat, outer: heldTorchOuterMat, inner: heldTorchInnerMat,
+};
 const torchChunkGroups = new Map();
+
+// Направление настенного факела: канонический вид — стена справа (+X)
+const WALL_TORCH_YAW = { px: 0, nx: Math.PI, pz: -Math.PI / 2, nz: Math.PI / 2 };
+
+/**
+ * Собирает модель факела: прямоугольная рукоять, обмотка, пламя и ореол.
+ * Начало координат — основание рукояти, высота модели ~0.84 блока.
+ */
+function buildTorchModel(mats, glowMat, withLight = true) {
+  const group = new THREE.Group();
+  const stem = new THREE.Mesh(torchStemGeo, mats.stem);
+  stem.position.y = 0.29;
+  const collar = new THREE.Mesh(torchCollarGeo, mats.collar);
+  collar.position.y = 0.6;
+  const flame = new THREE.Group();
+  flame.position.y = 0.65;
+  const outer = new THREE.Mesh(torchOuterFlameGeo, mats.outer);
+  outer.position.y = 0.1;
+  const inner = new THREE.Mesh(torchInnerFlameGeo, mats.inner);
+  inner.position.y = 0.12;
+  flame.add(outer, inner);
+  const glow = new THREE.Sprite(glowMat);
+  glow.position.y = 0.75;
+  glow.scale.set(1.15, 1.15, 1);
+  group.add(stem, collar, flame, glow);
+  let light = null;
+  if (withLight) {
+    light = new THREE.PointLight(0xffa347, 1.15, 8.5, 2);
+    light.position.y = 0.78;
+    group.add(light);
+  }
+  return { group, flame, glow, light };
+}
 
 const atlasCanvas = buildAtlas();
 const atlasTex = new THREE.CanvasTexture(atlasCanvas);
@@ -124,7 +168,13 @@ sky.viewDistance = settings.viewDistance;
 const particles = new Particles(THREE, scene);
 const mobManager = new MobManager(scene, null);
 const weather = new Weather(THREE, scene);
-const items = new ItemDrops(scene);
+const items = new ItemDrops(scene, {
+  tileMaterial: (idx) => dropTileMaterial(idx),
+  iconMaterial: (key) => dropIconMaterial(key),
+  modelFor: (key) => (blockIdOf(key) === BLOCK.TORCH || blockIdOf(key) === BLOCK.WALL_TORCH
+    ? buildDropTorchModel()
+    : null),
+});
 const xpOrbs = new XpOrbs(scene);
 let totalXp = 0;
 const projectiles = new Arrows(scene);
@@ -237,6 +287,36 @@ function spriteMaterial(key) {
   return SPRITE_MATS.get(key);
 }
 
+// Материалы выпавших предметов: те же текстуры, но с обычной глубиной,
+// чтобы предметы на земле прятались за блоками, а не рисовались поверх.
+const DROP_TILE_MATS = new Map();
+function dropTileMaterial(idx) {
+  if (!DROP_TILE_MATS.has(idx)) {
+    DROP_TILE_MATS.set(idx, new THREE.MeshBasicMaterial({
+      map: tileTexture(THREE, idx),
+      transparent: true,
+      alphaTest: 0.5,
+    }));
+  }
+  return DROP_TILE_MATS.get(idx);
+}
+
+const DROP_ICON_MATS = new Map();
+function dropIconMaterial(key) {
+  if (!DROP_ICON_MATS.has(key)) {
+    const canvas = itemIconCanvas(key, 64);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.magFilter = THREE.NearestFilter;
+    tex.minFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    DROP_ICON_MATS.set(key, new THREE.MeshBasicMaterial({
+      map: tex, transparent: true, alphaTest: 0.5, side: THREE.DoubleSide,
+    }));
+  }
+  return DROP_ICON_MATS.get(key);
+}
+
 const heldGeo = {
   cube: new THREE.BoxGeometry(1, 1, 1),
   quad: new THREE.PlaneGeometry(1, 1),
@@ -322,24 +402,18 @@ function buildAppleModel() {
 }
 
 function buildHeldTorchModel() {
-  const group = new THREE.Group();
-  const stem = new THREE.Mesh(torchStemGeo, heldTorchStemMat);
-  stem.position.y = 0.32;
-  stem.rotation.z = -0.08;
-  const flame = new THREE.Group();
-  flame.position.y = 0.62;
-  const outer = new THREE.Mesh(torchOuterFlameGeo, heldTorchOuterMat);
-  const inner = new THREE.Mesh(torchInnerFlameGeo, heldTorchInnerMat);
-  outer.position.y = inner.position.y = 0.15;
-  flame.add(outer, inner);
-  const glow = new THREE.Sprite(heldTorchGlowMat);
-  glow.position.y = 0.79;
-  glow.scale.set(1.2, 1.2, 1);
-  group.add(stem, flame, glow);
+  const { group } = buildTorchModel(heldTorchMats, heldTorchGlowMat, false);
   group.scale.setScalar(0.62);
   group.rotation.set(-0.2, -0.55, 0.72);
-  group.position.set(0.05, -0.08, -0.32);
+  group.position.set(0.05, -0.16, -0.32);
   group.traverse((object) => { if (object.isMesh || object.isSprite) object.renderOrder = 2000; });
+  return group;
+}
+
+/** Маленький факел для выпавшего предмета: те же материалы, но без лампы */
+function buildDropTorchModel() {
+  const { group } = buildTorchModel(worldTorchMats, torchGlowMat, false);
+  group.scale.setScalar(0.42);
   return group;
 }
 
@@ -656,31 +730,24 @@ function processQueue(limit) {
   }
 }
 
-function appendTorchVisual(root, wx, y, wz) {
-  const group = new THREE.Group();
-  group.position.set(wx + 0.5, y, wz + 0.5);
-  const stem = new THREE.Mesh(torchStemGeo, torchStemMat);
-  stem.position.y = 0.32;
-  stem.rotation.z = -0.08;
-  group.add(stem);
-
-  const flame = new THREE.Group();
-  flame.position.y = 0.62;
-  const outer = new THREE.Mesh(torchOuterFlameGeo, torchOuterFlameMat);
-  outer.position.y = 0.15;
-  const inner = new THREE.Mesh(torchInnerFlameGeo, torchInnerFlameMat);
-  inner.position.y = 0.15;
-  flame.add(outer, inner);
-  group.add(flame);
-
-  const glow = new THREE.Sprite(torchGlowMat);
-  glow.position.y = 0.79;
-  glow.scale.set(1.2, 1.2, 1);
-  group.add(glow);
-  const light = new THREE.PointLight(0xffa347, 1.15, 8.5, 2);
-  light.position.y = 0.76;
-  group.add(light);
-  root.add(group);
+function appendTorchVisual(root, wx, y, wz, side = null) {
+  const { group, flame, glow, light } = buildTorchModel(worldTorchMats, torchGlowMat, true);
+  if (side) {
+    // Настенный вариант: рукоять выходит из стены и наклонена вверх
+    const tilt = new THREE.Group();
+    tilt.position.set(0.36, 0.42, 0);
+    tilt.rotation.z = 1.05;
+    tilt.add(group);
+    const holder = new THREE.Group();
+    holder.position.set(wx + 0.5, y, wz + 0.5);
+    holder.rotation.y = WALL_TORCH_YAW[side] || 0;
+    holder.add(tilt);
+    root.add(holder);
+  } else {
+    group.position.set(wx + 0.5, y + 0.03, wz + 0.5);
+    group.rotation.z = -0.06;
+    root.add(group);
+  }
   root.userData.torches.push({ flame, glow, light, phase: Math.random() * Math.PI * 2 });
 }
 
@@ -694,11 +761,14 @@ function buildTorchVisuals(cx, cz, chunk) {
   const S = CONFIG.CHUNK_SIZE;
   const plane = S * S;
   for (let i = 0; i < chunk.blocks.length; i++) {
-    if (chunk.blocks[i] !== BLOCK.TORCH) continue;
+    const id = chunk.blocks[i];
+    if (id !== BLOCK.TORCH && id !== BLOCK.WALL_TORCH) continue;
     const x = i % S;
     const z = Math.floor(i / S) % S;
     const y = Math.floor(i / plane);
-    appendTorchVisual(root, cx * S + x, y, cz * S + z);
+    const wx = cx * S + x, wz = cz * S + z;
+    const side = id === BLOCK.WALL_TORCH ? (wallTorchSide(world, wx, y, wz) || 'px') : null;
+    appendTorchVisual(root, wx, y, wz, side);
   }
   if (root.userData.torches.length) {
     scene.add(root);
@@ -713,8 +783,9 @@ function updateTorchVisuals(dt) {
     for (const torch of root.userData.torches) {
       torch.phase += dt * 8;
       const flicker = 0.5 + 0.5 * Math.sin(torch.phase) * Math.cos(torch.phase * 0.43);
-      torch.flame.rotation.z = Math.sin(torch.phase * 0.7) * 0.08;
-      torch.flame.scale.y = 0.92 + flicker * 0.16;
+      torch.flame.rotation.z = Math.sin(torch.phase * 0.7) * 0.07;
+      torch.flame.rotation.x = Math.cos(torch.phase * 0.53) * 0.05;
+      torch.flame.scale.set(0.96 + flicker * 0.08, 0.92 + flicker * 0.16, 0.96 + flicker * 0.08);
       const glowScale = 1.05 + flicker * 0.28;
       torch.glow.scale.set(glowScale, glowScale, 1);
       torch.light.intensity = 0.85 + flicker * 0.55;
@@ -762,8 +833,9 @@ function disposeChunkMeshes(c) {
 
 // ---------------------------------------------------------------- Инвентарь и хотбар
 // Каталог креатива: все блоки (кроме воздуха и воды) и предметы
+// Настенный факел получается сам при установке факела на стену — в каталоге он не нужен
 const CATALOG_KEYS = [
-  ...BLOCKS.filter((b) => b.id !== BLOCK.AIR && b.id !== BLOCK.WATER).map((b) => blockItem(b.id)),
+  ...BLOCKS.filter((b) => b.id !== BLOCK.AIR && b.id !== BLOCK.WATER && b.id !== BLOCK.WALL_TORCH).map((b) => blockItem(b.id)),
   ITEM.STICK, ITEM.APPLE, ITEM.BOW, ITEM.ARROW,
   ITEM.WOOD_PICKAXE, ITEM.WOOD_AXE, ITEM.WOOD_SWORD, ITEM.STONE_PICKAXE, ITEM.STONE_AXE, ITEM.STONE_SWORD,
   ITEM.COAL, ITEM.RAW_IRON, ITEM.RAW_GOLD, ITEM.DIAMOND, ITEM.BREAD, ITEM.WHEAT, ITEM.IRON_INGOT, ITEM.GOLD_INGOT,
@@ -979,6 +1051,7 @@ function handleDeath(cause = 'unknown') {
   player.vel.x = 0; player.vel.y = 0; player.vel.z = 0;
   player.hp = player.maxHp;
   player.hurtT = 2.5;
+  player.resetFall();        // после возрождения падение не досчитывается
   ui.setHealth(player.hp, player.maxHp);
   const knownCause = ['fall', 'creeper', 'zombie', 'spider', 'wolf', 'slime'].includes(cause) ? cause : 'unknown';
   ui.toast(`${i18n.t('died')} ${i18n.t(`death_cause_${knownCause}`)}`, 3400);
@@ -1038,8 +1111,10 @@ function doPlace(hit) {
     y + 1 > py && y < py + CONFIG.PLAYER_HEIGHT &&
     z + 1 > pz - HW && z < pz + HW;
   const held = heldItem();
-  const id = placeBlockId(held);
+  let id = placeBlockId(held);
   if (!id) { swingHand(0.6); return; }   // в руке не блок — ставить нечего
+  // Факел в стену вешается настенным вариантом — со своей моделью и наклоном
+  if (isTorch(id) && (hit.nx || hit.nz)) id = BLOCK.WALL_TORCH;
   if (overlap && isSolid(id)) return;
   if (isDecor(cur)) {
     // Трава автоматически ломается при установке блока
@@ -1134,9 +1209,29 @@ async function saveGame(showToast = false) {
   return ok;
 }
 
+/**
+ * Моб бьёт игрока только «по прямой»: между ними не должно быть сплошных блоков.
+ * Так урон не приходит сквозь стены и сквозь пол от моба, который стоит под ногами.
+ */
+function mobSeesPlayer(mob) {
+  const ex = mob.pos.x, ey = mob.pos.y + (mob.centerY ? mob.centerY() : 0.6), ez = mob.pos.z;
+  const tx = player.pos.x, ty = player.pos.y + 1.0, tz = player.pos.z;
+  const dx = tx - ex, dy = ty - ey, dz = tz - ez;
+  const dist = Math.hypot(dx, dy, dz);
+  if (dist < 0.001) return true;
+  const steps = Math.min(24, Math.max(2, Math.ceil(dist / 0.2)));
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps;
+    const bx = Math.floor(ex + dx * t), by = Math.floor(ey + dy * t), bz = Math.floor(ez + dz * t);
+    if (isSolid(world.getBlock(bx, by, bz))) return false;
+  }
+  return true;
+}
+
 function attachPlayerEvents() {
   mobManager.onAttack = (mob) => {
     if (!isSurvival()) return;             // в креативе игрок бессмертен
+    if (!mobSeesPlayer(mob)) return;       // сквозь стену урона нет
     const damageScale = difficulty === 'peaceful' ? 0 : difficulty === 'easy' ? 0.5 : difficulty === 'hard' ? 1.5 : 1;
     if (damageScale <= 0) return;
     const damage = Math.max(1, Math.round(2 * damageScale));
@@ -1222,11 +1317,10 @@ function attachPlayerEvents() {
   };
   xpOrbs.onPickup = (amount) => {
     totalXp += amount;
-    // в креативе просто тост, в выживании можно показать уровень
+    // Опыт только показываем тостом: сердечки больше не мигают,
+    // иначе вспышка опыта выглядела как урон из ниоткуда.
     ui.toast(`+${amount} XP  (всего ${totalXp})`, 1600);
     sfx.pickup();
-    // мигание если много XP
-    if (totalXp % 10 === 0) ui.blinkHearts();
   };
   player.events.onStep = (inWater) => sfx.step(inWater);
   player.events.onJump = () => sfx.jump();
@@ -1259,7 +1353,13 @@ function applyMode() {
     const label = document.getElementById('inv-mode-label');
     if (label) label.textContent = i18n.t(isCreative() ? 'mode_creative' : 'mode_survival');
   }
-  if (creative) player.hp = player.maxHp;
+  if (creative) {
+    // Креатив: здоровье всегда полное, старые отсчёты урона и падения сброшены
+    player.hp = player.maxHp;
+    player.hurtT = 0;
+    player.resetFall();
+    ui.setHealth(player.hp, player.maxHp);
+  }
 }
 
 function toggleMode() {

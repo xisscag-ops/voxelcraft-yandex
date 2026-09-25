@@ -25,7 +25,9 @@ export class Player {
     // Здоровье и урон от падений
     this.hp = 20; this.maxHp = 20;
     this.level = 0; this.xp = 0;
-    this.hurtT = 0; this.regenT = 0; this._fallFrom = null;
+    this.hurtT = 0; this.regenT = 0;
+    this._fallFrom = null;      // высота начала падения (считаем только по земле)
+    this._fallWater = false;    // падение прервано водой — урона не будет
     // Режим игры: в креативе игрок бессмертен и умеет летать
     this.invulnerable = false;
     this.canFly = true;
@@ -59,7 +61,12 @@ export class Player {
 
   /** Урон с неуязвимостью 0.7 с. true — если урон прошёл */
   hurt(n, cause = 'unknown') {
-    if (this.invulnerable) return false;
+    // В креативе игрок не получает урона вообще: здоровье всегда полное,
+    // ни вспышки урона, ни звука, ни отсчёта неуязвимости.
+    if (this.invulnerable) {
+      this.hp = this.maxHp;
+      return false;
+    }
     if (this.hurtT > 0 || this.hp <= 0) return false;
     this.hp = Math.max(0, this.hp - n);
     this.hurtT = 0.7;
@@ -108,11 +115,6 @@ export class Player {
     } else if (this.hurtT > 0) {
       this.regenT = 0;
     }
-    if (!this.onGround && !this.flying && this.vel.y < 0) {
-      this._fallFrom = Math.max(this._fallFrom ?? this.pos.y, this.pos.y);
-    } else if (this.onGround || this.flying) {
-      this._fallFrom = null;
-    }
     // Вода?
     const feet = w.getBlock(Math.floor(this.pos.x), Math.floor(this.pos.y + 0.2), Math.floor(this.pos.z));
     const head = w.getBlock(Math.floor(this.pos.x), Math.floor(this.pos.y + CONFIG.PLAYER_EYE), Math.floor(this.pos.z));
@@ -120,6 +122,15 @@ export class Player {
     this.inWater = isLiquid(feet);
     this.headInWater = isLiquid(head);
     if (this.inWater && !wasWater && this.vel.y < -4 && this.events.onSplash) this.events.onSplash();
+
+    // Урон от падения считаем только по твёрдой земле: полёт, вода и погружение
+    // сбрасывают отсчёт, поэтому «урон из ниоткуда» после заплыва невозможен.
+    if (this.inWater || this.flying || this.onGround) {
+      this._fallFrom = null;
+      this._fallWater = this.inWater;
+    } else if (this.vel.y < 0) {
+      this._fallFrom = Math.max(this._fallFrom ?? this.pos.y, this.pos.y);
+    }
 
     // Направление взгляда по горизонту
     const sin = Math.sin(this.yaw), cos = Math.cos(this.yaw);
@@ -165,7 +176,8 @@ export class Player {
         if (this.events.onLand) this.events.onLand();
         const fall = (this._fallFrom ?? this.pos.y) - this.pos.y;
         this._fallFrom = null;
-        if (fall > 3.2 && this.hp > 0) this.hurt(Math.min(8, Math.floor(fall - 3)), 'fall');
+        // Приземление в воду урона не наносит
+        if (!this.inWater && fall > 3.2 && this.hp > 0) this.hurt(Math.min(8, Math.floor(fall - 3)), 'fall');
       }
     }
 
@@ -182,6 +194,7 @@ export class Player {
     if (this.pos.y < -8) {
       this.pos.y = H_SAFE();
       this.vel.y = 0;
+      this._fallFrom = null;
     }
 
     if (this.flying) this._wasFlying = true;
@@ -272,6 +285,13 @@ export class Player {
   /** Сброс полёта (например, при выходе из креатива) */
   stopFly() {
     this.flying = false;
+    this.resetFall();
+  }
+
+  /** Сбросить отсчёт падения: телепорт, возрождение, смена режима */
+  resetFall() {
+    this._fallFrom = null;
+    this._fallWater = false;
   }
 
   serialize() {
