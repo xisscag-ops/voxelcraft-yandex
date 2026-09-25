@@ -135,10 +135,12 @@ export class Arrows {
         }
         if (mobs) {
           for (const m of mobs) {
-            if (m.dead) continue;
-            const mx = nx - m.pos.x, mz = nz - m.pos.z;
-            const my = ny - (m.pos.y + 0.4);
-            if (mx * mx + mz * mz < 0.5 * 0.5 && my > -0.5 && my < 0.95) { hitMob = m; break; }
+            if (m.dead || m.dying >= 0 || (m.hittable && !m.hittable())) continue;
+            // Стреляем в центр модели, радиус — как у моба (паук ниже, крипер выше)
+            const r = Math.max(0.35, m.hitRadius ? m.hitRadius() : 0.5);
+            const cy = m.pos.y + (m.centerY ? m.centerY() : 0.4);
+            const mx = nx - m.pos.x, mz = nz - m.pos.z, my = ny - cy;
+            if (mx * mx + mz * mz < r * r && my > -r && my < r) { hitMob = m; break; }
           }
           if (hitMob) break;
         }

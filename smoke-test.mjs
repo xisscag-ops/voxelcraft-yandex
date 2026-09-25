@@ -212,7 +212,7 @@ check('инвентарь полон → лишнее не влезает', (() 
 
 // ---- Крафт ----
 check('рецепты без ошибок', validateRecipes().length === 0, validateRecipes().join('; '));
-check('14 рецептов (включая верстак)', RECIPES.length === 14, 'их ' + RECIPES.length);
+check('16 рецептов (включая верстак, лук и стрелы)', RECIPES.length === 16, 'их ' + RECIPES.length);
 function craftWith(input, id) {
   const i = new Inventory(CONFIG.INV_SIZE);
   for (const [k, n] of Object.entries(input)) i.add(k, n);

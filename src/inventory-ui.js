@@ -18,6 +18,7 @@ export class InventoryUI {
     this.tab = 'craft';       // 'craft' | 'catalog'
     this.gridSize = 2;        // 2 — инвентарь, 3 — верстак
     this.grid = emptyGrid(2);
+    this._paint = null;       // мазок зажатой кнопкой по клеткам (как в Minecraft)
     this.handlers = {
       onChange: null, onCraft: null, onPickCatalog: null, onLocked: null,
       onClose: null, onSelect: null, onSound: null, onQuickCraft: null,
@@ -56,6 +57,14 @@ export class InventoryUI {
     }
     const move = (e) => this._moveCursor(e.clientX, e.clientY);
     document.addEventListener('mousemove', move);
+
+    // Протаскивание с зажатой кнопкой: раскладываем предметы по клеткам крафта
+    document.addEventListener('pointermove', (e) => this._onPaintMove(e));
+    const endPaint = () => { this._paint = null; };
+    document.addEventListener('mouseup', endPaint);
+    document.addEventListener('pointerup', endPaint);
+    document.addEventListener('touchend', endPaint);
+    window.addEventListener('blur', endPaint);
     document.addEventListener('touchmove', (e) => {
       const t = e.touches?.[0];
       if (t && this.open_) this._moveCursor(t.clientX, t.clientY);
@@ -356,20 +365,59 @@ export class InventoryUI {
       this.handlers.onSelect?.(i);
     }
     this._mutate(this.inv, i, e.button === 2);
+    this._startPaint('inv', i);          // зажатой кнопкой можно вести по ячейкам
     this.render();
     this.handlers.onChange?.();
+  }
+
+  /** Обёртка сетки крафта в виде контейнера для общей логики кликов */
+  _gridContainer() {
+    return {
+      get: (k) => this.grid[k],
+      setStack: (k, stack) => { this.grid[k] = stack ? { key: stack.key, count: stack.count } : null; },
+      clearSlot: (k) => { this.grid[k] = null; },
+    };
   }
 
   /** Ячейка сетки крафта: кладём/забираем предметы как в инвентаре */
   _onGridCell(e, i) {
     e.preventDefault();
     e.stopPropagation();
-    const grid = {
-      get: (k) => this.grid[k],
-      setStack: (k, stack) => { this.grid[k] = stack ? { key: stack.key, count: stack.count } : null; },
-      clearSlot: (k) => { this.grid[k] = null; },
-    };
-    this._mutate(grid, i, e.button === 2, true);
+    this._mutate(this._gridContainer(), i, e.button === 2, true);
+    this._startPaint('craft', i);        // дальше можно вести курсором по клеткам
+    this.render();
+    this.handlers.onChange?.();
+  }
+
+  // ---------------------------------------------------------------- Мазок зажатой кнопкой
+  /**
+   * Как в Minecraft: зажали ЛКМ/ПКМ, положили стопку в первую клетку и, не отпуская
+   * кнопку, ведёте по остальным — в каждую новую клетку кладётся по одному предмету.
+   */
+  _startPaint(kind, index) {
+    if (!this.carry) { this._paint = null; return; }
+    const visited = new Set([index]);
+    this._paint = { kind, visited };
+  }
+
+  _onPaintMove(e) {
+    const p = this._paint;
+    if (!p || !this.open_ || !this.carry) return;
+    // Кнопку отпустили вне окна инвентаря — мазок заканчивается
+    if (e.pointerType !== 'touch' && e.buttons === 0) { this._paint = null; return; }
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    if (!el) return;
+    const cell = el.closest('.craft-cell, .islot');
+    if (!cell || !cell.dataset || cell.dataset.index == null) return;
+    const isCraftCell = cell.classList.contains('craft-cell');
+    if ((p.kind === 'craft') !== isCraftCell) return;
+    const i = Number(cell.dataset.index);
+    if (!Number.isFinite(i) || p.visited.has(i)) return;
+    p.visited.add(i);
+    const container = isCraftCell ? this._gridContainer() : this.inv;
+    if (!container) return;
+    // В каждую новую клетку — ровно один предмет из стопки «в руке»
+    this._mutate(container, i, true, isCraftCell);
     this.render();
     this.handlers.onChange?.();
   }

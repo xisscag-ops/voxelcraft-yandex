@@ -321,7 +321,7 @@ export class Input {
     this.sprint = this.keys.has('ControlLeft') || this.keys.has('ControlRight') ||
       (this.isTouch && this._joystick.active && Math.hypot(this._joystick.x, this._joystick.y) > 0.92);
     this.breakHeld = this.mouse.left || this._buttons.has('break');
-    this.placeHeld = this.mouse.right;
+    this.placeHeld = this.mouse.right || this._buttons.has('place');
   }
 
   /** Нажатие, которое нужно обработать ровно один раз */
