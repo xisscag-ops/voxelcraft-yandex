@@ -67,7 +67,14 @@ export class InventoryUI {
     window.addEventListener('blur', endPaint);
     document.addEventListener('touchmove', (e) => {
       const t = e.touches?.[0];
-      if (t && this.open_) this._moveCursor(t.clientX, t.clientY);
+      if (t && this.open_) {
+        this._moveCursor(t.clientX, t.clientY);
+        // На телефоне протяжка приходит как touchmove — раскладываем предметы и оттуда
+        const p = this._paint;
+        if (p && this.carry) {
+          this._onPaintMove({ clientX: t.clientX, clientY: t.clientY, pointerType: 'touch', buttons: 1 });
+        }
+      }
     }, { passive: true });
   }
 
