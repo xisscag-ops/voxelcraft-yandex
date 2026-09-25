@@ -1,6 +1,12 @@
 // Смоук-тест логики мира и мешера без браузера (node smoke-test.mjs)
 import { World } from './src/world.js';
 import { meshChunk } from './src/mesher.js';
+import { Weather, WEATHER_LIFECYCLE } from './src/weather.js';
+import * as THREEReal from 'three';
+import { ItemDrops, ITEM_MAGNET_RANGE, ITEM_PICKUP_RANGE } from './src/items.js';
+import { Player } from './src/physics.js';
+import { updateRunShake } from './src/camera-effects.js';
+import { createWorldRecord, emptyWorldProfile, normalizeWorldProfile, serializeWorldProfile } from './src/world-store.js';
 import { raycastVoxel } from './src/raycast.js';
 import { isSolid, isOpaque, isDecor, BLOCK, BLOCKS } from './src/blocks.js';
 import { Inventory } from './src/inventory.js';
@@ -35,6 +41,23 @@ function check(name, cond) {
   if (cond) console.log('OK  ', name);
   else { console.log('FAIL', name); failed++; }
 }
+
+const runShakeTest = { duration: 0, strength: 0 };
+let runStrength = 0;
+for (let i = 0; i < 119; i++) runStrength = updateRunShake(runShakeTest, true, 1 / 60);
+check('тряска при беге не включается до задержки', runStrength < 0.001);
+for (let i = 0; i < 90; i++) runStrength = updateRunShake(runShakeTest, true, 1 / 60);
+check('тряска плавно нарастает после двух секунд и ограничена', runStrength > 0.2 && runStrength < 1);
+for (let i = 0; i < 240; i++) runStrength = updateRunShake(runShakeTest, true, 1 / 60);
+check('тряска достигает заданного лимита', runStrength > 0.98 && runStrength <= 1);
+runStrength = updateRunShake(runShakeTest, false, 1 / 60);
+check('тряска плавно затухает после остановки', runStrength < 1 && runStrength > 0);
+const causePlayer = new Player({ getBlock: () => BLOCK.AIR });
+causePlayer.hp = 1;
+let deathCause = null;
+causePlayer.events.onDeath = (cause) => { deathCause = cause; };
+causePlayer.hurt(2, 'fall');
+check('игрок передаёт причину гибели обработчику смерти', deathCause === 'fall');
 
 const world = new World(12345);
 
@@ -75,6 +98,30 @@ check('setBlock works', world.setBlock(0, h + 2, 0, 10));
 check('getBlock after set', world.getBlock(0, h + 2, 0) === 10);
 check('edit recorded', world.edits.has(`0,${h + 2},0`));
 
+const supportWorld = new World(93);
+let unsupportedDecor = null;
+supportWorld.onUnsupportedDecor = (x, y, z, id) => { unsupportedDecor = { x, y, z, id }; };
+supportWorld.setBlock(123, 60, 123, BLOCK.STONE);
+supportWorld.setBlock(123, 61, 123, BLOCK.FERN);
+supportWorld.setBlock(123, 60, 123, BLOCK.DIRT);
+check('растение сохраняется при замене опоры на твёрдый блок', supportWorld.getBlock(123, 61, 123) === BLOCK.FERN);
+supportWorld.setBlock(123, 60, 123, BLOCK.AIR);
+check('растение удаляется вместе с опорой, сохраняется и даёт событие выпадения',
+  supportWorld.getBlock(123, 61, 123) === BLOCK.AIR && supportWorld.edits.get('123,61,123') === BLOCK.AIR
+    && unsupportedDecor?.id === BLOCK.FERN && unsupportedDecor.x === 123 && unsupportedDecor.y === 61);
+
+// Миграция одиночного сохранения и отдельный профиль с несколькими мирами.
+const migrated = normalizeWorldProfile({ seed: 456, mode: 'survival', edits: [], settings: { lang: 'en' } });
+check('старое сохранение автоматически становится миром в списке',
+  migrated.worlds.length === 1 && migrated.worlds[0].seed === 456 && migrated.worlds[0].save.seed === 456);
+const extraWorld = createWorldRecord({ name: 'Пещеры', seed: 77, difficulty: 'hard', mode: 'survival' }, 1234, () => 0.5);
+const twoWorlds = normalizeWorldProfile({ ...emptyWorldProfile(), activeWorldId: extraWorld.id, worlds: [migrated.worlds[0], extraWorld] });
+check('профиль хранит несколько миров и выбранный мир', twoWorlds.worlds.length === 2 && twoWorlds.activeWorldId === extraWorld.id);
+check('в профиле мира сохраняются имя, сложность и режим', extraWorld.name === 'Пещеры' && extraWorld.difficulty === 'hard' && extraWorld.mode === 'survival');
+const profileWithSave = serializeWorldProfile(twoWorlds, { seed: 77, mode: 'survival', difficulty: 'hard' }, { lang: 'en' }, true);
+check('сохранение обновляет только активный мир профиля', profileWithSave.worlds[1].save?.seed === 77
+  && profileWithSave.settings.lang === 'en' && profileWithSave.paletteUnlocked);
+
 // Пересоздание чанка воспроизводит правки
 world.chunks.delete('0,0');
 const c0b = world.getChunk(0, 0);
@@ -107,7 +154,46 @@ check('uv count matches', opaque.uv.length / 2 === opaque.pos.length / 3);
 check('color count matches', opaque.col.length === opaque.pos.length);
 check('triangles in groups of 3', opaque.idx.length % 3 === 0);
 check('no NaN in positions', !opaque.pos.some((v) => Number.isNaN(v)));
-check('shades in range', opaque.col.every((v) => v >= 0.2 && v <= 1.001));
+check('shades in range', opaque.col.every((v) => v >= 0.015 && v <= 4.1));
+
+const caveWorld = (withTorch) => {
+  const blocks = new Map([
+    ['0,1,0', BLOCK.STONE],
+    ['0,4,0', BLOCK.STONE],
+  ]);
+  const edits = new Map();
+  if (withTorch) {
+    blocks.set('0,2,0', BLOCK.TORCH);
+    edits.set('0,2,0', BLOCK.TORCH);
+  }
+  return {
+    chunkSize: 1,
+    worldHeight: 6,
+    edits,
+    getBlock(x, y, z) {
+      if (y < 0) return BLOCK.SLATE;
+      if (y >= 6) return BLOCK.AIR;
+      return blocks.get(`${Math.floor(x)},${y},${Math.floor(z)}`) || BLOCK.AIR;
+    },
+  };
+};
+const darkCaveMesh = meshChunk(THREE, caveWorld(false), 0, 0).opaque;
+const litCaveMesh = meshChunk(THREE, caveWorld(true), 0, 0).opaque;
+const caveTopShade = (mesh) => Math.max(...mesh.col.slice(24, 36));
+check('без факела закрытая пещера остаётся тёмной', caveTopShade(darkCaveMesh) < 0.2);
+check('факел локально освещает пещеру без плоского спрайта', caveTopShade(litCaveMesh) > caveTopShade(darkCaveMesh) * 5
+  && litCaveMesh.pos.length === darkCaveMesh.pos.length);
+
+check('ясная погода длится дольше дождя', WEATHER_LIFECYCLE.clear[0] > WEATHER_LIFECYCLE.rain[1] * 2);
+const weatherScene = new THREEReal.Scene();
+const weatherTest = new Weather(THREEReal, weatherScene);
+const strike = weatherTest._createLightning({ x: 0, y: 25, z: 0 }, {
+  worldHeight: 64,
+  heightAt: () => 20,
+});
+check('молния имеет точку удара и отдельную 3D-геометрию', !!strike && strike.y === 21
+  && strike.distance >= 10 && weatherScene.children.some((child) => child === weatherTest.lightningGroup));
+weatherTest.reset();
 
 const g = opaque.toGeometry(THREE);
 check('toGeometry ok', !!g);
@@ -263,10 +349,32 @@ check('листва падает иногда', (() => {
   for (let i = 0; i < 400; i++) if (blockDropItem(BLOCK.LEAVES, () => i % 4 === 0)) yes++;
   return yes > 0 && yes < 400;
 })());
+check('физические предметы лежат и притягиваются только рядом', (() => {
+  const scene = new THREEReal.Scene();
+  const drops = new ItemDrops(scene);
+  let picked = 0;
+  drops.onPickup = () => picked++;
+  const item = drops.spawn(5, 0.85, 0, ITEM.APPLE);
+  item.rest = true;
+  item.vel = { x: 0, y: 0, z: 0 };
+  const flatWorld = { getBlock: () => BLOCK.AIR };
+  const player = { x: 0, y: 0, z: 0 };
+  drops.update(1 / 60, flatWorld, player);
+  const waitsAtDistance = !item.attracting && drops.items.length === 1;
+  item.group.position.set(ITEM_MAGNET_RANGE - 0.5, 0.85, 0);
+  drops.update(1 / 60, flatWorld, player);
+  const startedAtCloseRange = item.attracting && item.group.position.x < ITEM_MAGNET_RANGE - 0.5;
+  for (let i = 0; i < 300 && drops.items.length; i++) drops.update(1 / 60, flatWorld, player);
+  const collectedOnlyAfterApproach = picked === 1 && drops.items.length === 0;
+  drops.clear();
+  return waitsAtDistance && startedAtCloseRange && collectedOnlyAfterApproach
+    && ITEM_MAGNET_RANGE > ITEM_PICKUP_RANGE;
+})());
 check('стопки: блок 64, инструмент 1', maxStack(blockItem(BLOCK.STONE)) === 64 && maxStack(ITEM.WOOD_AXE) === 1);
 check('поставить можно только блок', placeBlockId(blockItem(BLOCK.PLANKS)) === BLOCK.PLANKS
   && placeBlockId(ITEM.STICK) === 0);
-check('инструмент опознаётся', toolKind(ITEM.STONE_PICKAXE) === 'pickaxe' && toolKind(ITEM.STICK) === null);
+check('инструмент опознаётся', toolKind(ITEM.STONE_PICKAXE) === 'pickaxe'
+  && toolKind(ITEM.WOOD_AXE) === 'axe' && toolKind(ITEM.STONE_AXE) === 'axe' && toolKind(ITEM.STICK) === null);
 
 // ---- Скорость ломания с инструментами ----
 const BASE_STONE = CONFIG.BREAK_TIME.slow;
@@ -276,6 +384,7 @@ check('деревянная кирка ×0.85', Math.abs(breakTime(BLOCK.STONE, 
 check('каменная кирка ×0.55', Math.abs(breakTime(BLOCK.STONE, ITEM.STONE_PICKAXE, 'survival') - BASE_STONE * 0.55) < 1e-9);
 check('дерево без топора ×1.6', Math.abs(breakTime(BLOCK.LOG, null, 'survival') - BASE_LOG * 1.6) < 1e-9);
 check('топор ускоряет дерево ×0.5', Math.abs(breakTime(BLOCK.LOG, ITEM.WOOD_AXE, 'survival') - BASE_LOG * 0.5) < 1e-9);
+check('каменный топор быстрее деревянного', breakTime(BLOCK.LOG, ITEM.STONE_AXE, 'survival') < breakTime(BLOCK.LOG, ITEM.WOOD_AXE, 'survival'));
 check('земля ломается как раньше', Math.abs(breakTime(BLOCK.DIRT, null, 'survival') - CONFIG.BREAK_TIME.fast) < 1e-9);
 check('креатив: блок ломается за 0.12 с',
   breakTime(BLOCK.STONE, null, 'creative') === CONFIG.CREATIVE_BREAK_TIME && CONFIG.CREATIVE_BREAK_TIME === 0.12);
@@ -306,7 +415,7 @@ check('инвентарь полон → лишнее не влезает', (() 
 
 // ---- Крафт ----
 check('рецепты без ошибок', validateRecipes().length === 0, validateRecipes().join('; '));
-check('22 рецепта (включая верстак, лук, стрелы и полублоки/факелы/хлеб/печку/слитки)', RECIPES.length === 22, 'их ' + RECIPES.length);
+check('23 рецепта (включая два топора, верстак, лук, стрелы и блоки)', RECIPES.length === 23, 'их ' + RECIPES.length);
 function craftWith(input, id) {
   const i = new Inventory(CONFIG.INV_SIZE);
   for (const [k, n] of Object.entries(input)) i.add(k, n);
@@ -379,6 +488,8 @@ check('сетка 3×3: меч', gridResult(grid3([[0, blockItem(BLOCK.PLANKS)],
   [6, ITEM.STICK]]), 3)?.out.key === ITEM.WOOD_SWORD);
 check('сетка 3×3: кирка из булыжника', gridResult(grid3([[0, blockItem(BLOCK.COBBLE)], [1, blockItem(BLOCK.COBBLE)],
   [2, blockItem(BLOCK.COBBLE)], [4, ITEM.STICK], [7, ITEM.STICK]]), 3)?.out.key === ITEM.STONE_PICKAXE);
+check('сетка 3×3: каменный топор', gridResult(grid3([[0, blockItem(BLOCK.COBBLE)], [1, blockItem(BLOCK.COBBLE)],
+  [3, blockItem(BLOCK.COBBLE)], [4, ITEM.STICK], [7, ITEM.STICK]]), 3)?.out.key === ITEM.STONE_AXE);
 check('лишний предмет в сетке ломает рецепт',
   gridResult(grid2([[0, blockItem(BLOCK.LOG)], [3, blockItem(BLOCK.SAND)]]), 2) === null);
 check('бесформенные рецепты (светокамень)', gridResult(grid2([
@@ -514,6 +625,13 @@ check('лук не стакается', maxStack(ITEM.BOW) === 1);
   check('кап мобов', mobs.MOB_CAPS.spider === 3 && mobs.MOB_CAPS.creeper === 2);
   check('ночные мобы враждебны', ['zombie', 'spider', 'creeper'].every((t) => mobs.HOSTILE.has(t)));
   check('рыба и волк — не враждебные', !mobs.HOSTILE.has('fish') && !mobs.HOSTILE.has('wolf'));
+  const difficultyManager = new mobs.MobManager(new THREE.Scene(), flat);
+  difficultyManager.setDifficulty('peaceful');
+  check('мирная сложность не спавнит враждебных мобов и зомби',
+    !mobs.HOSTILE.has(difficultyManager._randomType())
+      && difficultyManager.trySpawnZombie({ pos: { x: 0, y: 31, z: 0 }, yaw: 0 }) === null);
+  difficultyManager.setDifficulty('hard');
+  check('сложность меняет лимит мобов', difficultyManager.max === 18 && difficultyManager.difficulty === 'hard');
   check('птицу можно поразить, пока она жива', (() => {
     const bird = new mobs.Mob(flat, mobs.makeMobVisuals('bird'), 'bird', 0.5, 36, 0.5);
     const targetable = bird.hittable();
@@ -664,9 +782,14 @@ check('лук не стакается', maxStack(ITEM.BOW) === 1);
   check('после анимации моб убирается из мира', dead.dead);
 }
 
-// Разметка: кнопка «К спавну» и слой молний
+// Разметка экранов и локальная 3D-молния (без полноэкранного flash overlay)
 const html = await (await import('node:fs/promises')).readFile(new URL('./index.html', import.meta.url), 'utf8');
-check('btn-home + lightning in markup', html.includes('id="btn-home"') && html.includes('id="lightning"'));
+const weatherSource = await (await import('node:fs/promises')).readFile(new URL('./src/weather.js', import.meta.url), 'utf8');
+check('экран миров и форма создания доступны в разметке', html.includes('id="world-list-screen"')
+  && html.includes('id="world-create-screen"') && html.includes('id="world-name"')
+  && html.includes('id="world-seed"') && html.includes('id="world-difficulty"'));
+check('молния создаётся в конкретной точке, экран не вспыхивает целиком', weatherSource.includes('_createLightning')
+  && weatherSource.includes('lightningStrike') && !html.includes('id="lightning"'));
 check('разметка: выбор режима, инвентарь, рюкзак', html.includes('id="mode-screen"')
   && html.includes('id="inventory-screen"') && html.includes('id="btn-bag"')
   && html.includes('id="cursor-item"') && html.includes('id="inv-hotbar-row"'));

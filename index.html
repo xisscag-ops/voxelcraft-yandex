@@ -59,6 +59,7 @@
       <div class="menu-buttons">
         <button id="btn-play" class="btn primary" data-i18n="play">Играть</button>
         <button id="btn-new-world" class="btn hidden" data-i18n="new_world">Новый мир</button>
+        <button id="btn-worlds" class="btn" data-i18n="worlds">Миры</button>
         <button id="btn-reward" class="btn reward" data-i18n="reward_btn">Смотреть рекламу</button>
         <button id="btn-settings" class="btn" data-i18n="settings">Настройки</button>
         <button id="btn-howto" class="btn" data-i18n="howto">Как играть</button>
@@ -80,6 +81,52 @@
           <span class="mode-btn-sub" data-i18n="mode_creative_sub">Бесконечные блоки, полёт, бессмертие</span>
         </button>
         <button id="btn-mode-back" class="btn" data-i18n="back">Назад</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="world-list-screen" class="screen hidden">
+    <div class="panel wide">
+      <h2 data-i18n="worlds_title">Ваши миры</h2>
+      <div id="world-list-empty" class="world-list-empty hidden" data-i18n="worlds_empty">Пока нет сохранённых миров.</div>
+      <div id="world-list" class="world-list"></div>
+      <div class="menu-buttons world-actions">
+        <button id="btn-world-create" class="btn primary" data-i18n="create_world">Создать мир</button>
+        <button id="btn-world-list-back" class="btn" data-i18n="back">Назад</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="world-create-screen" class="screen hidden">
+    <div class="panel world-form-panel">
+      <h2 data-i18n="create_world">Создать мир</h2>
+      <label class="world-field">
+        <span data-i18n="world_name">Название мира</span>
+        <input id="world-name" type="text" maxlength="32" placeholder="Мой мир" data-i18n-placeholder="world_name_placeholder" />
+      </label>
+      <label class="world-field">
+        <span data-i18n="world_seed">Сид (необязательно)</span>
+        <input id="world-seed" type="text" maxlength="32" inputmode="text" placeholder="Случайный" data-i18n-placeholder="world_seed_placeholder" />
+      </label>
+      <label class="world-field">
+        <span data-i18n="world_mode">Режим</span>
+        <select id="world-mode">
+          <option value="survival" data-i18n="mode_survival">Выживание</option>
+          <option value="creative" data-i18n="mode_creative">Креатив</option>
+        </select>
+      </label>
+      <label class="world-field">
+        <span data-i18n="difficulty">Сложность</span>
+        <select id="world-difficulty">
+          <option value="peaceful" data-i18n="difficulty_peaceful">Мирная</option>
+          <option value="easy" data-i18n="difficulty_easy">Лёгкая</option>
+          <option value="normal" data-i18n="difficulty_normal">Обычная</option>
+          <option value="hard" data-i18n="difficulty_hard">Сложная</option>
+        </select>
+      </label>
+      <div class="menu-buttons">
+        <button id="btn-create-world-confirm" class="btn primary" data-i18n="create_world">Создать мир</button>
+        <button id="btn-world-create-back" class="btn" data-i18n="back">Назад</button>
       </div>
     </div>
   </div>
@@ -204,7 +251,6 @@
   <div id="ad-overlay" class="hidden"><div class="spinner"></div></div>
 
   <!-- Вспышка молнии -->
-  <div id="lightning"></div>
 
   <!-- Подсказка поворота экрана -->
   <div id="rotate-hint" class="hidden">

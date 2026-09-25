@@ -44,14 +44,14 @@ export class Player {
   }
 
   /** Урон с неуязвимостью 0.7 с. true — если урон прошёл */
-  hurt(n) {
+  hurt(n, cause = 'unknown') {
     if (this.invulnerable) return false;
     if (this.hurtT > 0 || this.hp <= 0) return false;
     this.hp = Math.max(0, this.hp - n);
     this.hurtT = 0.7;
     this.regenT = 0;
-    if (this.events.onHurt) this.events.onHurt(n);
-    if (this.hp <= 0 && this.events.onDeath) this.events.onDeath();
+    if (this.events.onHurt) this.events.onHurt(n, cause);
+    if (this.hp <= 0 && this.events.onDeath) this.events.onDeath(cause);
     return true;
   }
 
@@ -158,7 +158,7 @@ export class Player {
         if (this.events.onLand) this.events.onLand();
         const fall = (this._fallFrom ?? this.pos.y) - this.pos.y;
         this._fallFrom = null;
-        if (fall > 3.2 && this.hp > 0) this.hurt(Math.min(8, Math.floor(fall - 3)));
+        if (fall > 3.2 && this.hp > 0) this.hurt(Math.min(8, Math.floor(fall - 3)), 'fall');
       }
     }
 

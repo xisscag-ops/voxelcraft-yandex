@@ -9,9 +9,11 @@ export class UI {
       onPlay: null, onResume: null, onSaveQuit: null, onNewWorld: null,
       onSettingsChange: null, onReward: null, onSlot: null, onPauseBtn: null,
       onToSpawn: null, onMode: null, onModeBack: null, onBag: null,
+      onWorlds: null, onCreateWorld: null, onLoadWorld: null, onDeleteWorld: null,
     };
-    this._screens = ['loading-screen', 'menu-screen', 'mode-screen', 'pause-screen',
-      'howto-screen', 'settings-screen', 'inventory-screen'];
+    this._screens = ['loading-screen', 'menu-screen', 'mode-screen', 'world-list-screen',
+      'world-create-screen', 'pause-screen', 'howto-screen', 'settings-screen', 'inventory-screen'];
+    this._worldCreatorReturn = 'world-list-screen';
     this._bind();
   }
 
@@ -24,6 +26,26 @@ export class UI {
     };
     click('btn-play', () => this.handlers.onPlay?.());
     click('btn-new-world', () => this.handlers.onNewWorld?.());
+    click('btn-worlds', () => this.handlers.onWorlds?.());
+    click('btn-world-create', () => this.showWorldCreator('world-list-screen'));
+    click('btn-world-list-back', () => this.showScreen('menu-screen'));
+    click('btn-world-create-back', () => this.showScreen(this._worldCreatorReturn || 'world-list-screen'));
+    click('btn-create-world-confirm', () => {
+      this.handlers.onCreateWorld?.({
+        name: document.getElementById('world-name')?.value || '',
+        seed: document.getElementById('world-seed')?.value || '',
+        mode: document.getElementById('world-mode')?.value || 'survival',
+        difficulty: document.getElementById('world-difficulty')?.value || 'normal',
+      });
+    });
+    document.getElementById('world-list')?.addEventListener('click', (event) => {
+      const target = event.target.closest('[data-world-action]');
+      if (!target) return;
+      event.stopPropagation();
+      const id = target.dataset.worldId;
+      if (target.dataset.worldAction === 'delete') this.handlers.onDeleteWorld?.(id);
+      else if (target.dataset.worldAction === 'load') this.handlers.onLoadWorld?.(id);
+    });
     click('btn-resume', () => this.handlers.onResume?.());
     click('btn-save-quit', () => this.handlers.onSaveQuit?.());
     click('btn-settings', () => this.showScreen('settings-screen', true));
@@ -91,6 +113,9 @@ export class UI {
     document.querySelectorAll('[data-i18n-html]').forEach((el) => {
       el.innerHTML = t(el.getAttribute('data-i18n-html'));
     });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
+      el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
+    });
     const volTitle = document.getElementById('set-volume-title');
     if (volTitle) volTitle.textContent = t('volume');
     // Кнопка «Продолжить», если сейв есть
@@ -111,6 +136,56 @@ export class UI {
     const btnPlay = document.getElementById('btn-play');
     if (btnPlay) btnPlay.textContent = this.i18n.t(v ? 'continue' : 'play');
     document.getElementById('btn-new-world')?.classList.toggle('hidden', !v);
+  }
+
+  showWorlds(worlds, activeId) {
+    this.setWorlds(worlds, activeId);
+    this.showScreen('world-list-screen');
+  }
+
+  setWorlds(worlds = [], activeId = null) {
+    const list = document.getElementById('world-list');
+    if (!list) return;
+    list.replaceChildren();
+    document.getElementById('world-list-empty')?.classList.toggle('hidden', worlds.length > 0);
+    for (const world of worlds) {
+      const row = document.createElement('div');
+      row.className = `world-row${world.id === activeId ? ' active' : ''}`;
+      const load = document.createElement('button');
+      load.type = 'button';
+      load.className = 'world-load';
+      load.dataset.worldAction = 'load';
+      load.dataset.worldId = world.id;
+      const title = document.createElement('span');
+      title.className = 'world-name';
+      title.textContent = world.name;
+      const meta = document.createElement('small');
+      meta.className = 'world-meta';
+      meta.textContent = `${this.i18n.t(world.mode === 'survival' ? 'mode_survival' : 'mode_creative')} · ${this.i18n.t(`difficulty_${world.difficulty}`)} · ${this.i18n.t('world_seed_short')} ${world.seed}`;
+      load.append(title, meta);
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'world-delete';
+      remove.dataset.worldAction = 'delete';
+      remove.dataset.worldId = world.id;
+      remove.textContent = '×';
+      remove.setAttribute('aria-label', this.i18n.t('delete_world'));
+      row.append(load, remove);
+      list.appendChild(row);
+    }
+  }
+
+  showWorldCreator(returnTo = 'world-list-screen') {
+    this._worldCreatorReturn = returnTo;
+    const name = document.getElementById('world-name');
+    const seed = document.getElementById('world-seed');
+    const mode = document.getElementById('world-mode');
+    const difficulty = document.getElementById('world-difficulty');
+    if (name) name.value = '';
+    if (seed) seed.value = '';
+    if (mode) mode.value = 'survival';
+    if (difficulty) difficulty.value = 'normal';
+    this.showScreen('world-create-screen');
   }
 
   showScreen(id, overlay = false) {
@@ -309,11 +384,4 @@ export class UI {
     el.classList.add('on');
   }
 
-  flashLightning() {
-    const el = document.getElementById('lightning');
-    if (!el) return;
-    el.classList.remove('flash');
-    void el.offsetWidth; // рестарт анимации
-    el.classList.add('flash');
-  }
 }

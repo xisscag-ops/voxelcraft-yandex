@@ -1277,6 +1277,7 @@ export class MobManager {
     this.onDeath = null;  // (mob) => void
     this.onExplode = null; // (mob) => void — взрыв крипера
     this.night = true;
+    this.difficulty = 'normal';
     this.eyeMat = new THREE.MeshBasicMaterial({ color: 0x8ef6ff });
   }
 
@@ -1294,13 +1295,14 @@ export class MobManager {
 
   _randomType() {
     const r = Math.random();
-    if (this.night) {
-      // Ночью выходят пауки и криперы
-      if (r < 0.26) return 'spider';
-      if (r < 0.44) return 'creeper';
-      if (r < 0.6) return 'bunny';
-      if (r < 0.74) return 'sheep';
-      if (r < 0.86) return 'slime';
+    if (this.night && this.difficulty !== 'peaceful') {
+      const hostileChance = this.difficulty === 'easy' ? 0.24 : this.difficulty === 'hard' ? 0.62 : 0.44;
+      if (r < hostileChance * 0.55) return 'spider';
+      if (r < hostileChance) return 'creeper';
+      const passiveRoll = (r - hostileChance) / (1 - hostileChance);
+      if (passiveRoll < 0.28) return 'bunny';
+      if (passiveRoll < 0.52) return 'sheep';
+      if (passiveRoll < 0.76) return 'slime';
       return 'wolf';
     }
     if (r < 0.28) return 'bunny';
@@ -1308,6 +1310,11 @@ export class MobManager {
     if (r < 0.66) return 'slime';
     if (r < 0.8) return 'wolf';
     return 'bird';
+  }
+
+  setDifficulty(difficulty = 'normal') {
+    this.difficulty = ['peaceful', 'easy', 'normal', 'hard'].includes(difficulty) ? difficulty : 'normal';
+    this.max = this.difficulty === 'hard' ? 18 : this.difficulty === 'easy' || this.difficulty === 'peaceful' ? 10 : 14;
   }
 
   _buildVisuals(type) {
@@ -1405,6 +1412,7 @@ export class MobManager {
   // Ночной спавн зомби (и отдельный хук для тестов) — тоже только вне видимости
   trySpawnZombie(player) {
     const playerPos = player.pos || player;
+    if (this.difficulty === 'peaceful') return null;
     if (this.mobs.filter((m) => m.type === 'zombie').length >= 4) return null;
     for (let attempt = 0; attempt < 10; attempt++) {
       const ang = Math.random() * Math.PI * 2;

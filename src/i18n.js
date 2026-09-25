@@ -5,6 +5,23 @@ export const STRINGS = {
     tagline: 'Воксельная песочница',
     play: 'Играть',
     new_world: 'Новый мир',
+    worlds: 'Миры',
+    worlds_title: 'Сохранённые миры',
+    worlds_empty: 'Пока нет сохранённых миров.',
+    create_world: 'Создать мир',
+    delete_world: 'Удалить мир',
+    delete_world_confirm: 'Это действие нельзя отменить.',
+    world_name: 'Название мира',
+    world_name_placeholder: 'Мой мир',
+    world_seed: 'Сид (необязательно)',
+    world_seed_placeholder: 'Случайный',
+    world_seed_short: 'сид',
+    world_mode: 'Режим игры',
+    difficulty: 'Сложность',
+    difficulty_peaceful: 'Мирная',
+    difficulty_easy: 'Лёгкая',
+    difficulty_normal: 'Обычная',
+    difficulty_hard: 'Сложная',
     continue: 'Продолжить',
     settings: 'Настройки',
     howto: 'Как играть',
@@ -30,8 +47,9 @@ export const STRINGS = {
       колесо/1-9 — выбор слота, пробел — прыжок, Ctrl — бег, Shift — вниз в полёте,
       <b>E</b> — инвентарь и крафт, <b>F</b> — съесть яблоко сразу, Esc — пауза.
       С едой в руке удерживайте <b>ЛКМ</b> — персонаж жуёт, и предмет уходит в дело.<br><br>
-      <b>Режимы:</b> в «Выживании» сломанные блоки попадают в инвентарь, блоки тратятся при
-      установке, инструменты ускоряют работу, а мобы наносят урон. В «Креативе» все блоки
+      <b>Миры:</b> создавайте отдельные миры, задавайте имя, сид, режим и сложность; прогресс
+      каждого мира хранится отдельно. В «Выживании» блоки выпадают в мир — подойдите, чтобы подобрать,
+      установка тратит блоки, инструменты ускоряют работу, а мобы наносят урон. В «Креативе» все блоки
       бесконечны, блоки ломаются почти мгновенно, полёт — двойным пробелом, а игрок бессмертен.<br><br>
       <b>Крафт:</b> откройте инвентарь (E). Слева — список рецептов (доступные подсвечены зелёным,
       клик — быстрый крафт), справа вверху — сетка 2×2: кладите предметы ЛКМ/ПКМ и забирайте результат.
@@ -72,6 +90,13 @@ export const STRINGS = {
     rain_stop: 'Небо проясняется',
     blocks_built: 'Построено блоков',
     died: 'Вы погибли!',
+    death_cause_fall: 'Причина: падение.',
+    death_cause_creeper: 'Причина: взрыв крипера.',
+    death_cause_zombie: 'Причина: атака зомби.',
+    death_cause_spider: 'Причина: атака паука.',
+    death_cause_wolf: 'Причина: атака волка.',
+    death_cause_slime: 'Причина: атака слайма.',
+    death_cause_unknown: 'Причина: неизвестна.',
     respawned: 'Возрождение у спавна',
     apple_get: 'Яблоко подобрано (F — съесть)',
     eat_ok: 'Хрусть! +2 сердца',
@@ -137,6 +162,23 @@ export const STRINGS = {
     tagline: 'Voxel sandbox',
     play: 'Play',
     new_world: 'New world',
+    worlds: 'Worlds',
+    worlds_title: 'Saved worlds',
+    worlds_empty: 'No saved worlds yet.',
+    create_world: 'Create world',
+    delete_world: 'Delete world',
+    delete_world_confirm: 'This action cannot be undone.',
+    world_name: 'World name',
+    world_name_placeholder: 'My world',
+    world_seed: 'Seed (optional)',
+    world_seed_placeholder: 'Random',
+    world_seed_short: 'seed',
+    world_mode: 'Game mode',
+    difficulty: 'Difficulty',
+    difficulty_peaceful: 'Peaceful',
+    difficulty_easy: 'Easy',
+    difficulty_normal: 'Normal',
+    difficulty_hard: 'Hard',
     continue: 'Continue',
     settings: 'Settings',
     howto: 'How to play',
@@ -162,7 +204,8 @@ export const STRINGS = {
       wheel/1-9 — pick slot, Space — jump, Ctrl — sprint, Shift — down while flying,
       <b>E</b> — inventory & crafting, <b>F</b> — eat an apple instantly, Esc — pause.
       With food in hand hold <b>LMB</b> — the character chews and the item is used up.<br><br>
-      <b>Modes:</b> in <b>Survival</b> broken blocks go to your inventory, placing consumes them,
+      <b>Worlds:</b> create separate worlds with a name, seed, mode and difficulty; each keeps its own progress.
+      In <b>Survival</b> broken blocks drop into the world, so walk close to collect them; placing consumes blocks,
       tools make work faster and mobs can hurt you. In <b>Creative</b> every block is infinite,
       blocks break almost instantly, double-tap Space flies and you cannot die.<br><br>
       <b>Crafting:</b> open the inventory (E). The recipe list is on the left (available ones are
@@ -204,6 +247,13 @@ export const STRINGS = {
     rain_stop: 'The sky clears up',
     blocks_built: 'Blocks built',
     died: 'You died!',
+    death_cause_fall: 'Cause: fall damage.',
+    death_cause_creeper: 'Cause: creeper explosion.',
+    death_cause_zombie: 'Cause: zombie attack.',
+    death_cause_spider: 'Cause: spider attack.',
+    death_cause_wolf: 'Cause: wolf attack.',
+    death_cause_slime: 'Cause: slime attack.',
+    death_cause_unknown: 'Cause: unknown.',
     respawned: 'Respawned at spawn',
     apple_get: 'Apple picked up (F to eat)',
     eat_ok: 'Crunch! +2 hearts',

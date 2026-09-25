@@ -14,6 +14,7 @@ export const ITEM = {
   WOOD_AXE: 'tool_wood_axe',
   WOOD_SWORD: 'tool_wood_sword',
   STONE_PICKAXE: 'tool_stone_pickaxe',
+  STONE_AXE: 'tool_stone_axe',
   STONE_SWORD: 'tool_stone_sword',
   COAL: 'coal',
   RAW_IRON: 'raw_iron',
@@ -68,6 +69,11 @@ export const ITEMS = {
     kind: 'tool', tool: 'pickaxe', tier: 'stone', max: 1, icon: 'stone_pickaxe',
     speed: 0.55, damage: 1,
     name: { ru: 'Каменная кирка', en: 'Stone pickaxe' },
+  },
+  [ITEM.STONE_AXE]: {
+    kind: 'tool', tool: 'axe', tier: 'stone', max: 1, icon: 'stone_axe',
+    speed: 0.32, damage: 3,
+    name: { ru: 'Каменный топор', en: 'Stone axe' },
   },
   [ITEM.STONE_SWORD]: {
     kind: 'tool', tool: 'sword', tier: 'stone', max: 1, icon: 'stone_sword',
@@ -160,6 +166,7 @@ const ITEM_DETAILS = {
   [ITEM.WOOD_AXE]: { ru: 'Ускоряет добычу брёвен и деревянных блоков. Урон по мобу: 1.', en: 'Speeds up mining logs and wooden blocks. Mob damage: 1.' },
   [ITEM.WOOD_SWORD]: { ru: 'Оружие ближнего боя. Урон по мобу: 2.', en: 'A melee weapon. Mob damage: 2.' },
   [ITEM.STONE_PICKAXE]: { ru: 'Быстрее деревянной кирки добывает камень и руды. Урон: 1.', en: 'Mines stone and ore faster than a wooden pickaxe. Damage: 1.' },
+  [ITEM.STONE_AXE]: { ru: 'Быстро рубит брёвна и деревянные блоки. Урон по мобу: 3.', en: 'Chops logs and wooden blocks quickly. Mob damage: 3.' },
   [ITEM.STONE_SWORD]: { ru: 'Прочный меч для ближнего боя. Урон по мобу: 3.', en: 'A sturdy melee weapon. Mob damage: 3.' },
   [ITEM.COAL]: { ru: 'Топливо для печи. Одной порции хватает примерно на две плавки.', en: 'Furnace fuel. One piece lasts for about two smelts.' },
   [ITEM.RAW_IRON]: { ru: 'Сырьё из железной руды. Переплавьте в печи, чтобы получить слиток.', en: 'Raw ore from iron deposits. Smelt it in a furnace to make an ingot.' },
@@ -302,6 +309,8 @@ export function breakTime(id, heldKey, mode = 'survival', cfg = CONFIG.BREAK_TIM
 }
 
 // ---------------------------------------------------------------- Физические дропы в мире
+export const ITEM_MAGNET_RANGE = 4.2;
+export const ITEM_PICKUP_RANGE = 0.58;
 const APPLE = { color: 0xd64545, stem: 0x6b4a2b };
 const ORE_COLORS = {
   [ITEM.COAL]: 0x2e2e2e,
@@ -388,6 +397,7 @@ export class ItemDrops {
       t: 0,
       life: 90,
       rest: false,
+      attracting: false,
     };
     this.items.push(it);
     return it;
@@ -409,7 +419,29 @@ export class ItemDrops {
       it.life -= dt;
       const p = it.group.position;
 
-      if (!it.rest) {
+      const targetX = playerPos.x, targetY = playerPos.y + 0.85, targetZ = playerPos.z;
+      let dx = targetX - p.x, dy = targetY - p.y, dz = targetZ - p.z;
+      let distanceSq = dx * dx + dy * dy + dz * dz;
+
+      // На полу предмет ждёт; только когда игрок подходит достаточно близко,
+      // он медленно скользит к нему. Пока летит/падает, сохраняет обычную физику.
+      if (!it.attracting && it.rest && distanceSq < ITEM_MAGNET_RANGE * ITEM_MAGNET_RANGE) {
+        it.attracting = true;
+        it.vel.x = it.vel.y = it.vel.z = 0;
+      }
+
+      if (it.attracting) {
+        const distance = Math.sqrt(distanceSq);
+        if (distance > 0.0001) {
+          const speed = Math.min(2.4, 0.8 + (ITEM_MAGNET_RANGE - Math.min(distance, ITEM_MAGNET_RANGE)) * 0.45);
+          const step = Math.min(distance, speed * dt);
+          p.x += dx / distance * step;
+          p.y += dy / distance * step;
+          p.z += dz / distance * step;
+        }
+        dx = targetX - p.x; dy = targetY - p.y; dz = targetZ - p.z;
+        distanceSq = dx * dx + dy * dy + dz * dz;
+      } else if (!it.rest) {
         it.vel.y -= 9 * dt;
         p.x += it.vel.x * dt;
         p.y += it.vel.y * dt;
@@ -427,9 +459,8 @@ export class ItemDrops {
 
       it.group.rotation.y += dt * 1.8;
 
-      // Подбор
-      const dx = p.x - playerPos.x, dz = p.z - playerPos.z, dy = p.y - (playerPos.y + 0.9);
-      if (dx * dx + dz * dz + dy * dy < 1.7) {
+      // Подбор происходит только вплотную, после физического падения и притяжения.
+      if (distanceSq < ITEM_PICKUP_RANGE * ITEM_PICKUP_RANGE) {
         this.scene.remove(it.group);
         this.items.splice(i, 1);
         if (this.onPickup) this.onPickup(it.kind);

@@ -189,6 +189,31 @@ html, body {
   box-shadow: 0 12px 48px rgba(0,0,0,0.5);
 }
 .panel.wide { min-width: min(560px, 92vw); }
+.world-form-panel { width: min(440px, 92vw); max-height: calc(100vh - 32px); overflow-y: auto; text-align: left; }
+.world-form-panel h2 { text-align: center; }
+#world-list-screen .panel { max-height: calc(100vh - 32px); overflow-y: auto; }
+.world-field { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; color: #dce5f5; text-align: left; font-size: 14px; }
+.world-field input, .world-field select {
+  width: 100%; box-sizing: border-box; padding: 11px 12px; color: #f4f4f4;
+  background: #202943; border: 1px solid rgba(255,255,255,0.25); border-radius: 7px;
+  font: 500 15px/1.2 'Segoe UI', sans-serif;
+}
+.world-field select option { color: #f4f4f4; background: #202943; }
+.world-list { display: flex; flex-direction: column; gap: 8px; max-height: min(48vh, 430px); overflow-y: auto; margin-top: 14px; }
+.world-list-empty { color: #aab4cc; padding: 18px 6px; }
+.world-row { display: flex; align-items: stretch; gap: 8px; }
+.world-row.active .world-load { border-color: #8ed763; background: rgba(89, 143, 51, 0.24); }
+.world-load {
+  display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 0; padding: 12px 14px;
+  color: #f4f4f4; text-align: left; background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.2); border-radius: 7px; cursor: pointer;
+}
+.world-load:hover { background: rgba(255,255,255,0.14); }
+.world-name { overflow: hidden; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.world-meta { color: #aab4cc; font-size: 12px; }
+.world-delete { width: 44px; border: 1px solid rgba(255,110,110,0.4); border-radius: 7px; color: #ffc1c1; background: rgba(165,45,45,0.2); font-size: 24px; cursor: pointer; }
+.world-delete:hover { background: rgba(195,55,55,0.45); }
+.world-actions { margin-top: 14px; }
 
 .logo {
   margin: 0 0 4px;
@@ -344,22 +369,6 @@ html, body {
 }
 #hurt-flash.on { animation: hurtflash 0.5s ease-out; }
 @keyframes hurtflash { 0% { opacity: 1; } 100% { opacity: 0; } }
-
-#lightning {
-  position: fixed; inset: 0;
-  background: linear-gradient(180deg, rgba(230, 240, 255, 0.95), rgba(180, 205, 255, 0.55));
-  opacity: 0;
-  pointer-events: none;
-  z-index: 8;
-}
-#lightning.flash { animation: lightning 0.35s ease-out; }
-@keyframes lightning {
-  0% { opacity: 0; }
-  15% { opacity: 1; }
-  35% { opacity: 0.15; }
-  55% { opacity: 0.8; }
-  100% { opacity: 0; }
-}
 
 /* ---------- Адаптив ---------- */
 @media (max-width: 760px) {

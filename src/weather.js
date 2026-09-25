@@ -1,5 +1,6 @@
 // Погода: дождь (линии-капли), снег (точки с покачиванием), гроза со вспышками
-const WEATHER_LIFECYCLE = { clear: [50, 110], rain: [40, 90] };
+// Долгие ясные интервалы делают дождь заметно реже, а ливни — короче.
+export const WEATHER_LIFECYCLE = { clear: [150, 280], rain: [28, 55] };
 
 export class Weather {
   constructor(THREE, scene) {
@@ -7,9 +8,12 @@ export class Weather {
     this.scene = scene;
     this.state = 'clear';       // 'clear' | 'rain'
     this.intensity = 0;         // 0..1 (плавное проявление)
-    this.timer = 25 + Math.random() * 30;
-    this.flashing = 0;          // вспышка молнии (сек до конца)
+    this.timer = 80 + Math.random() * 80;
+    this.flashing = 0;          // длительность локального удара молнии
     this.thunderT = 0;          // таймер до грома (звук с задержкой)
+    this.lightningGroup = null;
+    this.lightningLife = 0;
+    this.lightningStrike = null;
     this._rngSeed = Math.random() * 1000;
 
     // ---- Дождь: сегменты-капли ----
@@ -49,9 +53,89 @@ export class Weather {
 
   // Тест/отладка: принудительная смена погоды
   force(state) {
+    if (!WEATHER_LIFECYCLE[state]) return;
     this.state = state;
     this.timer = WEATHER_LIFECYCLE[state][0];
     this.intensity = state === 'clear' ? this.intensity : 1;
+  }
+
+  _removeLightning() {
+    if (!this.lightningGroup) return;
+    this.scene.remove(this.lightningGroup);
+    this.lightningGroup.traverse((obj) => {
+      if (obj.geometry && obj.geometry !== this.rainGeo && obj.geometry !== this.snowGeo) obj.geometry.dispose?.();
+      if (obj.material && !Array.isArray(obj.material)) obj.material.dispose?.();
+    });
+    this.lightningGroup = null;
+    this.lightningLife = 0;
+    this.lightningStrike = null;
+  }
+
+  _createLightning(playerPos, world) {
+    this._removeLightning();
+    const THREE = this.THREE;
+    const angle = Math.random() * Math.PI * 2;
+    const distance = 10 + Math.random() * 20;
+    const x = Math.floor(playerPos.x + Math.cos(angle) * distance);
+    const z = Math.floor(playerPos.z + Math.sin(angle) * distance);
+    const groundY = Math.max(1, world.heightAt(x, z) + 1);
+    const topY = Math.min(world.worldHeight - 1, Math.max(groundY + 12, playerPos.y + 15));
+    const startX = x + 0.5, startZ = z + 0.5;
+    const vertices = [];
+    let px = startX, pz = startZ;
+    for (let y = topY; y > groundY; y -= 2.4) {
+      const nextY = Math.max(groundY, y - 2.4);
+      const nx = px + (Math.random() - 0.5) * 2.4;
+      const nz = pz + (Math.random() - 0.5) * 2.4;
+      vertices.push(px, y, pz, nx, nextY, nz);
+      // Короткие боковые ответвления подчёркивают форму разряда.
+      if (Math.random() < 0.35 && nextY > groundY + 3) {
+        const side = Math.random() < 0.5 ? -1 : 1;
+        vertices.push(nx, nextY, nz, nx + side * (1.2 + Math.random()), nextY - 1.1, nz + (Math.random() - 0.5) * 1.6);
+      }
+      px = nx; pz = nz;
+    }
+    if (vertices.length === 0) vertices.push(startX, topY, startZ, startX, groundY, startZ);
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geometry.computeBoundingSphere?.();
+    const core = new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({
+      color: 0xe7f4ff, transparent: true, opacity: 1, depthWrite: false,
+    }));
+    const halo = new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({
+      color: 0x78baff, transparent: true, opacity: 0.42, depthWrite: false,
+    }));
+    const group = new THREE.Group();
+    group.add(halo, core);
+    const light = new THREE.PointLight(0x9dcfff, 2.3, 13, 2);
+    light.position.set(startX, groundY + 2, startZ);
+    group.add(light);
+    const impact = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.42, 0.42, 0.035, 8),
+      new THREE.MeshBasicMaterial({ color: 0xd9edff, transparent: true, opacity: 0.8, depthWrite: false }),
+    );
+    impact.position.set(startX, groundY + 0.02, startZ);
+    group.add(impact);
+    group.userData.materials = [core.material, halo.material, impact.material];
+    group.userData.light = light;
+    this.scene.add(group);
+    this.lightningGroup = group;
+    this.lightningLife = 0.55;
+    this.lightningStrike = { x: startX, y: groundY, z: startZ, distance };
+    return this.lightningStrike;
+  }
+
+  reset() {
+    this._removeLightning();
+    this.state = 'clear';
+    this.intensity = 0;
+    this.timer = 80 + Math.random() * 80;
+    this.flashing = 0;
+    this.thunderT = 0;
+    this._filled = false;
+    this.rainLines.visible = false;
+    this.snowPoints.visible = false;
   }
 
   _fill(playerPos, world) {
@@ -114,23 +198,30 @@ export class Weather {
       this.snowMat.opacity = 0;
     }
 
-    // Молния во время дождя
+    // Молния — тонкий объёмный разряд в выбранной точке мира, без вспышки поверх экрана.
     if (this.state === 'rain' && this.intensity > 0.5) {
       if (this.flashing > 0) {
-        this.flashing -= dt;
-        if (this.flashing <= 0 && this.thunderT > 0) {
-          // ждём «световую задержку» до грома
-        }
+        this.flashing = Math.max(0, this.flashing - dt);
       } else if (Math.random() < dt * 0.03) {
+        const strike = this._createLightning(playerPos, world);
         this.flashing = 0.35;
-        const delay = 0.3 + Math.random() * 2.2;
-        this.thunderT = delay;
-        if (cbs.onFlash) cbs.onFlash();
+        this.thunderT = Math.max(0.12, strike.distance / 343);
+        if (cbs.onFlash) cbs.onFlash(strike);
       }
+    }
+    if (this.lightningGroup) {
+      this.lightningLife = Math.max(0, this.lightningLife - dt);
+      const fade = this.lightningLife > 0.13 ? 1 : this.lightningLife / 0.13;
+      const materials = this.lightningGroup.userData.materials || [];
+      if (materials[0]) materials[0].opacity = fade;
+      if (materials[1]) materials[1].opacity = 0.42 * fade;
+      if (materials[2]) materials[2].opacity = 0.8 * fade;
+      if (this.lightningGroup.userData.light) this.lightningGroup.userData.light.intensity = 2.3 * fade;
+      if (this.lightningLife <= 0) this._removeLightning();
     }
     if (this.thunderT > 0) {
       this.thunderT -= dt;
-      if (this.thunderT <= 0 && cbs.onThunder) cbs.onThunder();
+      if (this.thunderT <= 0 && cbs.onThunder) cbs.onThunder(this.lightningStrike);
     }
 
     if (!this._filled) this._fill(playerPos, world);
@@ -170,8 +261,8 @@ export class Weather {
       }
     }
 
-    // Яркость вспышки молнии (0..1)
-    return this.flashing > 0 ? this.flashing / 0.35 : 0;
+    // Молния освещает только ближайшую область; глобальный множитель экрана не меняется.
+    return 0;
   }
 
   // Над заснеженными горами осадки — снег

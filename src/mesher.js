@@ -1,5 +1,5 @@
 // Меширование вокселей: только видимые грани + ambient occlusion на вершинах
-import { BLOCKS, isOpaque, isLiquid, isDecor, isSlab, isTorch } from './blocks.js';
+import { BLOCK, BLOCKS, isOpaque, isLiquid, isDecor, isSlab } from './blocks.js';
 import { tileUV } from './textures.js';
 
 // Яркость граней (классический «мультипликационный» свет)
@@ -80,6 +80,54 @@ class MeshBuilder {
   }
 }
 
+function createLighting(world, ox, oz, S, H) {
+  const skyColumns = new Map();
+  const torches = [];
+  // Правки мира — быстрый источник факелов; при пересборке чанк уже знает их позиции.
+  if (world.edits?.[Symbol.iterator]) {
+    for (const [key, id] of world.edits) {
+      if (id !== BLOCK.TORCH) continue;
+      const [x, y, z] = key.split(',').map(Number);
+      if (x < ox - 9 || x > ox + S + 9 || z < oz - 9 || z > oz + S + 9) continue;
+      torches.push({ x: x + 0.5, y: y + 0.72, z: z + 0.5 });
+    }
+  }
+
+  function skyVisibleAt(px, py, pz, normal) {
+    // Чуть выносим пробу за грань, чтобы не считать сам блок преградой для света.
+    const bx = Math.floor(px + normal[0] * 0.02);
+    const by = Math.floor(py + normal[1] * 0.02);
+    const bz = Math.floor(pz + normal[2] * 0.02);
+    if (by >= H) return 1;
+    if (by < 0) return 0.1;
+    const key = `${bx},${bz}`;
+    let column = skyColumns.get(key);
+    if (!column) {
+      column = new Uint8Array(H);
+      let blocked = false;
+      for (let y = H - 1; y >= 0; y--) {
+        if (isOpaque(world.getBlock(bx, y, bz))) blocked = true;
+        column[y] = blocked ? 0 : 1;
+      }
+      skyColumns.set(key, column);
+    }
+    return column[by] ? 1 : 0.1;
+  }
+
+  return (p, normal, skyProbe = p) => {
+    let brightness = skyVisibleAt(skyProbe[0], skyProbe[1], skyProbe[2], normal);
+    for (const torch of torches) {
+      const d = Math.hypot(p[0] - torch.x, p[1] - torch.y, p[2] - torch.z);
+      if (d >= 8.5) continue;
+      const falloff = 1 - d / 8.5;
+      // Значение выше единицы компенсирует общий ночной tint terrainMat,
+      // так что факел освещает пещеру, не делая ярче поверхность днём.
+      brightness = Math.max(brightness, 3.6 * falloff * falloff);
+    }
+    return brightness;
+  };
+}
+
 /**
  * Строит меши чанка.
  * @param {*} THREE модуль three
@@ -92,6 +140,7 @@ export function meshChunk(THREE, world, cx, cz) {
   const water = new MeshBuilder();
   const S = world.chunkSize, H = world.worldHeight;
   const ox = cx * S, oz = cz * S;
+  const lightAt = createLighting(world, ox, oz, S, H);
 
   for (let y = 0; y < H; y++) {
     for (let z = 0; z < S; z++) {
@@ -104,18 +153,15 @@ export function meshChunk(THREE, world, cx, cz) {
 
         // Полублок — низкая плита
         if (isSlab(id)) {
-          addSlabFaces(opaque, world, wx, y, wz, def);
+          addSlabFaces(opaque, world, wx, y, wz, def, lightAt);
           continue;
         }
-        // Факел — тонкий столбик со светом
-        if (isTorch(id)) {
-          addTorchQuads(opaque, world, wx, y, wz, def);
-          continue;
-        }
+        // Факел рендерится объёмной моделью в main.js, не плоскими квадами.
+        if (def.torch) continue;
 
         // Декоративная растительность — два перекрёстных спрайта
         if (isDecor(id)) {
-          addDecorQuads(opaque, world, wx, y, wz, def);
+          addDecorQuads(opaque, world, wx, y, wz, def, lightAt);
           continue;
         }
 
@@ -173,7 +219,13 @@ export function meshChunk(THREE, world, cx, cz) {
 
             const u = vert.u === 0 ? u0 : u1;
             const v = vert.v === 0 ? v0 : v1;
-            const shade = emissive ? 1.0 : baseShade * AO_LEVEL[ao];
+            const probe = [
+              wx + 0.08 + vert.pos[0] * 0.84,
+              y + 0.08 + vert.pos[1] * 0.84,
+              wz + 0.08 + vert.pos[2] * 0.84,
+            ];
+            for (let axis = 0; axis < 3; axis++) if (n[axis]) probe[axis] = p[axis] + n[axis] * 0.02;
+            const shade = emissive ? 1.0 : baseShade * AO_LEVEL[ao] * lightAt(p, n, probe);
             vi.push(builder.vertex(p, u, v, shade));
           }
 
@@ -189,7 +241,7 @@ export function meshChunk(THREE, world, cx, cz) {
   return { opaque, water };
 }
 
-function addSlabFaces(builder, world, wx, y, wz, def) {
+function addSlabFaces(builder, world, wx, y, wz, def, lightAt) {
   const H = 0.5;
   const tileIdx = def.tiles[2];
   const [u0, v0, u1, v1] = tileUV(tileIdx);
@@ -227,7 +279,14 @@ function addSlabFaces(builder, world, wx, y, wz, def) {
       if (n[1] !== 0) { u = f.pos[i][0] === 0 ? u0 : u1; v = f.pos[i][2] === 0 ? v0 : v1; }
       else if (n[0] !== 0) { u = f.pos[i][2] === 0 ? u0 : u1; v = f.pos[i][1] === 0 ? v1 : (f.pos[i][1] === H ? v0 : v1 - (v1 - v0) * 0.5); }
       else { u = f.pos[i][0] === 0 ? u0 : u1; v = f.pos[i][1] === 0 ? v1 : v0; }
-      const shade = emissive ? 1.0 : f.shade;
+      const probe = [
+        wx + 0.08 + f.pos[i][0] * 0.84,
+        y + 0.08 + f.pos[i][1] * 0.84,
+        wz + 0.08 + f.pos[i][2] * 0.84,
+      ];
+      for (let axis = 0; axis < 3; axis++) if (n[axis]) probe[axis] = p[axis] + n[axis] * 0.02;
+      if (n[1] === 1) probe[1] = y + 1.02;
+      const shade = emissive ? 1.0 : f.shade * lightAt(p, n, probe);
       vi.push(builder.vertex(p, u, v, shade));
     }
     builder.idx.push(vi[0], vi[1], vi[2], vi[0], vi[2], vi[3]);
@@ -284,7 +343,7 @@ function addTorchQuads(builder, world, wx, y, wz, def) {
  * Крестовые спрайты декора (трава, цветы): две диагональные плоскости,
  * каждая рисуется с двух сторон (материал односторонний).
  */
-function addDecorQuads(builder, world, wx, y, wz, def) {
+function addDecorQuads(builder, world, wx, y, wz, def, lightAt) {
   const [u0, v0, u1, v1] = tileUV(def.tiles[2]);
   // Чем свободнее вокруг, тем ярче трава
   let open = 0;
@@ -292,7 +351,7 @@ function addDecorQuads(builder, world, wx, y, wz, def) {
   if (!isOpaque(world.getBlock(wx - 1, y, wz))) open++;
   if (!isOpaque(world.getBlock(wx, y, wz + 1))) open++;
   if (!isOpaque(world.getBlock(wx, y, wz - 1))) open++;
-  const shade = 0.72 + 0.07 * open;
+  const baseShade = 0.72 + 0.07 * open;
 
   const y0 = 0.02, y1 = 0.92, m = 0.15;
   // Две плоскости: (m,m)-(1-m,1-m) и (1-m,m)-(m,1-m)
@@ -303,10 +362,16 @@ function addDecorQuads(builder, world, wx, y, wz, def) {
   for (const [[ax, az], [bx, bz]] of planes) {
     const vi = [];
     // Кольцо: нижний А, нижний Б, верхний Б, верхний А
-    vi.push(builder.vertex([wx + ax, y + y0, wz + az], u0, v0, shade));
-    vi.push(builder.vertex([wx + bx, y + y0, wz + bz], u1, v0, shade));
-    vi.push(builder.vertex([wx + bx, y + y1, wz + bz], u1, v1, shade));
-    vi.push(builder.vertex([wx + ax, y + y1, wz + az], u0, v1, shade));
+    for (const [px, py, pz, u, v] of [
+      [wx + ax, y + y0, wz + az, u0, v0],
+      [wx + bx, y + y0, wz + bz, u1, v0],
+      [wx + bx, y + y1, wz + bz, u1, v1],
+      [wx + ax, y + y1, wz + az, u0, v1],
+    ]) {
+      const p = [px, py, pz];
+      const probe = [wx + 0.5, py + 0.02, wz + 0.5];
+      vi.push(builder.vertex(p, u, v, baseShade * lightAt(p, [0, 1, 0], probe)));
+    }
     // Обе стороны плоскости (обход/против обхода)
     builder.idx.push(vi[0], vi[1], vi[2], vi[0], vi[2], vi[3]);
     builder.idx.push(vi[2], vi[1], vi[0], vi[3], vi[2], vi[0]);

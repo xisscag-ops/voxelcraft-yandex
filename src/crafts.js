@@ -48,6 +48,10 @@ export const RECIPES = [
     patterns: [['AAA', ' B ', ' B ']], keys: { A: COBBLE, B: ITEM.STICK },
   },
   {
+    id: 'stone_axe', in: { [COBBLE]: 3, [ITEM.STICK]: 2 }, out: { key: ITEM.STONE_AXE, count: 1 },
+    patterns: [['AA', 'AB', ' B']], keys: { A: COBBLE, B: ITEM.STICK },
+  },
+  {
     id: 'stone_sword', in: { [COBBLE]: 2, [ITEM.STICK]: 1 }, out: { key: ITEM.STONE_SWORD, count: 1 },
     patterns: [['A', 'A', 'B']], keys: { A: COBBLE, B: ITEM.STICK },
   },

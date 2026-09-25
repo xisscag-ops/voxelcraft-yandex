@@ -1,5 +1,5 @@
 // Мир: чанки-колонны, генерация рельефа, деревья, правки игрока
-import { BLOCK, isSolid } from './blocks.js';
+import { BLOCK, isDecor, isSolid } from './blocks.js';
 import { fbm2d, fbm3d, makeRng, hash3 } from './noise.js';
 import { CONFIG } from './config.js';
 
@@ -41,6 +41,7 @@ export class World {
     this.seaLevel = SEA;
     this.chunks = new Map();          // "cx,cz" -> Chunk
     this.edits = new Map();           // "x,y,z" -> id (правки игрока, сохраняются)
+    this.onUnsupportedDecor = null;   // (x,y,z,id) — растение/факел лишились опоры
   }
 
   key(cx, cz) { return cx + ',' + cz; }
@@ -587,11 +588,27 @@ export class World {
     const cx = Math.floor(wx / S), cz = Math.floor(wz / S);
     const chunk = this.getChunk(cx, cz);
     const lx = wx - cx * S, lz = wz - cz * S;
-    if (chunk.get(lx, wy, lz) === id) return false;
+    const previous = chunk.get(lx, wy, lz);
+    if (previous === id) return false;
     chunk.set(lx, wy, lz, id);
     chunk.dirty = true;
     if (recordEdit) {
       this.edits.set(`${wx},${wy},${wz}`, id);
+    }
+    // Растения и факелы не висят в воздухе: если опора исчезла,
+    // автоматически убираем декор над ней и сохраняем эту правку.
+    const above = wy + 1 < H ? this.getBlock(wx, wy + 1, wz) : BLOCK.AIR;
+    if (!isSolid(id) && isDecor(above)) {
+      this.setBlock(wx, wy + 1, wz, BLOCK.AIR, recordEdit);
+      if (this.onUnsupportedDecor) this.onUnsupportedDecor(wx, wy + 1, wz, above);
+    }
+    // Свет факела выходит за пределы чанка — обновляем соседние меши.
+    if (previous === BLOCK.TORCH || id === BLOCK.TORCH) {
+      for (let dz = -1; dz <= 1; dz++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx || dz) this.markDirty(cx + dx, cz + dz);
+        }
+      }
     }
     // Соседние чанки на границе тоже перестраиваем
     if (lx === 0) this.markDirty(cx - 1, cz);
