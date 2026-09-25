@@ -37,7 +37,7 @@ export class Sky {
     scene.add(this.stars);
 
     this._dayColor = new THREE.Color(0x87ceeb);
-    this._nightColor = new THREE.Color(0x0a1024);
+    this._nightColor = new THREE.Color(0x060a18);
     this._sunsetColor = new THREE.Color(0xf28c5a);
     this._tmp = new THREE.Color();
     this.lightLevel = 1;
@@ -57,12 +57,17 @@ export class Sky {
 
     const dayness = Math.max(0, Math.min(1, sy * 2 + 0.25));       // 0 ночь, 1 день
     const sunset = Math.max(0, 1 - Math.abs(sy) * 4) * (sy > -0.2 ? 1 : 0);
+    // Глухая ночь: в середине ночи темнее, чем в сумерках — на какое-то время
+    // становится по-настоящему темно, и факелы начинают решать.
+    const deepNight = Math.max(0, Math.min(1, (-sy - 0.35) / 0.3));
 
-    this.lightLevel = 0.22 + dayness * 0.78;
+    this.lightLevel = Math.max(0.035, 0.085 - deepNight * 0.05 + dayness * 0.915);
 
     // Цвет неба
     this._tmp.copy(this._nightColor).lerp(this._dayColor, dayness);
     this._tmp.lerp(this._sunsetColor, sunset * 0.55);
+    // В глухую ночь небо почти чёрное — тон задают звёзды и луна
+    this._tmp.multiplyScalar(1 - deepNight * 0.45);
     this.scene.background = this._tmp;
     this.scene.fog.color.copy(this._tmp);
     const far = this.viewDistance ? this.viewDistance * 16 : 80;

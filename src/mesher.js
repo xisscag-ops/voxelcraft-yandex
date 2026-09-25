@@ -216,14 +216,14 @@ function lightBrightness(level) {
 
 export const TORCH_LIGHT_RADIUS = 8.5;
 /**
- * Яркость от факела на расстоянии d: 1 у пламени, 0 на краю радиуса.
- * Та же формула считается в шейдере для факела в руке. Свет факела хранится
+ * Яркость от источника на расстоянии d: 1 у пламени, 0 на краю радиуса.
+ * Та же формула считается в шейдере для факела в руке. Свет хранится
  * в отдельном канале вершин и не умножается на дневной/ночной оттенок неба,
  * поэтому днём он не пересвечивает, а ночью светит так же ярко.
  */
-export function torchBrightness(d) {
-  if (d >= TORCH_LIGHT_RADIUS) return 0;
-  const falloff = 1 - d / TORCH_LIGHT_RADIUS;
+export function torchBrightness(d, radius = TORCH_LIGHT_RADIUS) {
+  if (d >= radius) return 0;
+  const falloff = 1 - d / radius;
   return falloff * falloff;
 }
 
@@ -233,10 +233,26 @@ function createLighting(world, ox, oz, S, H) {
   // Правки мира — быстрый источник факелов; при пересборке чанк уже знает их позиции.
   if (world.edits?.[Symbol.iterator]) {
     for (const [key, id] of world.edits) {
-      if (!BLOCKS[id]?.torch) continue;
+      const def = BLOCKS[id];
+      if (!def?.torch && !def?.emissive) continue;
       const [x, y, z] = key.split(',').map(Number);
       if (x < ox - 9 || x > ox + S + 9 || z < oz - 9 || z > oz + S + 9) continue;
-      torches.push({ x: x + 0.5, y: y + 0.72, z: z + 0.5 });
+      torches.push({ x: x + 0.5, y: y + 0.6, z: z + 0.5, r: def.lightRadius || TORCH_LIGHT_RADIUS });
+    }
+  }
+  // Светящиеся растения, выращенные генератором мира (грибы в пещерах):
+  // чанк помнит их позиции, соседние чанки тоже видят их свет.
+  if (world.chunks instanceof Map) {
+    const cx0 = Math.floor(ox / S), cz0 = Math.floor(oz / S);
+    for (let gz = cz0 - 1; gz <= cz0 + 1; gz++) {
+      for (let gx = cx0 - 1; gx <= cx0 + 1; gx++) {
+        const chunk = world.chunks.get(gx + ',' + gz);
+        if (!chunk?.genLights) continue;
+        for (const l of chunk.genLights) {
+          if (l.x < ox - 9 || l.x > ox + S + 9 || l.z < oz - 9 || l.z > oz + S + 9) continue;
+          torches.push({ x: l.x + 0.5, y: l.y + 0.5, z: l.z + 0.5, r: BLOCKS[BLOCK.GLOW_SHROOM].lightRadius });
+        }
+      }
     }
   }
 
@@ -286,7 +302,7 @@ function createLighting(world, ox, oz, S, H) {
     let torchLight = 0;
     for (const torch of torches) {
       const d = Math.hypot(p[0] - torch.x, p[1] - torch.y, p[2] - torch.z);
-      const b = torchBrightness(d);
+      const b = torchBrightness(d, torch.r);
       if (b > torchLight) torchLight = b;
     }
     light.torch = torchLight;       // второй канал: свет факелов в этой вершине
@@ -620,8 +636,9 @@ function addTorchQuads(builder, world, wx, y, wz, def) {
 }
 
 /**
- * Крестовые спрайты декора (трава, цветы): две диагональные плоскости,
- * каждая рисуется с двух сторон (материал односторонний).
+ * Крестовые спрайты декора (трава, цветы, лианы, грибы): две диагональные
+ * плоскости, каждая рисуется с двух сторон (материал односторонний).
+ * Лиана (def.hang) свисает с потолка, светящийся гриб (def.emissive) горит сам.
  */
 function addDecorQuads(builder, world, wx, y, wz, def, lightAt) {
   const [u0, v0, u1, v1] = tileUV(def.tiles[2]);
@@ -633,7 +650,10 @@ function addDecorQuads(builder, world, wx, y, wz, def, lightAt) {
   if (!isOpaque(world.getBlock(wx, y, wz - 1))) open++;
   const baseShade = 0.72 + 0.07 * open;
 
-  const y0 = 0.02, y1 = 0.92, m = 0.15;
+  const hang = !!def.hang;                     // лиана крепится к потолку
+  const y0 = 0.02;
+  const y1 = hang ? 0.98 : 0.92;
+  const m = 0.15;
   const cell = [wx + 0.5, y + 0.5, wz + 0.5];
   // Две плоскости: (m,m)-(1-m,1-m) и (1-m,m)-(m,1-m)
   const planes = [
@@ -642,7 +662,8 @@ function addDecorQuads(builder, world, wx, y, wz, def, lightAt) {
   ];
   for (const [[ax, az], [bx, bz]] of planes) {
     const vi = [];
-    // Кольцо: нижний А, нижний Б, верхний Б, верхний А
+    // Кольцо: нижний А, нижний Б, верхний Б, верхний А.
+    // У лианы текстура перевёрнута: плеть «свисает» из точки крепления.
     for (const [px, py, pz, u, v] of [
       [wx + ax, y + y0, wz + az, u0, v0],
       [wx + bx, y + y0, wz + bz, u1, v0],
@@ -650,8 +671,9 @@ function addDecorQuads(builder, world, wx, y, wz, def, lightAt) {
       [wx + ax, y + y1, wz + az, u0, v1],
     ]) {
       const p = [px, py, pz];
-      const sky = lightAt(p, [0, 1, 0], cell);
-      vi.push(builder.vertex(p, u, v, baseShade * sky, baseShade * lightAt.torch));
+      const sky = def.emissive ? 1 : lightAt(p, [0, 1, 0], cell);
+      const glow = def.emissive ? 1 : lightAt.torch;
+      vi.push(builder.vertex(p, u, v, def.emissive ? 1 : baseShade * sky, baseShade * glow));
     }
     // Обе стороны плоскости (обход/против обхода)
     builder.idx.push(vi[0], vi[1], vi[2], vi[0], vi[2], vi[3]);

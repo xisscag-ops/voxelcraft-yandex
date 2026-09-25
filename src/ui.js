@@ -13,7 +13,7 @@ export class UI {
       onWorlds: null, onCreateWorld: null, onLoadWorld: null, onDeleteWorld: null,
     };
     this._screens = ['loading-screen', 'menu-screen', 'mode-screen', 'world-list-screen',
-      'world-create-screen', 'pause-screen', 'howto-screen', 'settings-screen', 'inventory-screen'];
+      'world-create-screen', 'pause-screen', 'howto-screen', 'guide-screen', 'settings-screen', 'inventory-screen'];
     this._worldCreatorReturn = 'world-list-screen';
     this._bind();
   }
@@ -54,6 +54,9 @@ export class UI {
     click('btn-settings-back', () => this.showScreen(this._lastMain || 'menu-screen'));
     click('btn-howto', () => this.showScreen('howto-screen', true));
     click('btn-howto-back', () => this.showScreen(this._lastMain || 'menu-screen'));
+    // Справочник по игре: кнопка в HUD и кнопка «Назад» на самом экране
+    click('btn-guide-hud', () => this.handlers.onGuide?.());
+    click('btn-guide-back', () => this.handlers.onGuideClose?.());
     click('btn-reward', () => this.handlers.onReward?.());
     click('btn-reward2', () => this.handlers.onReward?.());
     click('btn-home', () => this.handlers.onToSpawn?.());

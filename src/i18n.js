@@ -80,6 +80,45 @@ export const STRINGS = {
     fly_on: 'Режим полёта: включён',
     fly_off: 'Режим полёта: выключен',
     hint_break: 'Удерживайте ЛКМ, чтобы сломать блок',
+    hint_guide: 'H — справочник по игре (на телефоне — кнопка с книжкой)',
+    cave_warn: 'В темноте пещеры что-то шевелится…',
+    loot_found: 'В сундуке припрятаны припасы!',
+    guide_title: 'Справочник по игре',
+    guide_s1_title: 'Управление',
+    guide_s1: 'Движение — WASD или стрелки, прыжок — пробел, бег — двойное W или Ctrl.<br>'
+      + 'Приседать — Shift или C (не упадёте с края). Полёт в креативе — двойной пробел.<br>'
+      + 'ЛКМ — сломать блок, ПКМ — поставить блок или использовать предмет.<br>'
+      + 'Колёсико или 1–9 — слот быстрого доступа, E/I — инвентарь и крафт.<br>'
+      + 'H — этот справочник, Esc — пауза (долгое нажатие — выход из полного экрана).<br>'
+      + 'На телефоне: виртуальный джойстик слева, кнопки действий справа, книжка — справочник.',
+    guide_s2_title: 'Режимы игры',
+    guide_s2: '<b>Выживание</b> — здоровье, голод, мобы и падение с высоты. Ресурсы добываются руками и инструментами.<br>'
+      + '<b>Креатив</b> — бессмертие, полёт, мгновенное разрушение блоков и полная палитра блоков.<br>'
+      + 'Сложность «мирная» отключает враждебных мобов.',
+    guide_s3_title: 'Крафт и станки',
+    guide_s3: 'Откройте инвентарь (E) — там список рецептов. Для продвинутых рецептов нужен станок:<br>'
+      + '<b>Верстак</b> — основа: доски, палки, инструменты, факелы.<br>'
+      + '<b>Печь</b> — плавка руды (железо, золото), готовка мяса и хлеба.<br>'
+      + '<b>Наковальня</b> — мощные инструменты, включая алмазный молот: он выламывает область 3×3 за один удар.<br>'
+      + 'Каменные станки (верстак, печь, наковальня) ставятся как обычные блоки.',
+    guide_s4_title: 'Пещеры и ночь',
+    guide_s4: 'На карте есть входы в пещеры — воронки и разломы в земле. Внизу темно даже днём: возьмите факелы.<br>'
+      + 'В пещерах встречаются руды, лианы, светящиеся грибы и сундуки с лутом.<br>'
+      + 'Ночью темнеет по-настоящему: без факелов не видно ничего. Утром нечисть сгорает на солнце — но не под землёй.<br>'
+      + 'Лёд скользкий: на нём заносит, а после остановки игрока ещё катит.',
+    guide_s5_title: 'Мобы и охота',
+    guide_s5: '<b>Птицы и овцы</b> — мирные: из них мясо и перья/шерсть.<br>'
+      + '<b>Пауки</b> встречаются и на поверхности ночью, и в пещерах в любое время суток.<br>'
+      + '<b>Зомби</b> приходят ночью — постройте укрытие или отбейтесь мечом.<br>'
+      + '<b>Криперы</b> взрываются вплотную — бейте издалека, лучше луком.<br>'
+      + 'Волки нападают, если их задеть. Рыба плавает в океанах — добывается копьём.',
+    guide_s6_title: 'Советы выживальщика',
+    guide_s6: 'Ешьте вовремя (F — быстрый перекус). Голод лечит здоровье.<br>'
+      + 'Копая вниз, не выкапывайте блок прямо под собой.<br>'
+      + 'Мостик в пещере удобнее строить из факелов и досок — факел ещё и освещает.<br>'
+      + 'Заблудились? Ставьте заметные столбы или запоминайте вход в пещеру.<br>'
+      + 'Вода растекается: пруд заполнится обратно, если вычерпать яму.',
+
     hint_place: 'ПКМ — поставить блок',
     hint_fly: 'Дважды пробел — полёт (креатив)',
     hint_bow: 'Лук: выберите его в слоте и удерживайте ПКМ, чтобы натянуть тетиву',
@@ -256,6 +295,45 @@ export const STRINGS = {
     fly_on: 'Fly mode: on',
     fly_off: 'Fly mode: off',
     hint_break: 'Hold LMB to break a block',
+    hint_guide: 'H — open the game guide (use the book button on touch)',
+    cave_warn: 'Something stirs in the cave darkness…',
+    loot_found: 'Supplies hidden in the chest!',
+    guide_title: 'Game guide',
+    guide_s1_title: 'Controls',
+    guide_s1: 'Move — WASD or arrows, jump — space, sprint — double-W or Ctrl.<br>'
+      + 'Sneak — Shift or C (you will not fall off edges). Fly in creative — double space.<br>'
+      + 'LMB — break a block, RMB — place a block or use an item.<br>'
+      + 'Mouse wheel or 1–9 — hotbar slot, E/I — inventory and crafting.<br>'
+      + 'H — this guide, Esc — pause (hold Esc to leave fullscreen).<br>'
+      + 'On touch: left joystick moves, action buttons on the right, book button opens the guide.',
+    guide_s2_title: 'Game modes',
+    guide_s2: '<b>Survival</b> — health, hunger, mobs and fall damage. Gather resources by hand and with tools.<br>'
+      + '<b>Creative</b> — invincibility, flight, instant block breaking and the full block palette.<br>'
+      + 'Peaceful difficulty turns off hostile mobs.',
+    guide_s3_title: 'Crafting and stations',
+    guide_s3: 'Open the inventory (E) — the recipe list is there. Advanced recipes need a station:<br>'
+      + '<b>Crafting table</b> — basics: planks, sticks, tools, torches.<br>'
+      + '<b>Furnace</b> — smelting ores (iron, gold), cooking meat and bread.<br>'
+      + '<b>Anvil</b> — powerful tools, including the diamond hammer: it breaks a 3×3 area in one swing.<br>'
+      + 'Stone stations (table, furnace, anvil) are placed like regular blocks.',
+    guide_s4_title: 'Caves and night',
+    guide_s4: 'The map has cave entrances — pits and rifts in the ground. It is dark down there even at noon: bring torches.<br>'
+      + 'Caves hold ores, vines, glowing mushrooms and loot chests.<br>'
+      + 'Nights get truly dark: without a torch you see nothing. At dawn the undead burn in the sun — but not underground.<br>'
+      + 'Ice is slippery: you drift on it and keep sliding after you stop.',
+    guide_s5_title: 'Mobs and hunting',
+    guide_s5: '<b>Birds and sheep</b> are peaceful: they give meat and feathers/wool.<br>'
+      + '<b>Spiders</b> appear on the surface at night and in caves at any time.<br>'
+      + '<b>Zombies</b> come at night — build a shelter or fight them off with a sword.<br>'
+      + '<b>Creepers</b> explode at point-blank — keep your distance, a bow works best.<br>'
+      + 'Wolves attack if provoked. Fish swim in the oceans — catch them with a spear.',
+    guide_s6_title: 'Survival tips',
+    guide_s6: 'Eat on time (F for a quick snack). Hunger heals you.<br>'
+      + 'When digging down, never mine the block right beneath you.<br>'
+      + 'Bridge through caves with torches and planks — a torch also lights the way.<br>'
+      + 'Lost? Place tall markers or memorize the cave entrance.<br>'
+      + 'Water flows: a dug-out pit in the ocean fills back in.',
+
     hint_place: 'RMB — place a block',
     hint_fly: 'Double-tap Space to fly (Creative)',
     hint_bow: 'Bow: select it and hold RMB to draw the string',

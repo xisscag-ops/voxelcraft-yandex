@@ -104,6 +104,13 @@ export const RECIPES = [
   ...metalToolRecipes(ITEM.IRON_INGOT, 'iron'),
   ...metalToolRecipes(ITEM.GOLD_INGOT, 'gold'),
   ...metalToolRecipes(ITEM.DIAMOND, 'diamond'),
+  // Алмазный молот: массивная головка — добывает камень областью 3×3
+  {
+    id: 'diamond_hammer', in: { [ITEM.DIAMOND]: 5, [ITEM.STICK]: 2 },
+    out: { key: ITEM.DIAMOND_HAMMER, count: 1 },
+    patterns: [['AAA', 'ABA', ' B ']], keys: { A: ITEM.DIAMOND, B: ITEM.STICK },
+    station: 'anvil',
+  },
   {
     id: 'bow', in: { [ITEM.STICK]: 3, [PLANKS]: 3 }, out: { key: ITEM.BOW, count: 1 },
     patterns: [['AB', 'AB', 'AB']], keys: { A: ITEM.STICK, B: PLANKS },

@@ -27,6 +27,7 @@
     <div id="debug" class="hidden"></div>
     <div id="hotbar"></div>
     <button id="btn-bag" class="icon-btn bag-btn" aria-label="Inventory" data-i18n="touch_inventory">ИНВ</button>
+    <button id="btn-guide-hud" class="icon-btn guide-btn" aria-label="Guide">📖</button>
     <button id="btn-pause-hud" class="icon-btn hidden" aria-label="Pause">II</button>
   </div>
 
@@ -166,6 +167,24 @@
       <div class="howto-text" data-i18n-html="howto_text"></div>
       <div class="menu-buttons">
         <button id="btn-howto-back" class="btn primary" data-i18n="back">Назад</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== Справочник по игре (H / книжка) ===================== -->
+  <div id="guide-screen" class="screen hidden">
+    <div class="panel wide guide-panel">
+      <h2 data-i18n="guide_title">Справочник по игре</h2>
+      <div class="guide-text">
+        <div class="guide-section"><h3 data-i18n="guide_s1_title">Управление</h3><div data-i18n-html="guide_s1"></div></div>
+        <div class="guide-section"><h3 data-i18n="guide_s2_title">Режимы игры</h3><div data-i18n-html="guide_s2"></div></div>
+        <div class="guide-section"><h3 data-i18n="guide_s3_title">Крафт и станки</h3><div data-i18n-html="guide_s3"></div></div>
+        <div class="guide-section"><h3 data-i18n="guide_s4_title">Пещеры и ночь</h3><div data-i18n-html="guide_s4"></div></div>
+        <div class="guide-section"><h3 data-i18n="guide_s5_title">Мобы и охота</h3><div data-i18n-html="guide_s5"></div></div>
+        <div class="guide-section"><h3 data-i18n="guide_s6_title">Советы выживальщика</h3><div data-i18n-html="guide_s6"></div></div>
+      </div>
+      <div class="menu-buttons">
+        <button id="btn-guide-back" class="btn primary" data-i18n="back">Назад</button>
       </div>
     </div>
   </div>

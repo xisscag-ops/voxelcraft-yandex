@@ -37,6 +37,7 @@ export const ITEM = {
   DIAMOND_PICKAXE: 'tool_diamond_pickaxe',
   DIAMOND_AXE: 'tool_diamond_axe',
   DIAMOND_SWORD: 'tool_diamond_sword',
+  DIAMOND_HAMMER: 'tool_diamond_hammer',
   XP: 'xp',
 };
 
@@ -144,6 +145,12 @@ export const ITEMS = {
     speed: 1, damage: 7,
     name: { ru: 'Алмазный меч', en: 'Diamond sword' },
   },
+  // Алмазный молот: кирка, которая выламывает блоки областью 3×3
+  [ITEM.DIAMOND_HAMMER]: {
+    kind: 'tool', tool: 'pickaxe', tier: 'diamond', max: 1, icon: 'diamond_hammer',
+    speed: 0.34, damage: 5, wide: true,
+    name: { ru: 'Алмазный молот', en: 'Diamond hammer' },
+  },
   [ITEM.COAL]: {
     kind: 'item', max: 64, icon: 'coal',
     name: { ru: 'Уголь', en: 'Coal' },
@@ -244,6 +251,9 @@ const BLOCK_DETAILS = {
   [BLOCK.FENCE]: { ru: 'Забор из досок и палок. Через него не перепрыгнуть, но видно всё вокруг.', en: 'A fence of planks and sticks. Too tall to jump over, but you can see through it.' },
   [BLOCK.ANVIL]: { ru: 'Наковальня: на ней куются железные, золотые и алмазные инструменты. ПКМ — открыть.', en: 'An anvil: iron, golden and diamond tools are forged here. Right-click to open.' },
   [BLOCK.CHEST]: { ru: 'Хранилище на 27 ячеек. ПКМ — открыть, Shift+клик — быстро переложить предмет.', en: 'Stores 27 stacks. Right-click to open, Shift+click to move items quickly.' },
+  [BLOCK.SNOWY_SAND]: { ru: 'Песок холодных берегов, припорошенный снегом.', en: 'Cold-beach sand dusted with snow.' },
+  [BLOCK.VINE]: { ru: 'Пещерная лиана: свисает с потолка гротов. Срывается мгновенно.', en: 'A cave vine hanging from cavern ceilings. Breaks instantly.' },
+  [BLOCK.GLOW_SHROOM]: { ru: 'Светящийся гриб из пещер: немного освещает всё вокруг себя.', en: 'A glowing cave mushroom that softly lights its surroundings.' },
 };
 for (const id of [BLOCK.WALL_TORCH_PX, BLOCK.WALL_TORCH_NX, BLOCK.WALL_TORCH_PZ, BLOCK.WALL_TORCH_NZ]) {
   BLOCK_DETAILS[id] = BLOCK_DETAILS[BLOCK.WALL_TORCH];
@@ -282,6 +292,7 @@ const ITEM_DETAILS = {
   [ITEM.DIAMOND_PICKAXE]: { ru: 'Алмазная кирка: берёт любую породу и делает это быстро.', en: 'Diamond pickaxe: cuts through any rock, quickly.' },
   [ITEM.DIAMOND_AXE]: { ru: 'Алмазный топор: урон по мобу 6, рубит быстрее всех, кроме золотого.', en: 'Diamond axe: 6 damage, chops nearly as fast as gold.' },
   [ITEM.DIAMOND_SWORD]: { ru: 'Алмазный меч: лучшее оружие ближнего боя, урон 7.', en: 'Diamond sword: the best melee weapon, 7 damage.' },
+  [ITEM.DIAMOND_HAMMER]: { ru: 'Алмазный молот: выламывает камень областью 3×3 — сразу девять блоков вокруг цели. Куётся на наковальне.', en: 'Diamond hammer: mines a 3×3 area — nine blocks around the target at once. Forged on an anvil.' },
   [ITEM.XP]: { ru: 'Опыт, который дают мобы. Подойдите к светящемуся шару, чтобы собрать.', en: 'Experience dropped by mobs. Walk close to a glowing orb to collect it.' },
 };
 
@@ -336,6 +347,12 @@ export function toolKind(key) {
   return d && d.kind === 'tool' ? d.tool : null;
 }
 
+/** Инструмент ломает областью 3×3 (алмазный молот) */
+export function isWideTool(key) {
+  const d = itemDef(key);
+  return !!(d && d.kind === 'tool' && d.wide);
+}
+
 export function itemName(key, lang = 'ru') {
   const d = itemDef(key);
   if (!d) return '';
@@ -368,6 +385,7 @@ export function blockDropItem(id, rng = Math.random) {
   if (!id || id === BLOCK.AIR || id === BLOCK.WATER || id === BLOCK.GLASS) return null;
   if (id === BLOCK.GRASS) return blockItem(BLOCK.DIRT);
   if (id === BLOCK.STONE) return blockItem(BLOCK.COBBLE);
+  if (id === BLOCK.SNOWY_SAND) return blockItem(BLOCK.SAND);
   if (id === BLOCK.LEAVES) return rng() < 0.35 ? blockItem(BLOCK.LEAVES) : null;
   if (id === BLOCK.COAL_ORE) return ITEM.COAL;
   if (id === BLOCK.IRON_ORE) return ITEM.RAW_IRON;

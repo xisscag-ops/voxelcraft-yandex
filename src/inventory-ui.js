@@ -80,7 +80,12 @@ export class InventoryUI {
 
     // Протаскивание с зажатой кнопкой: раскладываем предметы по клеткам крафта
     document.addEventListener('pointermove', (e) => this._onPaintMove(e));
-    const endPaint = (e) => { this._paint = null; this._endDrag(e); };
+    // touchend не знает clientX/Y — подставляем координаты последнего касания
+    const endPaint = (e) => {
+      this._paint = null;
+      const t = e.changedTouches?.[0];
+      this._endDrag(t ? { clientX: t.clientX, clientY: t.clientY, button: 0 } : e);
+    };
     document.addEventListener('mouseup', endPaint);
     document.addEventListener('pointerup', endPaint);
     document.addEventListener('touchend', endPaint);
@@ -776,9 +781,11 @@ export class InventoryUI {
   _onPaintMove(e) {
     const d = this._drag;
     if (d) {
+      const ex = e.clientX ?? 0, ey = e.clientY ?? 0;
       if (!this.carry || (e.pointerType !== 'touch' && e.buttons === 0)) { this._drag = null; return; }
-      if (Math.abs(e.clientX - d.x) > 8 || Math.abs(e.clientY - d.y) > 8) {
+      if (Math.abs(ex - d.x) > 8 || Math.abs(ey - d.y) > 8) {
         d.moved = true;
+        d.x = ex; d.y = ey;              // веха обновляется, чтобы жест не «срывался»
         this._paint = null;              // drag отменяет «мазок по одному предмету»
       }
       return;
@@ -813,8 +820,14 @@ export class InventoryUI {
    * длинное — отменяет «мазок по одному предмету» и вместо этого роняет стопку.
    */
   _beginDrag(e, kind, index) {
-    if (!this.carry || e.pointerType === 'touch') { this._drag = null; return; }
-    this._drag = { kind, index, x: e.clientX, y: e.clientY, moved: false };
+    // Перетаскивать можно и мышью, и пальцем: взял стопку, повёл, бросил
+    if (!this.carry) { this._drag = null; return; }
+    this._drag = {
+      kind, index,
+      x: e.clientX ?? e.touches?.[0]?.clientX ?? 0,
+      y: e.clientY ?? e.touches?.[0]?.clientY ?? 0,
+      moved: false,
+    };
   }
 
   _dragTarget(clientX, clientY) {

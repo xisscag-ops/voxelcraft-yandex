@@ -31,6 +31,8 @@ export const T = {
   CHEST_TOP: 53, CHEST_SIDE: 54, CHEST_FRONT: 55,
   // Берёзовые доски, забор и наковальня
   BIRCH_PLANKS: 56, FENCE: 57, ANVIL_TOP: 58, ANVIL_SIDE: 59, ANVIL_FRONT: 60,
+  // Природа: заснеженный песок, пещерная лиана и светящийся гриб
+  SAND_SNOW_SIDE: 61, VINE: 62, GLOW_SHROOM: 63,
 };
 
 export const CRACK_TILES = [17, 18, 19, 20, 21];
@@ -64,6 +66,24 @@ function oreBlobs(data, rng, color, n = 7) {
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         const v = (rng() - 0.5) * 26;
+        px(data, cx + x, cy + y, color[0] + v, color[1] + v, color[2] + v);
+      }
+    }
+  }
+}
+
+// Мелкие малоконтрастные вкрапления (уголь в камне): пятнышки 1-2 пикселя,
+// по тону близкие к камню — руда заметна, но не «вырвиглазная»
+function softOreSpecks(data, rng, color, n = 11) {
+  for (let i = 0; i < n; i++) {
+    const cx = 1 + ((rng() * 14) | 0);
+    const cy = 1 + ((rng() * 14) | 0);
+    const wide = rng() < 0.4;
+    const w = wide ? 2 : 1;
+    const h = wide ? 1 : 2;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const v = (rng() - 0.5) * 12;
         px(data, cx + x, cy + y, color[0] + v, color[1] + v, color[2] + v);
       }
     }
@@ -384,7 +404,8 @@ const painters = {
   },
 
 // ---- Руды и камни ----
-  [T.COAL_ORE](data, rng) { painters[T.STONE](data, rng); oreBlobs(data, rng, [38, 36, 40], 8); },
+  // Уголь: мелкие тёмно-серые точки, близкие по тону к камню (не контрастные)
+  [T.COAL_ORE](data, rng) { painters[T.STONE](data, rng); softOreSpecks(data, rng, [84, 82, 82], 10); softOreSpecks(data, rng, [64, 62, 62], 6); },
   [T.IRON_ORE](data, rng) { painters[T.STONE](data, rng); oreBlobs(data, rng, [196, 150, 118], 7); },
   [T.GOLD_ORE](data, rng) { painters[T.STONE](data, rng); oreBlobs(data, rng, [232, 196, 76], 6); },
   [T.DIAMOND_ORE](data, rng) { painters[T.STONE](data, rng); oreBlobs(data, rng, [110, 226, 226], 6); },
@@ -432,50 +453,49 @@ const painters = {
   // Берёза: светлая кора с частыми вертикальными волокнами и характерными
   // тёмными чёрточками-«чечевичками», которые идут горизонтальными штрихами.
   [T.BIRCH_SIDE](data, rng) {
-    // База — тёплый бело-кремовый с лёгкой вертикальной неоднородностью
-    for (let x = 0; x < TILE; x++) {
-      const colV = (rng() - 0.5) * 9;
-      for (let y = 0; y < TILE; y++) {
-        const v = (rng() - 0.5) * 11 + colV;
-        px(data, x, y, 226 + v, 223 + v, 212 + v);
+    // Настоящая кора берёзы: гладкий кремово-белый ствол с лёгкими
+    // горизонтальными полосами, тёмными чёрточками-чечевицами и
+    // парой грубых тёмных заплаток. Никакой вертикальной рябь.
+    const bands = [];
+    for (let y = 0; y < TILE; y++) bands.push((rng() - 0.5) * 7);
+    for (let y = 0; y < TILE; y++) {
+      // полосы чуть тянутся вверх: среднее с соседней строкой
+      const b = (bands[y] + bands[(y + 1) % TILE]) / 2;
+      for (let x = 0; x < TILE; x++) {
+        const v = (rng() - 0.5) * 5 + b;
+        px(data, x, y, 232 + v, 228 + v, 216 + v);
       }
     }
-    // Тонкие вертикальные волокна коры
-    for (let i = 0; i < 16; i++) {
-      const x = (rng() * TILE) | 0;
-      const y0 = (rng() * 8) | 0;
-      const len = 4 + ((rng() * 9) | 0);
-      const dark = rng() < 0.45;
-      for (let y = y0; y < Math.min(TILE, y0 + len); y++) {
-        const v = (rng() - 0.5) * 10;
-        if (dark) px(data, x, y, 196 + v, 192 + v, 182 + v);
-        else px(data, x, y, 240 + v, 238 + v, 231 + v);
-      }
-    }
-    // Чёрные штрихи берёзы: короткие горизонтальные полосы разной толщины
-    const dashes = 7 + ((rng() * 4) | 0);
-    for (let i = 0; i < dashes; i++) {
-      const y = 1 + ((rng() * (TILE - 2)) | 0);
-      const x = (rng() * (TILE - 5)) | 0;
-      const w = 3 + ((rng() * 6) | 0);
-      const h = rng() < 0.3 ? 2 : 1;
-      for (let k = 0; k < w; k++) {
-        for (let hh = 0; hh < h; hh++) {
-          // концы штриха чуть светлее — штрих сужается
-          const edge = k === 0 || k === w - 1;
-          const v = edge ? 46 : 0;
-          px(data, x + k, y + hh, 44 + v, 40 + v, 38 + v);
+    // Широкие тёмные заплатки (как у старой берёзы): рваные горизонтальные
+    // пятна угольного цвета с неровными краями
+    const patches = 2 + ((rng() * 2) | 0);
+    for (let i = 0; i < patches; i++) {
+      const py = 1 + ((rng() * (TILE - 3)) | 0);
+      const px0 = (rng() * TILE) | 0;
+      const w = 4 + ((rng() * 5) | 0);
+      const h = 2 + ((rng() * 2) | 0);
+      for (let yy = 0; yy < h; yy++) {
+        for (let k = -1; k <= w; k++) {
+          const xx = (px0 + k + TILE) % TILE;
+          const edge = k < 0 || k >= w || rng() < 0.25;
+          const v = (rng() - 0.5) * 12;
+          if (edge && rng() < 0.5) continue;
+          px(data, xx, py + yy, (edge ? 92 : 52) + v, (edge ? 86 : 47) + v, (edge ? 78 : 42) + v);
         }
       }
-      // тонкий светлый блик под штрихом
-      if (rng() < 0.6) px(data, x + 1 + ((rng() * (w - 2)) | 0), y + h, 246, 244, 238);
     }
-    // Тёмные «глазки» — округлые отметины
-    for (let i = 0; i < 2; i++) {
-      const x = 2 + ((rng() * (TILE - 5)) | 0);
-      const y = 2 + ((rng() * (TILE - 5)) | 0);
-      px(data, x, y, 58, 52, 48); px(data, x + 1, y, 78, 72, 66);
-      px(data, x, y + 1, 96, 90, 84); px(data, x + 1, y + 1, 58, 52, 48);
+    // Чечевицы: короткие горизонтальные тёмные чёрточки со светлой кромкой
+    const dashes = 8 + ((rng() * 5) | 0);
+    for (let i = 0; i < dashes; i++) {
+      const y = 1 + ((rng() * (TILE - 2)) | 0);
+      const x = (rng() * (TILE - 6)) | 0;
+      const w = 2 + ((rng() * 4) | 0);
+      for (let k = 0; k < w; k++) {
+        const edge = k === 0 || k === w - 1;
+        const v = edge ? 40 : 0;
+        px(data, x + k, y, 46 + v, 42 + v, 38 + v);
+      }
+      if (rng() < 0.7) px(data, x + 1 + ((rng() * Math.max(1, w - 2)) | 0), y - 1, 246, 243, 234);
     }
   },
   [T.BIRCH_TOP](data, rng) {
@@ -716,6 +736,66 @@ const painters = {
     }
     px(data, 2, 6, 122, 126, 134); px(data, 3, 6, 122, 126, 134);   // блик на роге
   },
+  // ---- Заснеженный песок: песчаная сторона со снежной коркой сверху ----
+  [T.SAND_SNOW_SIDE](data, rng) {
+    painters[T.SAND](data, rng);
+    for (let x = 0; x < TILE; x++) {
+      const h = 3 + ((rng() * 3) | 0);
+      for (let y = 0; y < h; y++) {
+        const v = (rng() - 0.5) * 10;
+        // Рваная снежная кромка: местами сползает на песок язычками
+        const edge = y === h - 1 && rng() < 0.55;
+        px(data, x, y, edge ? 214 : 240 + v, edge ? 220 : 245 + v, edge ? 214 : 250 + v);
+      }
+    }
+  },
+  // ---- Пещерная лиана: тонкие свисающие плети с листиками ----
+  [T.VINE](data, rng) {
+    for (let y = 0; y < TILE; y++) for (let x = 0; x < TILE; x++) px(data, x, y, 0, 0, 0, 0);
+    for (let s = 0; s < 4; s++) {
+      let x = 2 + ((rng() * 12) | 0);
+      const len = 9 + ((rng() * 7) | 0);
+      for (let i = 0; i < len; i++) {
+        const y = i;
+        if (rng() < 0.22) x += rng() < 0.5 ? -1 : 1;   // плеть слегка вьётся
+        x = Math.max(0, Math.min(TILE - 1, x));
+        const v = (rng() - 0.5) * 24;
+        px(data, x, y, 58 + v, 104 + v, 52 + v);
+        // листики по бокам плети
+        if (rng() < 0.45) {
+          const side = rng() < 0.5 ? -1 : 1;
+          const lx = Math.max(0, Math.min(TILE - 1, x + side));
+          px(data, lx, y, 72 + v, 126 + v, 58 + v);
+        }
+      }
+    }
+  },
+  // ---- Светящийся пещерный гриб: ножка и бирюзовая светящаяся шляпка ----
+  [T.GLOW_SHROOM](data, rng) {
+    for (let y = 0; y < TILE; y++) for (let x = 0; x < TILE; x++) px(data, x, y, 0, 0, 0, 0);
+    // ножка
+    for (let y = 8; y <= 15; y++) {
+      const w = y > 12 ? 2 : 1;
+      for (let x = 8 - w; x <= 7 + w; x++) {
+        const v = (rng() - 0.5) * 14;
+        px(data, x, y, 196 + v, 224 + v, 214 + v);
+      }
+    }
+    // шляпка: округлая, светится бирюзой
+    for (let y = 3; y <= 8; y++) {
+      const half = 5 - Math.abs(5.5 - y) * 0.9;
+      for (let x = Math.round(8 - half); x <= Math.round(7 + half); x++) {
+        const v = (rng() - 0.5) * 20;
+        const rim = y <= 4 || x <= Math.round(8 - half) + 0 || x >= Math.round(7 + half);
+        px(data, x, y, ...(rim ? [96 + v, 210 + v, 186 + v] : [150 + v, 246 + v, 220 + v]));
+      }
+    }
+    // блики и «споры» света
+    for (const [x, y] of [[6, 5], [9, 6], [11, 5], [7, 7], [10, 4]]) px(data, x, y, 226, 255, 244);
+    // маленький грибочек рядом
+    for (let y = 11; y <= 15; y++) px(data, 3, y, 176, 208, 198);
+    for (let y = 9; y <= 11; y++) for (let x = 2; x <= 4; x++) px(data, x, y, 120, 226, 200);
+  },
 };
 
 function chestWood(data, rng) {
@@ -771,10 +851,10 @@ function drawCracks(data, rng, stage) {
 const tileColors = {};
 
 // Тайлы-источники света не затемняются: они должны выглядеть яркими.
-const EMISSIVE_TILES = new Set([T.GLOW, T.TORCH, T.FURNACE_FRONT]);
+const EMISSIVE_TILES = new Set([T.GLOW, T.TORCH, T.FURNACE_FRONT, T.GLOW_SHROOM]);
 // Общий множитель яркости атласа: текстуры чуть темнее «мультяшных»,
 // ближе к реальному освещению (просили больше реализма).
-export const ATLAS_DARKEN = 0.9;
+export const ATLAS_DARKEN = 0.86;
 
 function darkenTile(data, idx) {
   const f = EMISSIVE_TILES.has(idx) ? 0.985 : ATLAS_DARKEN;
