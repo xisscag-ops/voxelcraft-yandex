@@ -416,6 +416,121 @@ check('лук не стакается', maxStack(ITEM.BOW) === 1);
   check('ночные мобы враждебны', ['gloom', 'spider', 'creeper'].every((t) => mobs.HOSTILE.has(t)));
   check('рыба и волк — не враждебные', !mobs.HOSTILE.has('fish') && !mobs.HOSTILE.has('wolf'));
 
+  // Анимации: походка, взгляд, хвост, мигание, выпад
+  const animMob = (type, opts = {}) => {
+    const v = mobs.makeMobVisuals(type);
+    const m = new mobs.Mob(opts.world || flat, v, type, 0.5, 31, 0.5);
+    m.state = opts.state || 'walk';
+    m.thinkT = 1e9;
+    m.heading = 0;
+    return { v, m };
+  };
+  const sidePlayer = { x: 5.5, y: 31, z: 0.5 };
+
+  check('лапы ходят диагональными парами', (() => {
+    const { v, m } = animMob('wolf');
+    let opposite = 0;
+    for (let i = 0; i < 60; i++) {
+      m.update(1 / 60, sidePlayer);
+      if (v.legs[0].rotation.x > 0.25 && v.legs[1].rotation.x < -0.25) opposite++;
+    }
+    return opposite > 3;
+  })());
+
+  check('моб смотрит на игрока головой', (() => {
+    const { v, m } = animMob('sheep');
+    for (let i = 0; i < 60; i++) m.update(1 / 60, sidePlayer);
+    const yaw = v.look[0].rotation.y;
+    return Math.abs(yaw) > 0.3 && Math.abs(yaw) < 0.8;
+  })());
+
+  check('в бегстве моб не оглядывается', (() => {
+    const { v, m } = animMob('bunny', { state: 'flee' });
+    for (let i = 0; i < 60; i++) m.update(1 / 60, sidePlayer);
+    return Math.abs(v.look[0].rotation.y) < 0.05;
+  })());
+
+  check('хвост виляет', (() => {
+    const { v, m } = animMob('wolf');
+    let mn = 9, mx = -9;
+    for (let i = 0; i < 60; i++) {
+      m.update(1 / 60, { x: 40, y: 31, z: 40 });
+      mn = Math.min(mn, v.tail.rotation.y);
+      mx = Math.max(mx, v.tail.rotation.y);
+    }
+    return mx - mn > 0.3;
+  })());
+
+  check('мобы мигают', (() => {
+    const { v, m } = animMob('bunny', { state: 'idle' });
+    let closed = 0;
+    for (let i = 0; i < 600; i++) {
+      m.update(1 / 60, sidePlayer);
+      if (v.blink[0].scale.y < 0.2) closed++;
+    }
+    return closed > 3 && closed < 120;
+  })());
+
+  check('выпад вперёд при атаке', (() => {
+    const { v, m } = animMob('wolf', { state: 'hunt' });
+    m.angry = true;
+    let adv = 0;
+    for (let i = 0; i < 60; i++) {
+      m.update(1 / 60, { x: 1.2, y: 31, z: 0.5 });
+      adv = Math.max(adv, v.group.position.x - m.pos.x);
+    }
+    return adv > 0.1;
+  })());
+
+  check('паук перебирает восемью ногами', (() => {
+    const { v, m } = animMob('spider');
+    let moved = 0;
+    const z0 = v.legs[0].rotation.z;
+    for (let i = 0; i < 60; i++) {
+      m.update(1 / 60, sidePlayer);
+      if (Math.abs(v.legs[0].rotation.x) > 0.1) moved++;
+    }
+    return moved > 20 && Math.abs(v.legs[0].rotation.z - z0) > 0.01;
+  })());
+
+  check('крипер перебирает лапами, пока горит фитиль', (() => {
+    const { v, m } = animMob('creeper');
+    m.fuseT = 0;
+    let moved = 0;
+    for (let i = 0; i < 40; i++) {
+      m.update(1 / 60, { x: 2, y: 31, z: 0.5 });
+      if (Math.abs(v.legs[0].rotation.x) > 0.05) moved++;
+    }
+    return moved > 10;
+  })());
+
+  check('рыба чавкает и бьёт хвостом', (() => {
+    const sea = { getBlock: () => BLOCK.WATER, seaLevel: 22, heightAt: () => 30 };
+    const { v, m } = animMob('fish', { world: sea, state: 'idle' });
+    let mn = 9, mx = -9, mnMouth = 9, mxMouth = -9;
+    for (let i = 0; i < 60; i++) {
+      m.update(1 / 60, sidePlayer);
+      mn = Math.min(mn, v.tail.rotation.y);
+      mx = Math.max(mx, v.tail.rotation.y);
+      mnMouth = Math.min(mnMouth, v.mouth[0].scale.x);
+      mxMouth = Math.max(mxMouth, v.mouth[0].scale.x);
+    }
+    return mx - mn > 0.3 && mxMouth - mnMouth > 0.2;
+  })());
+
+  check('птица машет крыльями и вертит головой', (() => {
+    const { v, m } = animMob('bird');
+    let mn = 9, mx = -9, mnHead = 9, mxHead = -9;
+    for (let i = 0; i < 60; i++) {
+      m.update(1 / 60, sidePlayer);
+      mn = Math.min(mn, v.wings[0].rotation.z);
+      mx = Math.max(mx, v.wings[0].rotation.z);
+      mnHead = Math.min(mnHead, v.head.position.y);
+      mxHead = Math.max(mxHead, v.head.position.y);
+    }
+    return mx - mn > 0.5 && mxHead - mnHead > 0.01;
+  })());
+
   // Смерть: не исчезает мгновенно, а заваливается на бок и только потом убирается
   const dead = new mobs.Mob(flat, { group: new THREE.Group(), legs: [], head: null, ears: [] }, 'spider', 0.5, 31, 0.5);
   dead.hurt(99);

@@ -102,6 +102,59 @@ function addMouth(g, mat, geoCache, key, { y, z, w = 0.16, h = 0.05, color = MOU
   return parts;
 }
 
+// ---------------------------------------------------------------- Анимация: общие помощники
+// Фазы лап: у четвероногих в фазе идут диагональные пары (перед-лево + зад-право),
+// у паука волна бежит по восьми ногам
+const LEG_PHASE = {
+  4: [0, Math.PI, Math.PI, 0],
+  8: [0, Math.PI, 0, Math.PI, Math.PI, 0, Math.PI, 0],
+};
+
+/** Разница углов в диапазоне -π..π */
+function angDiff(a, b) {
+  let d = a - b;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+
+/**
+ * Поворот «головы»: детали (голова, глаза, рот, морда) вращаются вокруг
+ * вертикальной оси, проходящей через точку (0, pivotZ) внутри модели.
+ */
+function turnHead(v, angle) {
+  if (!v.look) return;
+  const pivotZ = v.lookZ || 0;
+  const c = Math.cos(angle), sn = Math.sin(angle);
+  for (const part of v.look) {
+    if (!part) continue;
+    const ud = part.userData;
+    if (!ud.basePos) {
+      ud.basePos = { x: part.position.x, y: part.position.y, z: part.position.z };
+      ud.baseRotY = part.rotation.y;
+    }
+    const bx = ud.basePos.x, bz = ud.basePos.z - pivotZ;
+    part.position.x = bx * c + bz * sn;
+    part.position.z = pivotZ + (-bx * sn + bz * c);
+    part.rotation.y = ud.baseRotY + angle;
+  }
+}
+
+/** Мигание: на 0.12 с глаза «закрываются» */
+function blinkEyes(v, dt) {
+  if (!v.blink || !v.blink.length) return;
+  if (v._blinkT == null) v._blinkT = 1.5 + Math.random() * 4;
+  v._blinkT -= dt;
+  if (v._blinkT <= 0) {
+    v._blinkT = 2.5 + Math.random() * 5.5;
+    v._blinkLeft = 0.12;
+  }
+  const closed = v._blinkLeft > 0;
+  if (closed) v._blinkLeft -= dt;
+  const k = closed ? 0.12 : 1;
+  for (const e of v.blink) e.scale.y = k;
+}
+
 // ---------------------------------------------------------------- Новые мобы
 // Паук: восемь ног, два сегмента тела, красные глаза и жвала (выходит ночью)
 function buildSpider(mat, geoCache, eyeMat) {
@@ -133,18 +186,23 @@ function buildSpider(mat, geoCache, eyeMat) {
   head.position.set(0, 0.36, 0.26);
   g.add(abdomen, spots, head);
   // Горящие красные глаза (материал свечения, как у Хмари)
-  addEyes(g, eyeMat, geoCache, 'sp', {
+  const eyes = addEyes(g, eyeMat, geoCache, 'sp', {
     y: 0.42, z: 0.43, dx: 0.1, size: 0.09,
     sclera: [1, 0.3, 0.22], pupil: null,
     glow: { mat: eyeMat, color: [1, 0.35, 0.25] },
   });
+  const fangs = [];
   for (const sx of [-1, 1]) {
     const fang = fixedPart(mat, geoCache, 'sp-fang', 0.06, 0.07, 0.12, [0.12, 0.08, 0.07]);
     fang.position.set(sx * 0.09, 0.28, 0.42);
     fang.rotation.x = 0.3;
+    fangs.push(fang);
     g.add(fang);
   }
-  return { group: g, legs, head, ears: [], hop: false, scale: 1.15, spider: true };
+  return {
+    group: g, legs, head, ears: [], hop: false, scale: 1.15, spider: true,
+    abdomen, fangs, look: [head, ...eyes, ...fangs], lookZ: 0.26, blink: eyes,
+  };
 }
 
 // Крипер: высокий зелёный силуэт с хмурым лицом и короткими лапами (взрывается)
@@ -174,7 +232,11 @@ function buildCreeper(mat, geoCache) {
   const frown = fixedPart(mat, geoCache, 'cr-frown', 0.12, 0.12, 0.04, [0.05, 0.08, 0.05]);
   frown.position.set(0, 1.14, 0.245);
   g.add(frown);
-  return { group: g, legs, head, ears: [], hop: false, scale: 1.2, creeper: true, face, mouth, headPart: head };
+  return {
+    group: g, legs, head, ears: [], hop: false, scale: 1.2, creeper: true,
+    face, mouth, headPart: head,
+    look: [head, ...face, ...mouth, frown], lookZ: 0.02, blink: face,
+  };
 }
 
 // Рыба: плоское тельце, хвост и плавники, живёт в воде
@@ -195,6 +257,7 @@ function buildFish(mat, geoCache, ci) {
   dorsal.position.set(0, 0.42, 0.02);
   g.add(body, tail, dorsal);
   const wings = [];
+  const eyes = [];
   for (const s of [-1, 1]) {
     const side = wingPart(mat, geoCache, `fi-fin-${s}-${ci}`, 0.2, 0.03, 0.15, fin, s);
     side.position.set(s * 0.085, 0.27, 0.1);
@@ -202,9 +265,17 @@ function buildFish(mat, geoCache, ci) {
     g.add(side);
     const eye = fixedPart(mat, geoCache, 'fi-eye', 0.055, 0.055, 0.035, [0.05, 0.05, 0.07]);
     eye.position.set(s * 0.075, 0.3, 0.25);
+    eyes.push(eye);
     g.add(eye);
   }
-  return { group: g, legs: [], head: null, ears: [], wings, fish: true, tail, scale: 1 };
+  // Рот: открывается, когда рыба чавкает
+  const mouth = fixedPart(mat, geoCache, `fi-mouth-${ci}`, 0.085, 0.06, 0.05, [0.3, 0.18, 0.18]);
+  mouth.position.set(0, 0.2, 0.28);
+  g.add(mouth);
+  return {
+    group: g, legs: [], head: null, ears: [], wings, fish: true, tail, scale: 1,
+    mouth: [mouth], smile: mouth, blink: eyes,
+  };
 }
 
 // Волк: серый пёс с мордой, ушами, хвостом и зубами (злится, если его ударить)
@@ -248,7 +319,11 @@ function buildWolf(mat, geoCache, ci) {
   g.add(body, neck, head, snout, nose, tail);
   const face = addEyes(g, mat, geoCache, `wl-${ci}`, { y: 0.95, z: 0.62, dx: 0.11, size: 0.085 });
   const mouth = addMouth(g, mat, geoCache, `wl-${ci}`, { y: 0.8, z: 0.78, w: 0.11, h: 0.05, teeth: 2, grin: true });
-  return { group: g, legs, ears, head, hop: false, scale: 1.15, wolf: true, face, mouth, tail, snout };
+  return {
+    group: g, legs, ears, head, hop: false, scale: 1.15, wolf: true,
+    face, mouth, tail, snout,
+    look: [head, snout, nose, ...face, ...mouth], lookZ: 0.48, blink: face,
+  };
 }
 
 const BUNNY_COLORS = [
@@ -297,7 +372,10 @@ function buildBunny(mat, geoCache, ci) {
   g.add(nose);
   const mouth = addMouth(g, mat, geoCache, `bn-${ci}`, { y: 0.59, z: 0.51, w: 0.12, h: 0.045, teeth: 2, grin: false });
   g.add(body, head, tail);
-  return { group: g, legs, head, ears, hop: true, face, mouth, scale: 1.3 };
+  return {
+    group: g, legs, head, ears, hop: true, face, mouth, tail,
+    look: [head, ...face, nose, ...mouth], lookZ: 0.34, blink: face, scale: 1.3,
+  };
 }
 
 function buildSheep(mat, geoCache, ci) {
@@ -336,7 +414,10 @@ function buildSheep(mat, geoCache, ci) {
   const face = addEyes(g, mat, geoCache, `sh-${ci}`, { y: 0.83, z: 0.7, dx: 0.14, size: 0.11, pupilScale: 0.42 });
   const mouth = addMouth(g, mat, geoCache, `sh-${ci}`, { y: 0.61, z: 0.8, w: 0.2, h: 0.05, teeth: 4, grin: false });
   g.add(body, puff, head, snout);
-  return { group: g, legs, head, ears: horns, hop: false, face, mouth, scale: 1.35 };
+  return {
+    group: g, legs, head, ears: horns, hop: false, face, mouth, snout,
+    look: [head, snout, ...face, ...mouth], lookZ: 0.52, blink: face, chew: mouth, scale: 1.35,
+  };
 }
 
 function buildSlime(mat, geoCache) {
@@ -355,7 +436,10 @@ function buildSlime(mat, geoCache) {
     g.add(drip);
   }
   g.add(body, inner);
-  return { group: g, legs: [], head: null, ears: [], hop: true, slime: body, face, mouth, scale: 1.45 };
+  return {
+    group: g, legs: [], head: null, ears: [], hop: true, slime: body, face, mouth,
+    look: [...face, ...mouth], lookZ: 0.12, blink: face, scale: 1.45,
+  };
 }
 
 const BIRD_COLORS = [
@@ -392,7 +476,10 @@ function buildBird(mat, geoCache, ci) {
   }
   const face = addEyes(g, mat, geoCache, `bd-${ci}`, { y: 0.16, z: 0.36, dx: 0.07, size: 0.06, pupilScale: 0.55 });
   g.add(body, head, beak, tail);
-  return { group: g, legs: [], head: null, ears: [], wings, hop: false, bird: true, face, scale: 1.25 };
+  return {
+    group: g, legs: [], head, ears: [], wings, hop: false, bird: true, face, tail, beak,
+    look: [head, beak, ...face], lookZ: 0.26, blink: face, scale: 1.25,
+  };
 }
 
 // Хмарь — большой ночной охотник: балахон с капюшоном, светящиеся глаза,
@@ -472,7 +559,7 @@ function buildGloom(mat, geoCache, eyeMat) {
   g.add(body, hem, hunch, head, hood, hoodTip);
   return {
     group: g, legs: [], head: null, ears: [], hop: false, gloom: true,
-    face: eyes, mouth, arms, spikes, wisps, scale: 1.7,
+    face: eyes, mouth, arms, spikes, wisps, hem, hood, scale: 1.7, blink: eyes,
   };
 }
 
@@ -503,6 +590,9 @@ export class Mob {
     this.burnT = 0;
     this.fleeT = 0;
     this.kbX = 0; this.kbZ = 0; this.kbT = 0;
+    this.gaitT = 0;              // фаза походки (копится по пройденному пути)
+    this.lookAngle = 0;          // на сколько повёрнута голова к игроку
+    this.lungeT = 0;             // выпад при атаке (1 -> 0)
     this.dead = false;
     this.dying = -1;             // >= 0 — идёт анимация смерти (0..1)
     this.deathDir = Math.random() < 0.5 ? -1 : 1;
@@ -571,6 +661,15 @@ export class Mob {
         v.wisps[i].rotation.z = Math.sin(this.animT * 1.6 + i) * 0.25;
       }
     }
+    // Балахон развевается, шипы топорщатся при приближении к игроку
+    if (v.hem) v.hem.rotation.x = Math.sin(this.animT * 1.4) * 0.06 - 0.04;
+    if (v.spikes) {
+      for (let i = 0; i < v.spikes.length; i++) {
+        const rage = dist < 6 ? 0.12 : 0;
+        v.spikes[i].rotation.x = -0.4 - i * 0.1 + Math.sin(this.animT * 2.2 + i * 0.6) * 0.08 - rage;
+      }
+    }
+    this.animateHead(dt, playerPos, 0.5);
 
     // Атака с рычанием
     this.attackT -= dt;
@@ -587,6 +686,20 @@ export class Mob {
       this.soundT = near ? 2.4 + Math.random() * 2.6 : 3.5 + Math.random() * 4;
       if (this.onSound && dist < 20) this.onSound(near && Math.random() < 0.45 ? 'growl' : 'gloom', dist);
     }
+  }
+
+  /** Взгляд на игрока и мигание — общее для всех мобов */
+  animateHead(dt, playerPos, reach = 0.6) {
+    blinkEyes(this.v, dt);
+    if (!this.v.look || !playerPos) return;
+    const dx = playerPos.x - this.pos.x;
+    const dz = playerPos.z - this.pos.z;
+    const dist = Math.hypot(dx, dz);
+    const want = dist < 16 && this.state !== 'flee' && this.dying < 0
+      ? Math.max(-reach, Math.min(reach, angDiff(Math.atan2(dx, dz), this.heading)))
+      : 0;
+    this.lookAngle += (want - this.lookAngle) * Math.min(1, dt * 4.5);
+    turnHead(this.v, this.lookAngle);
   }
 
   knockback(dx, dz, power = 3.2) {
@@ -838,10 +951,13 @@ export class Mob {
     // Плавный подъём/спуск по рельефу
     this.pos.y += (this.yBase - this.pos.y) * Math.min(1, dt * 10);
 
-    // Анимация
+    // Анимация: фаза походки копится по пройденному пути, а не по времени —
+    // иначе лапы «скользят» при разной скорости
     const walking = moveSpeed > 0;
-    const phase = this.animT * (walking ? 7 : 2);
-    let yOff = 0;
+    this.gaitT += moveSpeed * dt;
+    const strideRate = this.type === 'spider' ? 5.2 : this.type === 'creeper' ? 3.4 : 3.0;
+    const phase = this.gaitT * strideRate;
+    let yOff = walking ? Math.abs(Math.sin(phase * 2)) * (this.type === 'spider' ? 0.012 : 0.022) : 0;
     if (this.type === 'slime') {
       // Слизень: прыгает и сплющивается
       if (walking) {
@@ -856,7 +972,15 @@ export class Mob {
       yOff = Math.abs(Math.sin(this.animT * 7)) * 0.3;
     }
 
-    v.group.position.set(this.pos.x, this.pos.y + yOff, this.pos.z);
+    // Выпад при атаке: корпус подаётся вперёд и приседает
+    if (this.lungeT > 0) this.lungeT = Math.max(0, this.lungeT - dt / 0.3);
+    const lunge = this.lungeT > 0 ? Math.sin(this.lungeT * Math.PI) : 0;
+
+    v.group.position.set(
+      this.pos.x + Math.sin(this.heading) * 0.18 * lunge,
+      this.pos.y + yOff - 0.05 * lunge,
+      this.pos.z + Math.cos(this.heading) * 0.18 * lunge,
+    );
     v.group.rotation.y = this.heading;   // модель смотрит носом туда, куда бежит
 
     // Отдача от удара: тряска и сплющивание
@@ -869,19 +993,58 @@ export class Mob {
       v.group.scale.set(sc * (1 + 0.2 * pulse), sc * (1 - 0.18 * pulse), sc * (1 + 0.2 * pulse));
       v.group.position.y += 0.1 * pulse;
     } else {
-      v.group.rotation.x = 0;
-      v.group.rotation.z = 0;
-      v.group.scale.setScalar(this.baseScale);
+      // В покое корпус «дышит», на ходу покачивается в такт шагам
+      const sway = walking ? Math.sin(phase) * 0.035 : Math.sin(this.animT * 1.2) * 0.015;
+      const breathe = 1 + Math.sin(this.animT * 1.8) * (walking ? 0.005 : 0.014);
+      v.group.rotation.x = -0.2 * lunge;
+      v.group.rotation.z = sway;
+      v.group.scale.set(
+        this.baseScale * (1 + 0.012 * Math.sin(this.animT * 1.8)),
+        this.baseScale * breathe,
+        this.baseScale * (1 + 0.012 * Math.sin(this.animT * 1.8)),
+      );
     }
 
-    // Ноги
+    // Лапы: у зверей диагональные пары, у паука волна по восьми ногам
+    const legPhase = LEG_PHASE[v.legs.length];
     for (let i = 0; i < v.legs.length; i++) {
-      const s = i % 2 === 0 ? 1 : -1;
-      v.legs[i].rotation.x = walking ? Math.sin(phase) * 0.7 * s : Math.sin(this.animT * 1.5) * 0.04;
+      const off = legPhase ? legPhase[i] : 0;
+      v.legs[i].rotation.x = walking
+        ? Math.sin(phase + off) * 0.62
+        : Math.sin(this.animT * 1.5 + i * 1.3) * 0.03;
+      if (this.type === 'spider') {
+        const ud = v.legs[i].userData;
+        if (ud.baseRotZ == null) ud.baseRotZ = v.legs[i].rotation.z;
+        v.legs[i].rotation.z = ud.baseRotZ + (walking
+          ? Math.sin(phase + off + 1.2) * 0.22
+          : Math.sin(this.animT * 2 + i) * 0.05);
+      }
     }
-    // Уши зайки покачиваются
+    // Уши: у зайки трясутся в прыжке, у волка прижимаются в ярости и в бегстве
+    const earsBack = (this.angry ? 0.55 : 0) + (this.state === 'flee' ? 0.35 : 0)
+      + (this.type === 'wolf' && this.state === 'hunt' ? 0.3 : 0);
     for (const ear of v.ears) {
-      ear.rotation.x = -0.15 + Math.sin(this.animT * 5) * 0.12 + yOff * 0.3;
+      const flap = this.type === 'wolf'
+        ? Math.sin(this.animT * 3) * 0.06
+        : Math.sin(this.animT * 5) * 0.12 + yOff * 0.3;
+      ear.rotation.x = -0.15 + flap + earsBack;
+    }
+    // Хвост виляет на спокойной ходьбе и вытягивается в погоне
+    if (v.tail) {
+      const ud = v.tail.userData;
+      if (ud.baseRotX == null) ud.baseRotX = v.tail.rotation.x;
+      const hunting = this.state === 'hunt' || this.state === 'flee';
+      v.tail.rotation.y = Math.sin(this.animT * (hunting ? 3 : 7)) * (hunting ? 0.06 : 0.45);
+      v.tail.rotation.x = ud.baseRotX + (this.type === 'bunny' ? Math.sin(this.animT * 6) * 0.2 : 0)
+        + (hunting ? -0.12 : 0);
+    }
+    // Жвала паука раскрываются, когда он охотится
+    if (v.fangs) {
+      const open = this.state === 'hunt' ? 0.5 : 0.12;
+      for (let i = 0; i < v.fangs.length; i++) {
+        v.fangs[i].rotation.x = 0.3 + open * 0.7;
+        v.fangs[i].rotation.y = (i === 0 ? -1 : 1) * open * 0.5;
+      }
     }
     // Барашек щиплет траву
     if (v.head && this.type === 'sheep') {
@@ -892,6 +1055,13 @@ export class Mob {
     if (v.head && this.type === 'bunny') {
       v.head.rotation.x = Math.sin(this.animT * 3) * 0.08;
     }
+    // Барашек жуёт, когда щиплет траву
+    if (v.chew) {
+      const chew = this.state === 'graze' ? Math.abs(Math.sin(this.animT * 9)) * 0.6 : 0;
+      for (const m of v.chew) m.scale.y = 1 + chew;
+    }
+    // Голова поворачивается к игроку, глаза мигают
+    this.animateHead(dt, playerPos, this.type === 'spider' ? 0.45 : 0.6);
 
     // Атака: паук и волк кусают, крипер поджигает фитиль
     const distP = Math.hypot(this.pos.x - playerPos.x, this.pos.z - playerPos.z);
@@ -900,6 +1070,7 @@ export class Mob {
     } else if (this.state === 'hunt' && this.attackT <= 0 && distP < 1.7 &&
                Math.abs(playerPos.y - this.pos.y) < 2) {
       this.attackT = this.type === 'wolf' ? 1.2 : 1.0;
+      this.lungeT = 1;                       // видимый выпад вперёд
       if (this.onAttack) this.onAttack(this, playerPos);
     }
     if (this.type === 'spider' && this.soundT <= 0 && distP < 12) {
@@ -939,6 +1110,11 @@ export class Mob {
     v.group.rotation.z = Math.sin(this.animT * 40) * 0.06 * k;
     v.group.rotation.y = this.heading;
     v.group.position.set(this.pos.x, this.pos.y, this.pos.z);
+    // Пока горит фитиль, крипер перебирает лапами и подаётся к игроку
+    for (let i = 0; i < v.legs.length; i++) {
+      v.legs[i].rotation.x = Math.sin(this.animT * 18 + i * 1.7) * 0.28 * k;
+    }
+    this.animateHead(dt, playerPos, 0.5);
     const d = Math.hypot(playerPos.x - this.pos.x, playerPos.z - this.pos.z);
     if (d > 5) this.fuseT = Math.max(0, this.fuseT - dt * 2);   // отошёл — фитиль гаснет
     if (this.fuseT >= this.fuseMax) {
@@ -990,6 +1166,8 @@ export class Mob {
       for (let i = 0; i < v.wings.length; i++) {
         v.wings[i].rotation.z = (i === 0 ? 1 : -1) * (0.25 + Math.sin(this.animT * 9) * 0.25);
       }
+      if (v.mouth) v.mouth[0].scale.x = 0.7 + Math.abs(Math.sin(this.animT * 2.4)) * 0.6;   // чавкает
+      this.animateHead(dt, playerPos, 0.3);
       this.soundT -= dt;
       if (this.soundT <= 0) {
         this.soundT = 4 + Math.random() * 6;
@@ -1005,6 +1183,11 @@ export class Mob {
       v.group.rotation.order = 'YXZ';
       v.group.rotation.set(0, this.heading, Math.PI * 0.35);   // на суше лежит на боку
       if (v.tail) v.tail.rotation.y = Math.sin(this.animT * 18) * 0.7;
+      for (let i = 0; i < v.wings.length; i++) {
+        v.wings[i].rotation.z = (i === 0 ? 1 : -1) * Math.sin(this.animT * 16) * 0.5;
+      }
+      if (v.mouth) v.mouth[0].scale.x = 0.6 + Math.abs(Math.sin(this.animT * 12)) * 0.9;    // хватает воздух
+      this.animateHead(dt, playerPos, 0.2);
       this.soundT -= dt;
       if (this.soundT <= 0) {
         this.soundT = 1.4;
@@ -1047,6 +1230,11 @@ export class Mob {
       v.wings[0].rotation.z = -flap;
       v.wings[1].rotation.z = flap;
     }
+    // Голова клюёт носом, хвост работает как руль
+    if (v.head) v.head.position.y = 0.12 + Math.sin(this.animT * 5) * 0.02;
+    if (v.tail) v.tail.rotation.x = Math.sin(this.animT * 3) * 0.14;
+    // Птица косится на игрока
+    this.animateHead(dt, playerPos, 0.45);
 
     this.soundT -= dt;
     if (this.soundT <= 0 && this.onSound && dist < 16 && Math.random() < 0.25) {
@@ -1054,6 +1242,29 @@ export class Mob {
     }
     if (this.soundT <= 0) this.soundT = 1.2;
   }
+}
+
+/**
+ * Модель моба отдельно от менеджера: нужна тестам и отладке.
+ * @param {string} type вид моба
+ */
+export function buildVisualsFor(type, mat, geoCache, eyeMat, slimeMat = mat) {
+  const ci = (Math.random() * 3) | 0;
+  if (type === 'bunny') return buildBunny(mat, geoCache, ci);
+  if (type === 'sheep') return buildSheep(mat, geoCache, ci);
+  if (type === 'gloom') return buildGloom(mat, geoCache, eyeMat);
+  if (type === 'bird') return buildBird(mat, geoCache, ci);
+  if (type === 'spider') return buildSpider(mat, geoCache, eyeMat);
+  if (type === 'creeper') return buildCreeper(mat, geoCache);
+  if (type === 'wolf') return buildWolf(mat, geoCache, ci);
+  if (type === 'fish') return buildFish(mat, geoCache, ci);
+  return buildSlime(slimeMat, geoCache);
+}
+
+/** Собрать модель моба для тестов: свои материалы и свой кэш геометрии */
+export function makeMobVisuals(type) {
+  const mat = new THREE.MeshBasicMaterial({ vertexColors: true });
+  return buildVisualsFor(type, mat, new Map(), new THREE.MeshBasicMaterial({ color: 0x8ef6ff }));
 }
 
 export class MobManager {
@@ -1108,16 +1319,7 @@ export class MobManager {
   }
 
   _buildVisuals(type) {
-    const ci = (Math.random() * 3) | 0;
-    if (type === 'bunny') return buildBunny(this.mat, this.geoCache, ci);
-    if (type === 'sheep') return buildSheep(this.mat, this.geoCache, ci);
-    if (type === 'gloom') return buildGloom(this.gloomMat, this.geoCache, this.eyeMat);
-    if (type === 'bird') return buildBird(this.mat, this.geoCache, ci);
-    if (type === 'spider') return buildSpider(this.mat, this.geoCache, this.eyeMat);
-    if (type === 'creeper') return buildCreeper(this.mat, this.geoCache);
-    if (type === 'wolf') return buildWolf(this.mat, this.geoCache, ci);
-    if (type === 'fish') return buildFish(this.mat, this.geoCache, ci);
-    return buildSlime(this.slimeMat, this.geoCache);
+    return buildVisualsFor(type, this.mat, this.geoCache, this.eyeMat, this.slimeMat);
   }
 
   /** Собрать моба со всеми хуками и поставить в мир */
