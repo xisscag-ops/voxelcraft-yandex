@@ -8,6 +8,8 @@ import { CONFIG } from './config.js';
 export const ITEM = {
   STICK: 'stick',
   APPLE: 'apple',
+  BOW: 'bow',
+  ARROW: 'arrow',
   WOOD_PICKAXE: 'tool_wood_pickaxe',
   WOOD_AXE: 'tool_wood_axe',
   WOOD_SWORD: 'tool_wood_sword',
@@ -29,6 +31,14 @@ export const ITEMS = {
   [ITEM.APPLE]: {
     kind: 'item', max: 64, icon: 'apple', food: 4,
     name: { ru: 'Яблоко', en: 'Apple' },
+  },
+  [ITEM.BOW]: {
+    kind: 'item', max: 1, icon: 'bow',
+    name: { ru: 'Лук', en: 'Bow' },
+  },
+  [ITEM.ARROW]: {
+    kind: 'item', max: 64, icon: 'arrow',
+    name: { ru: 'Стрела', en: 'Arrow' },
   },
   [ITEM.WOOD_PICKAXE]: {
     kind: 'tool', tool: 'pickaxe', tier: 'wood', max: 1, icon: 'wood_pickaxe',
@@ -60,6 +70,20 @@ export const ITEMS = {
 const _defCache = new Map();
 
 /** Описание предмета или null, если такого предмета нет */
+/**
+ * Сытость предмета: сколько сердец здоровья он восстанавливает.
+ * 0 — предмет несъедобный.
+ */
+export function foodValue(key) {
+  const def = itemDef(key);
+  return def && def.kind === 'item' && def.food > 0 ? def.food : 0;
+}
+
+/** Съедобный предмет? */
+export function isFood(key) {
+  return foodValue(key) > 0;
+}
+
 export function itemDef(key) {
   if (!key) return null;
   if (_defCache.has(key)) return _defCache.get(key);

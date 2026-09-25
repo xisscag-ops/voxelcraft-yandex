@@ -49,6 +49,14 @@ export const RECIPES = [
     patterns: [['A', 'A', 'B']], keys: { A: COBBLE, B: ITEM.STICK },
   },
   {
+    id: 'bow', in: { [ITEM.STICK]: 3, [PLANKS]: 3 }, out: { key: ITEM.BOW, count: 1 },
+    patterns: [['AB', 'AB', 'AB']], keys: { A: ITEM.STICK, B: PLANKS },
+  },
+  {
+    id: 'arrows', in: { [ITEM.STICK]: 1, [COBBLE]: 1 }, out: { key: ITEM.ARROW, count: 2 },
+    patterns: [['AB']], keys: { A: ITEM.STICK, B: COBBLE },
+  },
+  {
     id: 'glass', in: { [SAND]: 2 }, out: { key: blockItem(BLOCK.GLASS), count: 1 },
     patterns: [['AA']], keys: { A: SAND },
   },

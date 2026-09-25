@@ -58,6 +58,10 @@ export class UI {
       if (vdLabel) vdLabel.textContent = vd.value;
       this.handlers.onSettingsChange?.({ viewDistance: Number(vd.value) });
     });
+    const fsBox = document.getElementById('set-fullscreen');
+    fsBox?.addEventListener('change', () => {
+      this.handlers.onSettingsChange?.({ fullscreen: fsBox.checked });
+    });
     const snd = document.getElementById('set-sound');
     snd?.addEventListener('change', () => {
       this.handlers.onSettingsChange?.({ sound: snd.checked });
@@ -75,6 +79,8 @@ export class UI {
     if (vd) { vd.value = s.viewDistance ?? 5; if (vdLabel) vdLabel.textContent = vd.value; }
     const snd = document.getElementById('set-sound');
     if (snd) snd.checked = s.sound !== false;
+    const fsBox = document.getElementById('set-fullscreen');
+    if (fsBox) fsBox.checked = s.fullscreen !== false;
   }
 
   applyI18n() {
@@ -276,6 +282,15 @@ export class UI {
       const v = hp - i * 2;
       el.children[i].className = 'heart' + (v >= 2 ? ' full' : v === 1 ? ' half' : '');
     }
+  }
+
+  /** Счётчик стрел в HUD (в креативе и без стрел скрыт) */
+  setArrows(n, mode = 'survival') {
+    const el = document.getElementById('arrows');
+    if (!el) return;
+    if (n <= 0 || mode === 'creative') { el.classList.add('hidden'); return; }
+    el.classList.remove('hidden');
+    el.textContent = '🏹 ×' + n;
   }
 
   setApples(n, mode = 'survival') {

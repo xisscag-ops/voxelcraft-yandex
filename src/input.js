@@ -14,7 +14,10 @@ export class Input {
     this.handlers = {
       onToggleFly: null, onDigit: null, onScroll: null, onPause: null,
       onActionBreak: null, onActionPlace: null, onToggleInventory: null,
+      onFullscreenChange: null,
     };
+    this.allowFullscreen = true;   // настройка «Полный экран» (settings.fullscreen)
+    this.keysLocked = false;
     this._flyTapT = 0;
     this._swallowLook = 0;
     this._joystick = { active: false, id: -1, baseX: 0, baseY: 0, x: 0, y: 0 };
@@ -70,20 +73,46 @@ export class Input {
     window.addEventListener('resize', pin);
   }
 
-  // Полноэкранный режим + блокировка системных клавиш (Esc оставляем для паузы)
+  // Полноэкранный режим + захват клавиш.
+  // Через Keyboard Lock API (Chrome/Edge) забираем себе игровые клавиши целиком,
+  // включая модификаторы: тогда Ctrl+W, Ctrl+S, Ctrl+T и прочие сочетания не уходят
+  // браузеру, а Esc не выкидывает из полного экрана — он открывает меню паузы.
+  // Вне полного экрана (а также в iframe Яндекс Игр) API недоступно: там Ctrl+W
+  // остаётся системным сочетанием браузера, и предотвратить его нельзя.
   async enterFullscreen() {
+    if (this.allowFullscreen === false) { await this.lockKeys(); return; }
     const el = document.documentElement;
     try {
       if (!document.fullscreenElement && el.requestFullscreen) {
         await el.requestFullscreen({ navigationUI: 'hide' });
       }
     } catch (e) { /* iframe без allowfullscreen — не критично */ }
+    await this.lockKeys();
+  }
+
+  /** Захват клавиш доступен только в полном экране и только в Chromium-браузерах */
+  async lockKeys() {
+    if (!document.fullscreenElement || !navigator.keyboard?.lock) return false;
     try {
-      if (document.fullscreenElement && navigator.keyboard?.lock) {
-        await navigator.keyboard.lock(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyN', 'KeyT', 'KeyQ',
-          'Tab', 'AltLeft', 'MetaLeft', 'MetaRight', 'ControlLeft', 'ControlRight']);
-      }
-    } catch (e) { /* не поддерживается */ }
+      await navigator.keyboard.lock([
+        'Escape', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyF', 'KeyI', 'KeyN', 'KeyT', 'KeyQ',
+        'Tab', 'AltLeft', 'MetaLeft', 'MetaRight', 'ControlLeft', 'ControlRight', 'F3',
+      ]);
+      this.keysLocked = true;
+    } catch (e) {
+      this.keysLocked = false;   // Safari/Firefox/iframe — Esc останется за браузером
+    }
+    return this.keysLocked;
+  }
+
+  unlockKeys() {
+    try { if (this.keysLocked) navigator.keyboard?.unlock?.(); } catch (e) { /* noop */ }
+    this.keysLocked = false;
+  }
+
+  exitFullscreen() {
+    this.unlockKeys();
+    try { if (document.fullscreenElement) document.exitFullscreen(); } catch (e) { /* noop */ }
   }
 
   _bind() {
@@ -110,6 +139,14 @@ export class Input {
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => { this.keys.clear(); this.mouse.left = this.mouse.right = false; });
+
+    // Полный экран: пока мы в нём, игровые клавиши (в том числе Esc) захвачены
+    document.addEventListener('fullscreenchange', () => {
+      const on = !!document.fullscreenElement;
+      if (on) this.lockKeys();
+      else this.unlockKeys();
+      this.handlers.onFullscreenChange?.(on);
+    });
 
     document.addEventListener('pointerlockchange', () => {
       const was = this.locked;
@@ -284,7 +321,7 @@ export class Input {
     this.sprint = this.keys.has('ControlLeft') || this.keys.has('ControlRight') ||
       (this.isTouch && this._joystick.active && Math.hypot(this._joystick.x, this._joystick.y) > 0.92);
     this.breakHeld = this.mouse.left || this._buttons.has('break');
-    this.placeHeld = this.mouse.right;
+    this.placeHeld = this.mouse.right || this._buttons.has('place');
   }
 
   /** Нажатие, которое нужно обработать ровно один раз */

@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 import { BLOCK, BLOCKS, STARTER_PALETTE, BUILDER_PALETTE, breakKind, isSolid, isDecor } from './blocks.js';
-import { ITEM, blockItem, blockIdOf, blockDropItem, breakTime, itemDamage, itemName, placeBlockId, isBlockItem, itemDef } from './items.js';
+import { ITEM, blockItem, blockIdOf, blockDropItem, breakTime, itemDamage, itemName, placeBlockId, isBlockItem, itemDef, foodValue } from './items.js';
 import { Inventory, HOTBAR_SIZE } from './inventory.js';
 import { craft, needsTable } from './crafts.js';
 import { InventoryUI, setFullToast } from './inventory-ui.js';
@@ -16,6 +16,8 @@ import { raycastVoxel } from './raycast.js';
 import { Particles } from './particles.js';
 import { Weather } from './weather.js';
 import { ItemDrops } from './items.js';
+import { Arrows, buildArrowModel, arrowMaterials } from './projectiles.js';
+import { Eating } from './eating.js';
 import { Sky } from './sky.js';
 import { Sfx } from './audio.js';
 import { Input } from './input.js';
@@ -36,6 +38,7 @@ const settings = {
   sound: true,
   lang: 'ru',
   viewDistance: CONFIG.VIEW_DISTANCE,
+  fullscreen: true,               // просить полный экран и захватывать клавиши
   paletteUnlocked: false,
 };
 
@@ -82,9 +85,20 @@ const particles = new Particles(THREE, scene);
 const mobManager = new MobManager(scene, null);
 const weather = new Weather(THREE, scene);
 const items = new ItemDrops(scene);
+const projectiles = new Arrows(scene);
+let bowCharge = 0;               // 0..1 — натяжение тетивы
+let bowCharging = false;
+let bowKick = 0;                 // отдача лука после выстрела
+const BOW_CHARGE_TIME = 0.85;    // полное натяжение за 0.85 с
+
+// Еда: держим ЛКМ с едой в руке — персонаж жуёт (см. src/eating.js)
+const eat = new Eating();
+let eatFullT = 0;                // пауза между подсказками «ты сыт»
+
 // Выживание
 let attackCd = 0;
 let shakeT = 0;                  // встряска камеры при уроне
+let decorBreakCd = 0;            // пауза между мгновенными срывами растений
 let gloomT = 6;
 let gloomWarned = false;
 // Звуки мобов с затуханием по расстоянию
@@ -98,6 +112,11 @@ mobManager.onSound = (kind, dist, type) => {
   else if (kind === 'gloom') sfx.gloom(vol);
   else if (kind === 'die') sfx.mobDie();
   else if (kind === 'burn') sfx.burn();
+  else if (kind === 'hiss') sfx.hiss();
+  else if (kind === 'bark') sfx.bark(vol);
+  else if (kind === 'fuse') sfx.fuse();
+  else if (kind === 'flop') sfx.flop(vol);
+  else if (kind === 'swim') sfx.swim(vol);
 };
 
 // Счётчик построенных блоков (лидерборд Яндекса)
@@ -177,6 +196,85 @@ const heldGeo = {
   quad: new THREE.PlaneGeometry(1, 1),
 };
 
+// Материалы объёмных моделей предметов (инструменты, палка, яблоко).
+// depthTest выключен — предмет в руке всегда рисуется поверх мира.
+const ITEM_MATS = new Map();
+function itemMat(color) {
+  const key = color >>> 0;
+  if (!ITEM_MATS.has(key)) {
+    const m = new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false });
+    m.userData.baseColor = color;
+    ITEM_MATS.set(key, m);
+  }
+  return ITEM_MATS.get(key);
+}
+
+const BOX_GEOS = new Map();
+function boxGeo(w, h, d) {
+  const key = `${w}|${h}|${d}`;
+  if (!BOX_GEOS.has(key)) BOX_GEOS.set(key, new THREE.BoxGeometry(w, h, d));
+  return BOX_GEOS.get(key);
+}
+
+function boxPart(w, h, d, color, x = 0, y = 0, z = 0) {
+  const m = new THREE.Mesh(boxGeo(w, h, d), itemMat(color));
+  m.position.set(x, y, z);
+  return m;
+}
+
+const TOOL_WOOD = { handle: 0x8b5a2b, dark: 0x66431d, head: 0xb98a4a, edge: 0x8a6132, bind: 0x5d3c1a };
+const TOOL_STONE = { handle: 0x8b5a2b, dark: 0x66431d, head: 0x9ba1a7, edge: 0x7b8187, bind: 0x5d3c1a };
+
+/** Объёмная модель инструмента: рукоять, обмотка и голова (кирка/топор/меч) */
+function buildToolModel(kind, tier) {
+  const c = tier === 'stone' ? TOOL_STONE : TOOL_WOOD;
+  const g = new THREE.Group();
+  // Рукоять с обмоткой и навершием
+  g.add(boxPart(0.062, 0.66, 0.062, c.handle, 0, -0.04, 0));
+  g.add(boxPart(0.07, 0.09, 0.07, c.dark, 0, -0.2, 0));
+  g.add(boxPart(0.078, 0.07, 0.078, c.dark, 0, -0.36, 0));
+  if (kind === 'pickaxe') {
+    // Изогнутая голова: центральный брусок и два «клюва» вниз
+    g.add(boxPart(0.32, 0.085, 0.085, c.head, 0, 0.31, 0));
+    for (const sx of [-1, 1]) {
+      const tip = boxPart(0.17, 0.075, 0.075, c.edge, sx * 0.2, 0.25, 0);
+      tip.rotation.z = sx * 0.6;
+      g.add(tip);
+      const point = boxPart(0.06, 0.06, 0.06, c.head, sx * 0.27, 0.18, 0);
+      g.add(point);
+    }
+    g.add(boxPart(0.1, 0.13, 0.1, c.bind, 0, 0.25, 0));
+  } else if (kind === 'axe') {
+    // Полотно топора: широкая пластина и светлая режущая кромка
+    g.add(boxPart(0.07, 0.3, 0.24, c.head, 0.12, 0.26, 0));
+    g.add(boxPart(0.04, 0.32, 0.26, c.edge, 0.16, 0.26, 0));
+    g.add(boxPart(0.12, 0.16, 0.11, c.bind, 0, 0.28, 0));
+    g.add(boxPart(0.06, 0.1, 0.2, c.head, 0.06, 0.4, 0));
+  } else if (kind === 'sword') {
+    // Клинок с остриём, гарда, рукоять и навершие
+    g.add(boxPart(0.085, 0.62, 0.025, c.head, 0, 0.44, 0));
+    g.add(boxPart(0.055, 0.12, 0.025, c.edge, 0, 0.79, 0));
+    g.add(boxPart(0.3, 0.07, 0.07, c.edge, 0, 0.13, 0));
+    g.add(boxPart(0.07, 0.18, 0.07, c.handle, 0, 0.02, 0));
+    g.add(boxPart(0.1, 0.08, 0.1, c.edge, 0, -0.09, 0));
+  } else {
+    // Палка — просто рукоять чуть длиннее
+    g.add(boxPart(0.068, 0.78, 0.068, c.handle, 0, 0.02, 0));
+  }
+  return g;
+}
+
+/** Объёмное яблоко: плод, черенок и листик */
+function buildAppleModel() {
+  const g = new THREE.Group();
+  g.add(boxPart(0.3, 0.28, 0.3, 0xd64545, 0, 0, 0));
+  g.add(boxPart(0.06, 0.12, 0.06, 0x6b4a2b, 0, 0.18, 0));
+  const leaf = boxPart(0.14, 0.04, 0.08, 0x4e8f3a, 0.09, 0.2, 0);
+  leaf.rotation.z = 0.35;
+  g.add(leaf);
+  return g;
+}
+
 function buildHeldMesh(key) {
   const def = itemDef(key);
   if (!def) return null;
@@ -193,6 +291,22 @@ function buildHeldMesh(key) {
     mesh.scale.setScalar(0.24);
     mesh.rotation.set(0.25, -0.75, 0.12);
     mesh.position.set(0.02, -0.02, -0.32);
+  } else if (def.kind === 'tool') {
+    // Инструменты — объёмные модели: рукоять, голова, гарда. Крупнее иконки и с наклоном
+    mesh = buildToolModel(def.tool, def.tier);
+    mesh.scale.setScalar(0.6);
+    mesh.rotation.set(-0.22, -0.55, 0.72);
+    mesh.position.set(0.05, -0.08, -0.32);
+  } else if (def.icon === 'stick') {
+    mesh = buildToolModel('stick', 'wood');
+    mesh.scale.setScalar(0.55);
+    mesh.rotation.set(-0.22, -0.55, 0.78);
+    mesh.position.set(0.04, -0.07, -0.32);
+  } else if (def.icon === 'apple') {
+    mesh = buildAppleModel();
+    mesh.scale.setScalar(0.5);
+    mesh.rotation.set(-0.1, -0.6, 0.35);
+    mesh.position.set(0.05, -0.03, -0.32);
   } else {
     mesh = new THREE.Mesh(heldGeo.quad, spriteMaterial(key));
     mesh.scale.setScalar(0.34);
@@ -215,9 +329,123 @@ function updateHeldItem() {
   if (mesh) heldGroup.add(mesh);
 }
 
+// ---------------------------------------------------------------- Лук в руке (вид от первого лица)
+// Дуга собрана из сегментов окружности, тетива тянется при натяжении,
+// на тетиве лежит готовая стрела
+const BOW_TIP = 0.2539;
+const BOW_ANG = 1.0;
+const bowPivot = new THREE.Group();
+const bowMats = {
+  wood: bowMaterial(0x8b5a2b),
+  woodDark: bowMaterial(0x633f1a),
+  string: bowMaterial(0xe8e8ee),
+  hand: bowMaterial(0xc98f63),
+};
+function bowMaterial(color) {
+  const m = new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false });
+  m.userData.baseColor = color;
+  return m;
+}
+let bowStringUpper, bowStringLower;
+{
+  const R = 0.3, D = 0.16, SEG = 6;
+  for (let i = 0; i < SEG; i++) {
+    const a0 = -BOW_ANG + 2 * BOW_ANG * (i / SEG);
+    const a1 = -BOW_ANG + 2 * BOW_ANG * ((i + 1) / SEG);
+    const y0 = R * Math.sin(a0), z0 = D - R * Math.cos(a0);
+    const y1 = R * Math.sin(a1), z1 = D - R * Math.cos(a1);
+    const len = Math.hypot(y1 - y0, z1 - z0);
+    const grip = i === 2 || i === 3;
+    const seg = new THREE.Mesh(
+      new THREE.BoxGeometry(0.026, len * 1.1, 0.036),
+      grip ? bowMats.woodDark : bowMats.wood,
+    );
+    seg.position.set(0, (y0 + y1) / 2, (z0 + z1) / 2);
+    seg.rotation.x = (a0 + a1) / 2;
+    bowPivot.add(seg);
+  }
+  const stringGeo = new THREE.BoxGeometry(0.011, 1, 0.011).translate(0, -0.5, 0);
+  bowStringUpper = new THREE.Mesh(stringGeo, bowMats.string);
+  bowStringUpper.position.set(0, BOW_TIP, 0);
+  bowStringLower = new THREE.Mesh(stringGeo, bowMats.string);
+  bowStringLower.position.set(0, -BOW_TIP, 0);
+  bowStringLower.rotation.z = Math.PI;
+  bowPivot.add(bowStringUpper, bowStringLower);
+  const fist = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.14, 0.13), bowMats.hand);
+  fist.position.set(0.005, -0.03, D - R + 0.035);
+  bowPivot.add(fist);
+}
+const nockedArrow = buildArrowModel(1, arrowMaterials());
+nockedArrow.rotation.y = Math.PI;
+nockedArrow.visible = false;
+nockedArrow.traverse((o) => {
+  if (o.isMesh) { o.material.depthTest = false; o.material.depthWrite = false; }
+});
+bowPivot.add(nockedArrow);
+bowPivot.visible = false;
+bowPivot.traverse((o) => { if (o.isMesh) o.renderOrder = 999; });
+camera.add(bowPivot);
+const nockedMats = nockedArrow.children.map((c) => c.material);
+
+/** Выбран лук? В руке тогда показываем лук вместо предмета */
+function isBowSelected() {
+  return heldItem() === ITEM.BOW;
+}
+
+function poseBow(dt, light) {
+  if (bowKick > 0) bowKick = Math.max(0, bowKick - dt / 0.16);
+  const show = state === 'game' && isBowSelected();
+  bowPivot.visible = show;
+  if (!show) return;
+  // Натяжение: тетива тянется назад, стрела едет вместе с ней
+  const pull = 0.26 * bowCharge;
+  const len = Math.hypot(BOW_TIP, pull);
+  bowStringUpper.scale.y = len;
+  bowStringLower.scale.y = len;
+  bowStringUpper.rotation.x = -Math.atan2(pull, BOW_TIP);
+  bowStringLower.rotation.x = Math.atan2(pull, BOW_TIP);
+  nockedArrow.visible = bowCharge > 0.02;
+  nockedArrow.position.set(0, 0, pull);
+
+  const k = bowCharge;
+  const kick = bowKick * bowKick;
+  bowPivot.position.set(
+    0.34 - 0.16 * k,
+    -0.34 + 0.15 * k - 0.03 * kick,
+    -0.6 + 0.05 * k + 0.1 * kick,
+  );
+  bowPivot.rotation.set(0.06 - 0.04 * k + 0.2 * kick, -0.34 + 0.26 * k, 0.12 - 0.1 * k);
+
+  const lum = 0.35 + 0.65 * light;
+  for (const m of [bowMats.wood, bowMats.woodDark, bowMats.string, bowMats.hand]) {
+    m.color.setHex(m.userData.baseColor).multiplyScalar(lum);
+  }
+  const nockedBase = [0x9c7548, 0xd8dde6, 0xe0574c, 0xe0574c];
+  nockedMats.forEach((m, i) => m.color.setHex(nockedBase[i] || 0xc0c0c0).multiplyScalar(lum));
+}
+
+/** Съедобный предмет в руке (или null) */
+function heldFood() {
+  const key = heldItem();
+  return key && foodValue(key) > 0 ? key : null;
+}
+
+/** Доели: здоровье прибавляется, предмет исчезает из инвентаря */
+function finishEat() {
+  const key = heldFood();
+  if (!key) return;
+  const heal = foodValue(key);
+  inventory.remove(key, 1);
+  refreshHotbar();
+  player.heal(heal);
+  ui.setHealth(player.hp, player.maxHp);
+  sfx.burp();
+  ui.toast(i18n.t('eat_ok'), 1400);
+}
+
 function updateHand(dt, light) {
   handPivot.visible = state === 'game';
-  heldGroup.visible = !!heldKey;
+  heldGroup.visible = !!heldKey && !isBowSelected();
   if (handSwing > 0) handSwing = Math.max(0, handSwing - dt / HAND_SWING_TIME);
   const p = Math.sin((1 - handSwing) * Math.PI) * handSwingPow; // 0 -> 1 -> 0
   const moving = Math.abs(input.move.forward) + Math.abs(input.move.right) > 0.1;
@@ -229,20 +457,33 @@ function updateHand(dt, light) {
     -0.36 + 0.08 * p - Math.abs(Math.sin(handBob)) * bob,
     -0.55 - 0.15 * p,
   );
-  hand.material.color.setHex(0xd9a27a).multiplyScalar(0.35 + 0.65 * light);
-  for (const child of heldGroup.children) {
-    if (child.userData.isSprite) {
-      if (!child.material.userData.baseColor) child.material.userData.baseColor = 0xffffff;
-      child.material.color.setHex(child.material.userData.baseColor).multiplyScalar(0.5 + 0.5 * light);
-    } else if (Array.isArray(child.material)) {
-      // кубик: палитра материалов общая, поэтому приглушаем весь меш
-      child.visible = true;
-      child.material.forEach((m) => {
-        if (m.userData.baseColor == null) m.userData.baseColor = 0xffffff;
-        m.color.setHex(m.userData.baseColor).multiplyScalar(0.55 + 0.45 * light);
-      });
-    }
+  // Еда: пока держим кнопку, предмет подносится ко рту и покачивается в такт жеванию
+  if (eat.raised > 0.001) {
+    const k = eat.raised;
+    const chew = Math.sin(eat.t * 16) * 0.5 + 0.5;
+    handPivot.position.x += (-0.12 - handPivot.position.x) * k;
+    handPivot.position.y += (-0.13 + 0.05 * chew - handPivot.position.y) * k;
+    handPivot.position.z += (-0.42 - handPivot.position.z) * k;
+    handPivot.rotation.x += (-0.62 - 0.18 * chew - handPivot.rotation.x) * k;
+    handPivot.rotation.y += (0.16 - handPivot.rotation.y) * k;
+    handPivot.rotation.z += (0.08 - handPivot.rotation.z) * k;
+    heldGroup.scale.setScalar(1 + 0.05 * chew);
+  } else {
+    heldGroup.scale.setScalar(1);
   }
+  hand.material.color.setHex(0xd9a27a).multiplyScalar(0.35 + 0.65 * light);
+  poseBow(dt, light);
+  // Приглушаем предмет в руке по уровню освещения (и меши, и вложенные группы)
+  const k = 0.5 + 0.5 * light;
+  const shadeMat = (m) => {
+    if (m.userData.baseColor == null) m.userData.baseColor = m.color.getHex();
+    m.color.setHex(m.userData.baseColor).multiplyScalar(k);
+  };
+  heldGroup.traverse((o) => {
+    if (!o.isMesh) return;
+    if (Array.isArray(o.material)) o.material.forEach(shadeMat);
+    else if (o.material) shadeMat(o.material);
+  });
 }
 let handBob = 0;
 
@@ -354,7 +595,7 @@ function disposeChunkMeshes(c) {
 // Каталог креатива: все блоки (кроме воздуха и воды) и предметы
 const CATALOG_KEYS = [
   ...BLOCKS.filter((b) => b.id !== BLOCK.AIR && b.id !== BLOCK.WATER).map((b) => blockItem(b.id)),
-  ITEM.STICK, ITEM.APPLE,
+  ITEM.STICK, ITEM.APPLE, ITEM.BOW, ITEM.ARROW,
   ITEM.WOOD_PICKAXE, ITEM.WOOD_AXE, ITEM.WOOD_SWORD, ITEM.STONE_PICKAXE, ITEM.STONE_SWORD,
 ];
 
@@ -375,6 +616,7 @@ function refreshHotbar() {
   ui.buildHotbar(inventory.slots.slice(0, HOTBAR_SIZE), i18n.lang, { creative: isCreative() });
   ui.setHotbarSelection(hotbarIndex);
   ui.setApples(inventory.count(ITEM.APPLE), mode);
+  ui.setArrows(arrowAmmo(), mode);
   updateHeldItem();
 }
 
@@ -430,6 +672,62 @@ function findMobTarget() {
 }
 
 // Удар по мобу: красная вспышка, отдача назад, писк и красные частицы
+// Стрела попала в моба: урон по силе натяжения, отдача и звук
+function onArrowHitMob(mob, arrow, dir) {
+  const dmg = arrow.dmg || 2;
+  const killed = mob.hurt(dmg);
+  sfx.hitMob();
+  particles.burst(mob.pos.x, mob.pos.y + mob.centerY(), mob.pos.z, 0xd03232, 12);
+  mob.knockback(dir.x, dir.z, killed ? 4.4 : 3.4);
+  if (!killed && (mob.type === 'bunny' || mob.type === 'sheep' || mob.type === 'fish')) {
+    mob.fleeFrom(player.pos, 4);
+  }
+  // Птицы пугаются и улетают
+  if (mob.type === 'bird') mob.heading = Math.atan2(mob.pos.x - player.pos.x, mob.pos.z - player.pos.z);
+}
+
+/** Сколько стрел доступно (в креативе — бесконечно) */
+function arrowAmmo() {
+  return isCreative() ? Infinity : inventory.count(ITEM.ARROW);
+}
+
+/** Выстрел из лука: сила и урон зависят от натяжения */
+function fireBow(charge) {
+  if (!isBowSelected()) return;
+  if (arrowAmmo() <= 0) {
+    ui.toast(i18n.t('no_arrows'), 1800);
+    sfx.uiClick();
+    return;
+  }
+  if (!isCreative()) {
+    inventory.remove(ITEM.ARROW, 1);
+    refreshHotbar();
+  }
+  ui.setArrows(arrowAmmo(), mode);
+  const eye = player.eyePos();
+  const d = player.lookDir();
+  const power = 0.3 + 0.7 * charge;                   // сила натяжения 0.3..1
+  const speed = 15 + 22 * power;                      // 21..37 м/с
+  const dmg = 1 + Math.round(4.5 * charge);           // 1..6
+  bowKick = 0.6 + 0.4 * charge;
+  projectiles.shoot(
+    eye.x + d.x * 0.6, eye.y + d.y * 0.6 - 0.1, eye.z + d.z * 0.6,
+    d.x, d.y, d.z, speed, dmg,
+    {
+      onMob: onArrowHitMob,
+      onBlock: () => sfx.arrowHitBlock(),
+      onPickup: (n) => {
+        if (isCreative()) return;                       // в креативе стрелы не тратятся
+        inventory.add(ITEM.ARROW, n);
+        refreshHotbar();
+        ui.setArrows(arrowAmmo(), mode);
+        sfx.arrowPickup();
+      },
+    },
+  );
+  sfx.bowShoot(power);
+}
+
 function hitMob(m) {
   const dmg = itemDamage(heldItem());
   swingHand(1);
@@ -447,10 +745,37 @@ function hitMob(m) {
   }
 }
 
+// Трава, цветы, папоротник, клевер срываются мгновенно: сухой треск, горсть частиц,
+// без стадий трещин и без замены блока (как в Minecraft)
+function breakDecor(hit) {
+  const id = world.getBlock(hit.x, hit.y, hit.z);
+  if (!isDecor(id)) return;
+  world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
+  particles.burst(hit.x + 0.15, hit.y + 0.1, hit.z + 0.15, tileColor(BLOCKS[id].tiles[0]), 10);
+  sfx.grassRustle();
+  swingHand(0.45);
+  decorBreakCd = 0.12;
+  breakTarget = null;
+  breakProgress = 0;
+  breakQuick = false;
+  crackMesh.visible = false;
+  ui.setBreakProgress(0);
+  // В выживании сорванное растение падает в инвентарь
+  if (isSurvival()) {
+    const drop = blockDropItem(id);
+    if (drop) {
+      const left = inventory.add(drop, 1);
+      refreshHotbar();
+      if (left > 0) ui.toast(i18n.t('inv_full'), 1600);
+    }
+  }
+}
+
 function doBreak(hit) {
   if (!hit) return;
   const id = world.getBlock(hit.x, hit.y, hit.z);
   if (!id || id === BLOCK.WATER) return;
+  if (isDecor(id)) return breakDecor(hit);
   world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
   particles.burst(hit.x, hit.y, hit.z, tileColor(BLOCKS[id].tiles[0]), 16);
   sfx.breakBlock(breakKind(id));
@@ -479,6 +804,9 @@ function doBreak(hit) {
 }
 
 function handleDeath() {
+  bowCharge = 0;
+  bowCharging = false;
+  eat.reset();
   if (isCreative()) { player.hp = player.maxHp; return; }  // в креативе игрок бессмертен
   sfx.die();
   ui.flashHurt();
@@ -500,7 +828,7 @@ function tryEat() {
   inventory.remove(ITEM.APPLE, 1);
   refreshHotbar();
   sfx.crunch();
-  player.heal(4);
+  player.heal(foodValue(ITEM.APPLE));
   ui.setHealth(player.hp, player.maxHp);
   ui.toast(i18n.t('eat_ok'), 1600);
 }
@@ -568,6 +896,7 @@ function buildSave() {
       sound: settings.sound,
       lang: settings.lang,
       viewDistance: settings.viewDistance,
+      fullscreen: settings.fullscreen !== false,
     },
   };
 }
@@ -583,16 +912,60 @@ function attachPlayerEvents() {
     if (!isSurvival()) return;             // в креативе игрок бессмертен
     const dx = player.pos.x - mob.pos.x, dz = player.pos.z - mob.pos.z;
     const dl = Math.hypot(dx, dz) || 1;
-    if (player.hurt(3)) {
+    if (player.hurt(mob.type === 'gloom' ? 3 : 2)) {
       player.vel.x = (dx / dl) * 5;
       player.vel.z = (dz / dl) * 5;
       player.vel.y = 3;
       ui.setHealth(player.hp, player.maxHp);
     }
   };
+  // Крипер взорвался: урон по площади, разлетающиеся частицы и разрушение мягких блоков
+  mobManager.onExplode = (mob) => {
+    const ex = mob.pos.x, ey = mob.pos.y + 0.4, ez = mob.pos.z;
+    sfx.explode();
+    ui.shake();
+    shakeT = 0.55;
+    particles.burst(ex, ey, ez, 0xd8dcd8, 34);
+    particles.burst(ex, ey + 0.4, ez, 0x4a4a4a, 18);
+    // Урон игроку по расстоянию
+    if (isSurvival()) {
+      const dx = player.pos.x - ex, dy = player.pos.y + 1 - ey, dz = player.pos.z - ez;
+      const d = Math.hypot(dx, dy, dz);
+      if (d < 4.5) {
+        const dmg = Math.max(2, Math.round(7 - d));
+        const dl = Math.hypot(dx, dz) || 1;
+        if (player.hurt(dmg)) {
+          player.vel.x = (dx / dl) * 8;
+          player.vel.z = (dz / dl) * 8;
+          player.vel.y = 5;
+          ui.setHealth(player.hp, player.maxHp);
+        }
+      }
+    }
+    // Разрушаем блоки вокруг (обсидиан взрыв не берёт)
+    const R = 2;
+    const bx = Math.floor(ex), by = Math.floor(ey), bz = Math.floor(ez);
+    for (let x = bx - R; x <= bx + R; x++) {
+      for (let y = Math.max(1, by - R); y <= by + R; y++) {
+        for (let z = bz - R; z <= bz + R; z++) {
+          const dist = Math.hypot(x + 0.5 - ex, y + 0.5 - ey, z + 0.5 - ez);
+          if (dist > R + 0.4) continue;
+          const id = world.getBlock(x, y, z);
+          if (!id || id === BLOCK.WATER || id === BLOCK.OBSIDIAN) continue;
+          world.setBlock(x, y, z, BLOCK.AIR);
+        }
+      }
+    }
+    particles.burst(ex, ey, ez, 0x8a8a8a, 12);
+  };
+
   mobManager.onDeath = (mob) => {
     sfx.mobDie();
-    const color = mob.type === 'gloom' ? 0x2a2140 : 0xd03232;
+    const color = mob.type === 'gloom' ? 0x2a2140
+      : mob.type === 'creeper' ? 0x6cc24a
+        : mob.type === 'spider' ? 0x4a2f26
+          : mob.type === 'wolf' ? 0xd6d2ca
+            : mob.type === 'fish' ? 0xb8ccd8 : 0xd03232;
     particles.burst(mob.pos.x, mob.pos.y + mob.centerY(), mob.pos.z, color, 16);
   };
   items.onPickup = (kind) => {
@@ -628,6 +1001,7 @@ function applyMode() {
   ui.setHealthVisible(!creative);
   ui.setFlyButton(creative);
   ui.setApples(inventory.count(ITEM.APPLE), mode);
+  ui.setArrows(arrowAmmo(), mode);
   if (creative) player.hp = player.maxHp;
 }
 
@@ -692,6 +1066,9 @@ function showHints() {
   setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_inventory'), 3500), 7800);
   setTimeout(() => state === 'game'
     && ui.toast(i18n.t(isCreative() ? 'hint_fly' : 'hint_table'), 3500), 11400);
+  setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_bow'), 4200), 15000);
+  setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_eat'), 4200), 21000);
+  setTimeout(() => state === 'game' && ui.toast(i18n.t('esc_fullscreen'), 4500), 20500);
 }
 
 // ---------------------------------------------------------------- Награда за рекламу
@@ -735,6 +1112,14 @@ async function startWorld(opts = {}) {
     STARTER_PALETTE.forEach((id, i) => inventory.setStack(i, { key: blockItem(id), count: 64 }));
   }
   mobManager.world = world;
+  projectiles.clear();
+  bowCharge = 0;
+  bowCharging = false;
+  if (!data && mode === 'survival') {
+    // Небольшой стартовый набор: с луком и стрелами в выживании интереснее начинать
+    inventory.add(ITEM.BOW, 1);
+    inventory.add(ITEM.ARROW, 16);
+  }
   attachPlayerEvents();
 
   if (data) {
@@ -749,6 +1134,8 @@ async function startWorld(opts = {}) {
       settings.sound = data.settings.sound !== false;
       settings.lang = data.settings.lang || settings.lang;
       settings.viewDistance = data.settings.viewDistance || settings.viewDistance;
+    settings.fullscreen = data.settings.fullscreen !== false;
+    input.allowFullscreen = settings.fullscreen;
     }
     if (data.time != null) sky.setTime(data.time);
     i18n.setLang(settings.lang);
@@ -942,6 +1329,12 @@ ui.handlers.onSettingsChange = (delta) => {
     sky.viewDistance = delta.viewDistance;
     lastPlayerChunk = null; // пересобрать очередь чанков
   }
+  if (delta.fullscreen != null) {
+    input.allowFullscreen = delta.fullscreen !== false;
+    settings.fullscreen = input.allowFullscreen;
+    if (settings.fullscreen) input.enterFullscreen();
+    else { input.exitFullscreen(); ui.toast(i18n.t('fullscreen_off')); }
+  }
   saveGame();
 };
 
@@ -982,8 +1375,11 @@ input.handlers.onScroll = (dir) => {
 };
 input.handlers.onActionBreak = () => {
   if (state !== 'game') return;
+  if (findMobTarget()) return;          // тап по мобу — удар, а не ломание
   const hit = pickTarget();
   if (!hit) return;
+  // Растения срываются мгновенно, без трещин
+  if (isDecor(hit.id)) return breakDecor(hit);
   // Тап — быстрое ломание с короткой анимацией трещин
   breakTarget = { x: hit.x, y: hit.y, z: hit.z };
   breakProgress = 0;
@@ -1016,6 +1412,12 @@ document.addEventListener('pointerlockchange', () => {
     pauseGame();
   }
 });
+
+// Браузер сам вышел из полного экрана (Esc в Safari/Firefox или удержание Esc в Chrome)
+// — показываем меню паузы вместо «молчаливого» выброса из игры
+input.handlers.onFullscreenChange = (on) => {
+  if (!on && state === 'game') pauseGame();
+};
 
 function checkOrientation() {
   const portrait = window.innerHeight > window.innerWidth && input.isTouch;
@@ -1109,9 +1511,44 @@ function frame() {
       highlight.visible = false;
     }
 
+    // Еда: держим ЛКМ (или кнопку «копать» на телефоне) с едой в руке — персонаж жуёт.
+    // Отпустили раньше времени — анимация прерывается, предмет не тратится.
+    const foodKey = heldFood();
+    const hungry = player.hp < player.maxHp;
+    const holdEat = !!foodKey && input.breakHeld && !mobTarget;
+    eatFullT = Math.max(0, eatFullT - dt);
+    const eatEvent = eat.update(dt, holdEat, hungry);
+    if (eatEvent === 'chew') {
+      sfx.crunch();
+      // Крошки летят перед лицом — еда выглядит «настоящей»
+      const eye = player.eyePos();
+      const dir = player.lookDir();
+      particles.burst(
+        eye.x + dir.x * 0.55, eye.y + dir.y * 0.55 - 0.18, eye.z + dir.z * 0.55,
+        Math.random() < 0.5 ? 0xd64545 : 0xd8c48a, 2,
+      );
+    } else if (eatEvent === 'done') {
+      finishEat();
+    } else if (eatEvent === 'cancel') {
+      ui.setBreakProgress(0);
+    }
+    if (holdEat && !eat.active && !hungry && eatFullT <= 0) {
+      ui.toast(i18n.t('eat_full'), 2000);       // здоровье полное — есть нечего
+      eatFullT = 2.5;
+    }
+
     // Ломание: удержание ЛКМ/кнопки или быстрое по тапу (с анимацией трещин)
     let breaking = null;
-    if (hit && !mobTarget) {
+    decorBreakCd = Math.max(0, decorBreakCd - dt);
+    if (hit && !mobTarget && !eat.active && isDecor(hit.id)) {
+      // Растения: мгновенный срыв удержанием кнопки, трещины не показываем
+      if (input.breakHeld && decorBreakCd <= 0) breakDecor(hit);
+      breakTarget = null;
+      breakProgress = 0;
+      breakQuick = false;
+      crackMesh.visible = false;
+      ui.setBreakProgress(0);
+    } else if (hit && !mobTarget && !eat.active) {
       const same = breakTarget && breakTarget.x === hit.x && breakTarget.y === hit.y && breakTarget.z === hit.z;
       if (breakQuick) {
         if (same) breaking = hit;
@@ -1153,11 +1590,29 @@ function frame() {
       crackMesh.visible = false;
     }
 
+    // Лук: удержание ПКМ (или кнопки на тач-экране) натягивает тетиву, отпускание — выстрел
+    const bowSel = isBowSelected();
+    if (bowSel && input.placeHeld) {
+      if (!bowCharging) {
+        bowCharging = true;
+        bowCharge = 0;
+        sfx.bowDraw();
+      }
+      bowCharge = Math.min(1, bowCharge + dt / BOW_CHARGE_TIME);
+    } else if (bowCharging) {
+      bowCharging = false;
+      fireBow(bowCharge);
+      bowCharge = 0;
+    }
+
     placeCooldown -= dt;
-    if (input.placeHeld && placeCooldown <= 0 && hit) {
+    if (!bowSel && input.placeHeld && placeCooldown <= 0 && hit) {
       doPlace(hit);
       placeCooldown = 0.25;
     }
+
+    // Стрелы: полёт с гравитацией, попадания в блоки и мобов, подбор воткнутых
+    projectiles.update(dt, world, mobManager.mobs, player.pos);
 
     // Камера (+ встряска при уроне)
     const eye = player.eyePos();
@@ -1230,6 +1685,7 @@ function frame() {
     sfx.setRainLevel(weather.wetness);
   }
 
+  if (state !== 'game') eat.reset();
   updateHand(dt, sky.lightLevel ?? 1);
   renderer.render(scene, camera);
 }
@@ -1278,6 +1734,8 @@ function applyLoadedSettings(s) {
   settings.sound = s.sound !== false;
   settings.lang = s.lang || settings.lang;
   settings.viewDistance = s.viewDistance || settings.viewDistance;
+  settings.fullscreen = s.fullscreen !== false;
+  input.allowFullscreen = settings.fullscreen;
   i18n.setLang(settings.lang);
   sfx.setVolume(settings.sound ? settings.volume : 0);
   sfx.setEnabled(settings.sound);

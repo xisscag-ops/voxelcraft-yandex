@@ -329,7 +329,8 @@ html, body {
   background-clip: text;
   color: transparent;
 }
-#apples {
+#apples,
+#arrows {
   align-self: flex-start;
   background: rgba(12, 14, 20, 0.72);
   color: #fff;
