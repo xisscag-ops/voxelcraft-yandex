@@ -11,6 +11,8 @@ import { raycastVoxel } from './raycast.js';
 import { Particles } from './particles.js';
 import { Weather } from './weather.js';
 import { ItemDrops } from './items.js';
+import { Arrows, buildArrowModel, arrowMaterials } from './projectiles.js';
+import { ITEM } from './gear.js';
 import { Sky } from './sky.js';
 import { Sfx } from './audio.js';
 import { Input } from './input.js';
@@ -31,12 +33,13 @@ const settings = {
   lang: 'ru',
   viewDistance: CONFIG.VIEW_DISTANCE,
   paletteUnlocked: false,
+  fullscreen: true,
 };
 
 let state = 'loading';           // loading | menu | game | pause
 let world = null;
 let player = null;
-let palette = [...STARTER_PALETTE];
+let palette = [];                 // [{ kind: 'block', id } | { kind: 'item', item }]
 let hotbarIndex = 0;
 let saveData = null;
 let sessionStart = 0;
@@ -70,8 +73,15 @@ const particles = new Particles(THREE, scene);
 const mobManager = new MobManager(scene, null);
 const weather = new Weather(THREE, scene);
 const items = new ItemDrops(scene);
+const projectiles = new Arrows(scene);
 // Выживание
 let apples = 0;
+let arrowsAmmo = 32;           // стрелы для лука
+let bowCharge = 0;             // 0..1 — натяжение тетивы
+let bowCharging = false;
+let bowKick = 0;               // анимация отдачи после выстрела
+let decorBreakCd = 0;          // пауза между мгновенными «срывами» травы
+const BOW_CHARGE_TIME = 0.85;  // секунды до полной натяжки
 let attackCd = 0;
 let gloomT = 6;
 let gloomWarned = false;
@@ -121,7 +131,7 @@ function swingHand(power = 1) {
   handSwingPow = power;
 }
 function updateHand(dt, light) {
-  handPivot.visible = state === 'game';
+  handPivot.visible = state === 'game' && !isBowSelected();
   if (handSwing > 0) handSwing = Math.max(0, handSwing - dt / HAND_SWING_TIME);
   const p = Math.sin((1 - handSwing) * Math.PI) * handSwingPow; // 0 -> 1 -> 0
   const moving = Math.abs(input.move.forward) + Math.abs(input.move.right) > 0.1;
@@ -134,8 +144,107 @@ function updateHand(dt, light) {
     -0.55 - 0.15 * p,
   );
   hand.material.color.setHex(0xd9a27a).multiplyScalar(0.35 + 0.65 * light);
+  poseBow(dt, light);
 }
 let handBob = 0;
+
+// ---------------------------------------------------------------- Лук (вид от первого лица)
+// Дуга собрана из сегментов окружности: рукоять в центре, концы смотрят на игрока.
+const BOW_TIP = 0.2539;        // половина высоты дуги (y концов)
+const BOW_ANG = 1.0;           // половина угла дуги, рад
+
+function bowMaterial(color) {
+  return new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false });
+}
+
+const bowPivot = new THREE.Group();
+const bowMats = {
+  wood: bowMaterial(0x8b5a2b),
+  woodDark: bowMaterial(0x633f1a),
+  string: bowMaterial(0xe8e8ee),
+  hand: bowMaterial(0xc98f63),
+};
+let bowStringUpper, bowStringLower;
+{
+  const R = 0.3, D = 0.16, SEG = 6;
+  for (let i = 0; i < SEG; i++) {
+    const a0 = -BOW_ANG + 2 * BOW_ANG * (i / SEG);
+    const a1 = -BOW_ANG + 2 * BOW_ANG * ((i + 1) / SEG);
+    const am = (a0 + a1) / 2;
+    const y0 = R * Math.sin(a0), z0 = D - R * Math.cos(a0);
+    const y1 = R * Math.sin(a1), z1 = D - R * Math.cos(a1);
+    const len = Math.hypot(y1 - y0, z1 - z0);
+    const grip = i === 2 || i === 3;
+    const seg = new THREE.Mesh(
+      new THREE.BoxGeometry(0.026, len * 1.1, 0.036),
+      grip ? bowMats.woodDark : bowMats.wood,
+    );
+    seg.position.set(0, (y0 + y1) / 2, (z0 + z1) / 2);
+    seg.rotation.x = am;
+    bowPivot.add(seg);
+  }
+  // Тетива — два отрезка от концов к точке натяжения
+  const stringGeo = new THREE.BoxGeometry(0.011, 1, 0.011).translate(0, -0.5, 0);
+  bowStringUpper = new THREE.Mesh(stringGeo, bowMats.string);
+  bowStringUpper.position.set(0, BOW_TIP, 0);
+  bowStringLower = new THREE.Mesh(stringGeo, bowMats.string);
+  bowStringLower.position.set(0, -BOW_TIP, 0);
+  bowStringLower.rotation.z = Math.PI;
+  bowPivot.add(bowStringUpper, bowStringLower);
+  // Кулак на рукояти
+  const fist = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.14, 0.13), bowMats.hand);
+  fist.position.set(0.005, -0.03, D - R + 0.035);
+  bowPivot.add(fist);
+}
+// Стрела на тетиве (смотрит вперёд, пятка — в начале координат)
+const nockedArrow = buildArrowModel(1, arrowMaterials());
+nockedArrow.rotation.y = Math.PI;
+nockedArrow.visible = false;
+nockedArrow.traverse((o) => {
+  if (o.isMesh) { o.material.depthTest = false; o.material.depthWrite = false; }
+});
+bowPivot.add(nockedArrow);
+bowPivot.visible = false;
+// Поверх мира, как и рука
+bowPivot.traverse((o) => { if (o.isMesh) o.renderOrder = 999; });
+camera.add(bowPivot);
+
+const nockedMats = nockedArrow.children.map((c) => c.material);
+
+function poseBow(dt, light) {
+  if (bowKick > 0) bowKick = Math.max(0, bowKick - dt / 0.16);
+  const show = state === 'game' && isBowSelected();
+  bowPivot.visible = show;
+  if (!show) return;
+
+  // Натяжение: тетива тянется назад, стрела едет вместе с ней
+  const pull = 0.26 * bowCharge;
+  const len = Math.hypot(BOW_TIP, pull);
+  bowStringUpper.scale.y = len;
+  bowStringLower.scale.y = len;
+  bowStringUpper.rotation.x = -Math.atan2(pull, BOW_TIP);
+  bowStringLower.rotation.x = Math.atan2(pull, BOW_TIP);
+  nockedArrow.visible = bowCharge > 0.02;
+  nockedArrow.position.set(0, 0, pull);
+
+  const k = bowCharge;
+  const kick = bowKick * bowKick;
+  bowPivot.position.set(
+    0.34 - 0.16 * k,
+    -0.34 + 0.15 * k - 0.03 * kick,
+    -0.6 + 0.05 * k + 0.1 * kick,
+  );
+  bowPivot.rotation.set(0.06 - 0.04 * k + 0.2 * kick, -0.34 + 0.26 * k, 0.12 - 0.1 * k);
+
+  // Освещение как у руки
+  const lum = 0.35 + 0.65 * light;
+  bowMats.wood.color.setHex(0x8b5a2b).multiplyScalar(lum);
+  bowMats.woodDark.color.setHex(0x633f1a).multiplyScalar(lum);
+  bowMats.string.color.setHex(0xe8e8ee).multiplyScalar(lum);
+  bowMats.hand.color.setHex(0xc98f63).multiplyScalar(lum);
+  const nockedBase = [0x9c7548, 0xd8dde6, 0xe0574c, 0xe0574c];
+  nockedMats.forEach((m, i) => m.color.setHex(nockedBase[i] || 0xc0c0c0).multiplyScalar(lum));
+}
 
 // Трещины при ломании блока (5 стадий)
 const crackMats = CRACK_TILES.map((t) => new THREE.MeshBasicMaterial({
@@ -243,12 +352,26 @@ function disposeChunkMeshes(c) {
 
 // ---------------------------------------------------------------- Хотбар
 function rebuildPalette() {
-  palette = settings.paletteUnlocked
+  const blockIds = settings.paletteUnlocked
     ? [...STARTER_PALETTE, ...BUILDER_PALETTE]
     : [...STARTER_PALETTE];
+  const entries = blockIds.map((id) => ({ kind: 'block', id }));
+  // Лук — сразу после базовых блоков, чтобы всегда был под рукой
+  entries.splice(STARTER_PALETTE.length, 0, { kind: 'item', item: ITEM.BOW });
+  palette = entries;
   hotbarIndex = Math.min(hotbarIndex, palette.length - 1);
   ui.buildHotbar(palette, i18n.lang);
   ui.setHotbarSelection(hotbarIndex);
+  ui.setPlaceButtonBow(isBowSelected());
+  ui.setArrows(arrowsAmmo);
+}
+
+const selectedEntry = () => palette[hotbarIndex] || null;
+
+/** Выбран лук? */
+function isBowSelected() {
+  const e = selectedEntry();
+  return !!e && e.kind === 'item' && e.item === ITEM.BOW;
 }
 
 // ---------------------------------------------------------------- Действия
@@ -268,17 +391,85 @@ function doBreak(hit) {
   if (!hit) return;
   const id = world.getBlock(hit.x, hit.y, hit.z);
   if (!id || id === BLOCK.WATER) return;
+  if (isDecor(id)) return breakDecor(hit);   // растения срываются мгновенно, с треском
   world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
   particles.burst(hit.x, hit.y, hit.z, tileColor(BLOCKS[id].tiles[0]), 16);
   sfx.breakBlock(breakKind(id));
-  // С листвы иногда падает яблоко
-  if (id === BLOCK.LEAVES && Math.random() < 0.14) {
-    items.spawn(hit.x + 0.5, hit.y + 0.8, hit.z + 0.5, 'apple');
+  // С листвы иногда падает яблоко или стрела
+  if (id === BLOCK.LEAVES) {
+    if (Math.random() < 0.14) items.spawn(hit.x + 0.5, hit.y + 0.8, hit.z + 0.5, 'apple');
+    if (Math.random() < 0.08) items.spawn(hit.x + 0.5, hit.y + 0.8, hit.z + 0.5, 'arrow');
   }
   breakTarget = null;
   breakProgress = 0;
   breakQuick = false;
   crackMesh.visible = false;
+}
+
+// Трава, цветы, папоротник, клевер: мгновенный «срыв» — шелест, горсть зелёных частиц,
+// без кубической модели и без анимации трещин (как в Minecraft)
+function breakDecor(hit) {
+  const id = world.getBlock(hit.x, hit.y, hit.z);
+  if (!isDecor(id)) return;
+  world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
+  particles.burst(hit.x + 0.1, hit.y, hit.z + 0.1, tileColor(BLOCKS[id].tiles[0]), 10);
+  sfx.grassRustle();
+  swingHand(0.45);
+  decorBreakCd = 0.12;
+  breakTarget = null;
+  breakProgress = 0;
+  breakQuick = false;
+  breakDustT = 0;
+  crackMesh.visible = false;
+  highlight.visible = false;
+  ui.setBreakProgress(0);
+}
+
+// ---------------------------------------------------------------- Лук
+function onArrowHitMob(mob, arrow, dir) {
+  const dmg = arrow.dmg || 2;
+  const killed = mob.hurt(dmg);
+  sfx.hitMob();
+  particles.burst(mob.pos.x, mob.pos.y + 0.5, mob.pos.z, mob.hitColor, 12);
+  mob.knockback(dir.x, dir.z, killed ? 3.4 : 2.6);
+  if (!killed) mob.fleeFrom(player.pos.x, player.pos.z, 4);
+  else if (Math.random() < 0.5) {
+    // Стрела остаётся рядом — её можно подобрать
+    items.spawn(mob.pos.x, mob.pos.y + 0.6, mob.pos.z, 'arrow');
+  }
+}
+
+function fireBow(charge) {
+  if (!isBowSelected()) return;
+  if (arrowsAmmo <= 0) {
+    ui.toast(i18n.t('no_arrows'), 1800);
+    sfx.uiClick();
+    return;
+  }
+  arrowsAmmo--;
+  ui.setArrows(arrowsAmmo);
+  const eye = player.eyePos();
+  const d = player.lookDir();
+  const power = 0.3 + 0.7 * charge;                    // сила натяжения 0.3..1
+  const speed = 15 + 22 * power;                       // 21..37 м/с
+  const dmg = 1 + Math.round(4.5 * charge);            // 1..6
+  bowKick = 0.6 + 0.4 * charge;
+  projectiles.shoot(
+    eye.x + d.x * 0.6, eye.y + d.y * 0.6 - 0.1, eye.z + d.z * 0.6,
+    d.x, d.y, d.z, speed, dmg,
+    {
+      onMob: onArrowHitMob,
+      onBlock: () => sfx.arrowHitBlock(),
+      onPickup: (n) => {
+        const wasEmpty = arrowsAmmo <= 0;
+        arrowsAmmo += n;
+        ui.setArrows(arrowsAmmo);
+        sfx.arrowPickup();
+        if (wasEmpty) ui.toast(i18n.t('arrow_pickup'), 1400);
+      },
+    },
+  );
+  sfx.bowShoot(power);
 }
 
 function handleDeath() {
@@ -307,6 +498,8 @@ function tryEat() {
 
 function doPlace(hit) {
   if (!hit) return;
+  const sel = selectedEntry();
+  if (!sel || sel.kind !== 'block') return;   // лук блоки не ставит
   swingHand(0.6);
   // Прицел на траве/цветке — ставим блок на её место
   const onDecor = isDecor(hit.id);
@@ -321,13 +514,13 @@ function doPlace(hit) {
   const overlap = x + 1 > px - HW && x < px + HW &&
     y + 1 > py && y < py + CONFIG.PLAYER_HEIGHT &&
     z + 1 > pz - HW && z < pz + HW;
-  const id = palette[hotbarIndex];
+  const id = sel.id;
   if (overlap && isSolid(id)) return;
   if (isDecor(cur)) {
-    // Трава автоматически ломается при установке блока
+    // Трава автоматически ломается при установке блока — с тем же треском
     if (isDecor(id) && cur === id) return;
     particles.burst(x, y, z, tileColor(BLOCKS[cur].tiles[0]), 8);
-    sfx.breakBlock(breakKind(cur));
+    sfx.grassRustle();
   }
   if (world.setBlock(x, y, z, id)) {
     sfx.place();
@@ -348,11 +541,13 @@ function buildSave() {
     time: sky.serialize(),
     blocksBuilt,
     paletteUnlocked: settings.paletteUnlocked,
+    arrows: arrowsAmmo,
     settings: {
       volume: settings.volume,
       sound: settings.sound,
       lang: settings.lang,
       viewDistance: settings.viewDistance,
+      fullscreen: settings.fullscreen,
     },
   };
 }
@@ -376,7 +571,7 @@ function attachPlayerEvents() {
 };
 mobManager.onDeath = (mob) => {
   sfx.mobDie();
-  particles.burst(mob.pos.x, mob.pos.y + 0.5, mob.pos.z, 0x2a2140, 14);
+  particles.burst(mob.pos.x, mob.pos.y + 0.5, mob.pos.z, mob.hitColor, 14);
 };
 items.onPickup = (kind) => {
   if (kind === 'apple') {
@@ -384,6 +579,12 @@ items.onPickup = (kind) => {
     ui.setApples(apples);
     sfx.pickup();
     if (apples === 1) ui.toast(i18n.t('apple_get'), 3200);
+  } else if (kind === 'arrow') {
+    const wasEmpty = arrowsAmmo <= 0;
+    arrowsAmmo++;
+    ui.setArrows(arrowsAmmo);
+    sfx.arrowPickup();
+    if (wasEmpty) ui.toast(i18n.t('arrow_pickup'), 1400);
   }
 };
 player.events.onStep = (inWater) => sfx.step(inWater);
@@ -412,6 +613,9 @@ function enterGame() {
 function pauseGame() {
   if (state !== 'game') return;
   state = 'pause';
+  bowCharging = false;
+  bowCharge = 0;
+  input.unlockKeys();   // в паузе клавиатура снова свободна (Tab, Alt и т.п.)
   ysdk.gameplayStop();
   saveGame();
   ui.showScreen('pause-screen');
@@ -429,6 +633,7 @@ function resumeGame() {
 
 async function saveAndQuit() {
   await saveGame(true);
+  input.unlockKeys();
   state = 'menu';
   ui.setHasSave(true);
   ui.showScreen('menu-screen');
@@ -450,6 +655,8 @@ function showHints() {
   ui.toast(i18n.t('hint_break'), 4000);
   setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_place'), 3500), 4200);
   setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_fly'), 3500), 8000);
+  setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_bow'), 4000), 12000);
+  setTimeout(() => state === 'game' && ui.toast(i18n.t('esc_fullscreen'), 4500), 17000);
 }
 
 // ---------------------------------------------------------------- Награда за рекламу
@@ -481,8 +688,13 @@ async function startWorld(newWorld = false) {
   player = new Player(world);
   mobManager.clear();
   items.clear();
+  projectiles.clear();
   apples = 0;
+  arrowsAmmo = 32;
+  bowCharge = 0;
+  bowCharging = false;
   ui.setApples(0);
+  ui.setArrows(arrowsAmmo);
   mobManager.world = world;
   attachPlayerEvents();
 
@@ -491,11 +703,14 @@ async function startWorld(newWorld = false) {
     settings.paletteUnlocked = !!data.paletteUnlocked;
     blocksBuilt = data.blocksBuilt || 0;
     ui.setBlocksBuilt(blocksBuilt);
+    if (data.arrows != null) arrowsAmmo = Math.max(0, data.arrows | 0);
+    ui.setArrows(arrowsAmmo);
     if (data.settings) {
       settings.volume = data.settings.volume ?? settings.volume;
       settings.sound = data.settings.sound !== false;
       settings.lang = data.settings.lang || settings.lang;
       settings.viewDistance = data.settings.viewDistance || settings.viewDistance;
+      settings.fullscreen = data.settings.fullscreen !== false;
     }
     if (data.time != null) sky.setTime(data.time);
     i18n.setLang(settings.lang);
@@ -506,6 +721,7 @@ async function startWorld(newWorld = false) {
   }
   ui.applySettings(settings);
   ui.applyI18n();
+  input.allowFullscreen = settings.fullscreen !== false;
   rebuildPalette();
   sky.viewDistance = settings.viewDistance;
 
@@ -556,6 +772,7 @@ ui.handlers.onReward = () => requestReward();
 ui.handlers.onSlot = (i) => {
   hotbarIndex = i;
   ui.setHotbarSelection(i);
+  ui.setPlaceButtonBow(isBowSelected());
   sfx.uiClick();
 };
 ui.handlers.onPauseBtn = () => pauseGame();
@@ -584,6 +801,11 @@ ui.handlers.onSettingsChange = (delta) => {
     sky.viewDistance = delta.viewDistance;
     lastPlayerChunk = null; // пересобрать очередь чанков
   }
+  if (delta.fullscreen != null) {
+    input.allowFullscreen = delta.fullscreen;
+    if (delta.fullscreen) input.enterFullscreen();
+    else { input.exitFullscreen(); ui.toast(i18n.t('fullscreen_off')); }
+  }
   saveGame();
 };
 
@@ -601,18 +823,24 @@ input.handlers.onDigit = (i) => {
   if (i < palette.length) {
     hotbarIndex = i;
     ui.setHotbarSelection(i);
+    ui.setPlaceButtonBow(isBowSelected());
     sfx.uiClick();
   }
 };
 input.handlers.onScroll = (dir) => {
   hotbarIndex = (hotbarIndex + dir + palette.length) % palette.length;
   ui.setHotbarSelection(hotbarIndex);
+  ui.setPlaceButtonBow(isBowSelected());
   sfx.uiClick();
 };
 input.handlers.onActionBreak = () => {
   if (state !== 'game') return;
   const hit = pickTarget();
   if (!hit) return;
+  if (isDecor(hit.id)) {   // трава и цветы — сразу, с треском
+    breakDecor(hit);
+    return;
+  }
   // Тап — быстрое ломание с короткой анимацией трещин
   breakTarget = { x: hit.x, y: hit.y, z: hit.z };
   breakProgress = 0;
@@ -621,6 +849,7 @@ input.handlers.onActionBreak = () => {
 };
 input.handlers.onActionPlace = () => {
   if (state !== 'game') return;
+  if (isBowSelected()) return;   // лук заряжается удержанием, выстрел — по отпусканию
   doPlace(pickTarget());
 };
 
@@ -640,6 +869,12 @@ document.addEventListener('pointerlockchange', () => {
     pauseGame();
   }
 });
+
+// Браузер сам вышел из полного экрана (Esc в Safari/Firefox или удержание Esc в Chrome)
+// — показываем меню паузы вместо «молчаливого» выброса из игры
+input.handlers.onFullscreenChange = (on) => {
+  if (!on && state === 'game') pauseGame();
+};
 
 function checkOrientation() {
   const portrait = window.innerHeight > window.innerWidth && input.isTouch;
@@ -694,7 +929,7 @@ function frame() {
 
     // --- Выживание: предметы, еда, ночные Хмари ---
     items.update(dt, world, player.pos);
-    const eatPressed = input.keys.has('KeyF');
+    const eatPressed = input.keys.has('KeyE');
     if (eatPressed && !prevEat) tryEat();
     prevEat = eatPressed;
 
@@ -752,22 +987,29 @@ function frame() {
       highlight.visible = false;
     }
 
-    // Ломание: удержание ЛКМ/кнопки или быстрое по тапу (с анимацией трещин)
+    // Ломание: удержание ЛКМ/кнопки или быстрое по тапу (с анимацией трещин).
+    // Трава и цветы — исключение: срываются мгновенно, одним нажатием, с треском.
     let breaking = null;
+    decorBreakCd -= dt;
     if (hit && !mobTarget) {
       const same = breakTarget && breakTarget.x === hit.x && breakTarget.y === hit.y && breakTarget.z === hit.z;
-      if (breakQuick) {
-        if (same) breaking = hit;
-        else { breakQuick = false; }
-      }
-      if (!breaking && input.breakHeld) {
-        if (!same) {
-          breakTarget = { x: hit.x, y: hit.y, z: hit.z };
-          breakProgress = 0;
-          breakQuick = false;
-          sfx.dig(breakKind(hit.id));
+      if (isDecor(hit.id)) {
+        // Тап по растению уже обработан в onActionBreak, здесь — удержание
+        if (input.breakHeld && decorBreakCd <= 0) breakDecor(hit);
+      } else {
+        if (breakQuick) {
+          if (same) breaking = hit;
+          else { breakQuick = false; }
         }
-        breaking = hit;
+        if (!breaking && input.breakHeld) {
+          if (!same) {
+            breakTarget = { x: hit.x, y: hit.y, z: hit.z };
+            breakProgress = 0;
+            breakQuick = false;
+            sfx.dig(breakKind(hit.id));
+          }
+          breaking = hit;
+        }
       }
     }
     if (breaking) {
@@ -798,11 +1040,29 @@ function frame() {
       crackMesh.visible = false;
     }
 
+    // Лук: удержание ПКМ (или кнопки на тач-экране) натягивает тетиву, отпускание — выстрел
+    const bowSel = isBowSelected();
+    if (bowSel && input.placeHeld) {
+      if (!bowCharging) {
+        bowCharging = true;
+        bowCharge = 0;
+        sfx.bowDraw();
+      }
+      bowCharge = Math.min(1, bowCharge + dt / BOW_CHARGE_TIME);
+    } else if (bowCharging) {
+      bowCharging = false;
+      fireBow(bowCharge);
+      bowCharge = 0;
+    }
+
     placeCooldown -= dt;
-    if (input.placeHeld && placeCooldown <= 0 && hit) {
+    if (!bowSel && input.placeHeld && placeCooldown <= 0 && hit) {
       doPlace(hit);
       placeCooldown = 0.25;
     }
+
+    // Стрелы: полёт, попадания, подбор воткнутых
+    projectiles.update(dt, world, mobManager.mobs, player.pos);
 
     // Камера
     const eye = player.eyePos();
@@ -912,6 +1172,8 @@ function applyLoadedSettings(s) {
   settings.sound = s.sound !== false;
   settings.lang = s.lang || settings.lang;
   settings.viewDistance = s.viewDistance || settings.viewDistance;
+  settings.fullscreen = s.fullscreen !== false;
+  input.allowFullscreen = settings.fullscreen !== false;
   i18n.setLang(settings.lang);
   sfx.setVolume(settings.sound ? settings.volume : 0);
   sfx.setEnabled(settings.sound);

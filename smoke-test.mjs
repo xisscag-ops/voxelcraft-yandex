@@ -147,9 +147,53 @@ check('decor meshed as cross quads', (() => {
 // Декор непроходим и не непрозрачен
 check('decor is walk-through', isDecor(15) && !isSolid(15) && !isOpaque(15));
 
+// ---- Мобы смотрят туда, куда идут (не бегут задом наперёд) ----
+{
+  const mobs = await import('./src/mobs.js');
+  const THREE = await import('three');
+  const flat = { getBlock: (x, y) => (y <= 30 ? 1 : 0), seaLevel: 22, heightAt: () => 30 };
+  const visuals = { group: new THREE.Group(), legs: [], head: null, ears: [], hop: true };
+  const mob = new mobs.Mob(flat, visuals, 'bunny', 0.5, 31, 0.5);
+  mob.state = 'walk';
+  mob.thinkT = 1e9;                 // курс не перебивается «мыслями»
+  mob.heading = 0.7;
+  const x0 = mob.pos.x, z0 = mob.pos.z;
+  mob.update(0.5, { x: 60, y: 31, z: 60 });
+  const mx = mob.pos.x - x0, mz = mob.pos.z - z0;
+  const fwd = new THREE.Vector3(0, 0, 1).applyEuler(visuals.group.rotation);
+  check('mob moved', Math.hypot(mx, mz) > 0.1);
+  check('mob faces its movement direction', mx * fwd.x + mz * fwd.z > 0.1);
+  check('mob forward is horizontal', Math.abs(fwd.y) < 1e-6);
+}
+
+// ---- Стрелы: полёт, попадание в блок, подбор ----
+{
+  const proj = await import('./src/projectiles.js');
+  const scene = { add() {}, remove() {} };
+  const arrows = new proj.Arrows(scene);
+  const wallWorld = { getBlock: (x) => (x >= 3 ? 3 : 0) };
+  let stuck = null, picked = 0, hitMob = null;
+  const cb = { onBlock: (a) => { stuck = a; }, onPickup: (n) => { picked += n; } };
+  arrows.shoot(0.5, 10, 0.5, 1, 0, 0, 20, 3, cb);
+  for (let i = 0; i < 120 && !stuck; i++) arrows.update(1 / 60, wallWorld, [], null);
+  check('arrow reaches the wall', !!stuck);
+  check('arrow does not sink into the block', !!stuck && Math.floor(stuck.group.position.x) < 3);
+  if (stuck) {
+    arrows.update(1 / 60, wallWorld, [], stuck.group.position);
+    check('stuck arrow is picked up by the player', picked === 1);
+  }
+
+  const arrows2 = new proj.Arrows(scene);
+  const mob = { pos: { x: 2, y: 10, z: 0.5 }, dead: false };
+  arrows2.shoot(0.5, 10, 0.5, 1, 0, 0, 20, 3, { onMob: (m) => { hitMob = m; } });
+  for (let i = 0; i < 120 && !hitMob; i++) arrows2.update(1 / 60, wallWorld, [mob], null);
+  check('arrow hits a mob in flight', hitMob === mob);
+}
+
 // Разметка: кнопка «К спавну» и слой молний
 const html = await (await import('node:fs/promises')).readFile(new URL('./index.html', import.meta.url), 'utf8');
 check('btn-home + lightning in markup', html.includes('id="btn-home"') && html.includes('id="lightning"'));
+check('arrow counter + fullscreen toggle in markup', html.includes('id="arrows"') && html.includes('id="set-fullscreen"'));
 
 console.log(failed === 0 ? '\nВсе проверки пройдены' : `\nПровалено проверок: ${failed}`);
 process.exit(failed ? 1 : 0);

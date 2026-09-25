@@ -1,6 +1,7 @@
 // HTML-интерфейс: экраны, хотбар, HUD, тосты, настройки
 import { BLOCKS, BLOCK_NAMES } from './blocks.js';
 import { tileIcon } from './textures.js';
+import { itemIcon, ITEM_NAMES } from './gear.js';
 
 export class UI {
   constructor(i18n) {
@@ -57,6 +58,10 @@ export class UI {
     snd?.addEventListener('change', () => {
       this.handlers.onSettingsChange?.({ sound: snd.checked });
     });
+    const fs = document.getElementById('set-fullscreen');
+    fs?.addEventListener('change', () => {
+      this.handlers.onSettingsChange?.({ fullscreen: fs.checked });
+    });
   }
 
   applySettings(s) {
@@ -70,6 +75,8 @@ export class UI {
     if (vd) { vd.value = s.viewDistance ?? 5; if (vdLabel) vdLabel.textContent = vd.value; }
     const snd = document.getElementById('set-sound');
     if (snd) snd.checked = s.sound !== false;
+    const fs = document.getElementById('set-fullscreen');
+    if (fs) fs.checked = s.fullscreen !== false;
   }
 
   applyI18n() {
@@ -122,32 +129,68 @@ export class UI {
     if (label && text) label.textContent = text;
   }
 
-  // Хотбар: по списку id блоков
-  buildHotbar(ids, lang) {
+  // Хотбар: список записей { kind: 'block', id } либо { kind: 'item', item: 'bow' }
+  buildHotbar(entries, lang) {
     const bar = document.getElementById('hotbar');
     if (!bar) return;
     bar.innerHTML = '';
-    ids.forEach((id, i) => {
+    entries.forEach((entry, i) => {
       const slot = document.createElement('div');
       slot.className = 'slot';
       slot.dataset.index = i;
-      const def = BLOCKS[id];
-      if (def?.tiles) {
-        const icon = tileIcon(def.tiles[2], 44);
+      let tip = '';
+      if (entry.kind === 'item') {
+        slot.dataset.item = entry.item;
+        const icon = itemIcon(entry.item, 44);
         icon.className = 'slot-icon';
         slot.appendChild(icon);
+        tip = ITEM_NAMES[lang]?.[entry.item] || ITEM_NAMES.ru[entry.item] || '';
+        // Счётчик боеприпасов прямо на слоте лука
+        if (entry.item === 'bow') {
+          const badge = document.createElement('span');
+          badge.className = 'slot-badge';
+          badge.textContent = this._arrows ?? 0;
+          slot.appendChild(badge);
+        }
+      } else {
+        const def = BLOCKS[entry.id];
+        if (def?.tiles) {
+          const icon = tileIcon(def.tiles[2], 44);
+          icon.className = 'slot-icon';
+          slot.appendChild(icon);
+        }
+        tip = BLOCK_NAMES[lang]?.[entry.id] || BLOCK_NAMES.ru[entry.id] || '';
       }
       const num = document.createElement('span');
       num.className = 'slot-num';
       num.textContent = (i < 9 ? i + 1 : '·');
       slot.appendChild(num);
-      const tip = document.createElement('div');
-      tip.className = 'slot-tip';
-      tip.textContent = BLOCK_NAMES[lang]?.[id] || BLOCK_NAMES.ru[id] || '';
-      slot.appendChild(tip);
+      const tipEl = document.createElement('div');
+      tipEl.className = 'slot-tip';
+      tipEl.textContent = tip;
+      slot.appendChild(tipEl);
       slot.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.handlers.onSlot?.(i); });
       bar.appendChild(slot);
     });
+  }
+
+  /** Количество стрел: HUD + значок на слоте лука */
+  setArrows(n) {
+    this._arrows = n;
+    const hud = document.getElementById('arrows');
+    if (hud) {
+      hud.classList.toggle('hidden', n <= 0);
+      hud.textContent = '🏹 ×' + n;
+    }
+    document.querySelectorAll('#hotbar .slot[data-item="bow"] .slot-badge').forEach((el) => {
+      el.textContent = n;
+    });
+  }
+
+  /** На тач-экране кнопка «поставить» превращается в кнопку выстрела */
+  setPlaceButtonBow(on) {
+    const el = document.getElementById('btn-place');
+    if (el) el.textContent = on ? '🏹' : '🧱';
   }
 
   setHotbarSelection(i) {
@@ -232,7 +275,7 @@ export class UI {
     const el = document.getElementById('apples');
     if (!el) return;
     el.classList.toggle('hidden', n <= 0);
-    el.textContent = 'F  🍎 ×' + n;
+    el.textContent = 'E  🍎 ×' + n;
   }
 
   flashHurt() {

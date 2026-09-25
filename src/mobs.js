@@ -38,6 +38,12 @@ function fixedPart(mat, geoCache, key, w, h, d, color) {
   return new THREE.Mesh(geoCache.get(key), mat);
 }
 
+// Здоровье и цвет «брызг» при попадании
+const MOB_HP = { bunny: 2, sheep: 3, slime: 1, bird: 1, gloom: 3 };
+const HIT_COLORS = {
+  bunny: 0xe6e2da, sheep: 0xf2f2f4, slime: 0x5cc45a, bird: 0xdadade, gloom: 0x2a2140,
+};
+
 const BUNNY_COLORS = [
   [0.93, 0.91, 0.88], // белый
   [0.62, 0.52, 0.42], // коричневый
@@ -189,11 +195,17 @@ export class Mob {
     this.onSound = null;         // (kind, dist) => void
     this.onAttack = null;        // (mob, playerPos) => void
     this.speed = type === 'bunny' ? 2.2 : type === 'slime' ? 1.6 : type === 'gloom' ? 2.0 : 1.1;
-    this.hp = type === 'gloom' ? 3 : 1;
+    this.hp = MOB_HP[type] ?? 2;
+    // Цвет частиц при ударе/смерти
+    this.hitColor = HIT_COLORS[type] ?? 0xcccccc;
     this.attackT = 0;
     this.flashT = 0;
     this.burnT = 0;
+    this.fleeT = 0;              // сколько ещё убегать после удара
     this.dead = false;
+    // Порядок поворотов «сначала рыскание, потом наклон» — реакции на удар
+    // и крен смотрятся правильно при любом курсе
+    visuals.group.rotation.order = 'YXZ';
     visuals.group.position.set(x, y, z);
     this.yBase = y;
   }
@@ -261,6 +273,15 @@ export class Mob {
     this.kbT = 0.18;
   }
 
+  /** Убегать от точки (x, z) — после попадания стрелы */
+  fleeFrom(x, z, time = 3.5) {
+    const dx = this.pos.x - x, dz = this.pos.z - z;
+    if (dx * dx + dz * dz > 1e-6) this.heading = Math.atan2(dx, dz);
+    this.state = 'flee';
+    this.fleeT = time;
+    this.stateT = time;
+  }
+
   hurt(n) {
     this.hp -= n;
     this.flashT = 0.35;
@@ -287,7 +308,7 @@ export class Mob {
       this.heading = Math.atan2(dx, dz);
       return;
     }
-    if (this.state === 'flee' && dist > 7) this.state = 'idle';
+    if (this.state === 'flee' && dist > 7 && this.fleeT <= 0) this.state = 'idle';
 
     if (this.stateT <= 0) {
       const r = Math.random();
@@ -326,6 +347,7 @@ export class Mob {
       this.think(playerPos);
     }
     this.animT += dt;
+    if (this.fleeT > 0) this.fleeT -= dt;
 
     const v = this.v;
     let moveSpeed = 0;
@@ -344,6 +366,18 @@ export class Mob {
         this.yBase = g;
       } else {
         this.heading += Math.PI * (0.5 + Math.random() * 0.6); // разворот
+      }
+    }
+
+    // Импульс от удара (стрела или кулак)
+    if (this.kbT > 0) {
+      const step = Math.min(this.kbT, dt);
+      this.kbT -= dt;
+      const nx = this.pos.x + this.kbX * step;
+      const nz = this.pos.z + this.kbZ * step;
+      if (this.groundAt(nx, nz, this.pos.y) !== null) {
+        this.pos.x = nx;
+        this.pos.z = nz;
       }
     }
 
@@ -369,7 +403,19 @@ export class Mob {
     }
 
     v.group.position.set(this.pos.x, this.pos.y + yOff, this.pos.z);
-    v.group.rotation.y = this.heading + Math.PI;
+    v.group.rotation.y = this.heading;   // модель смотрит туда, куда бежит (нос — +Z)
+
+    // Попадание (стрела или удар): отдача назад и «сплющивание»
+    if (this.flashT > 0) {
+      this.flashT -= dt;
+      const k = Math.max(0, this.flashT) / 0.35;
+      const pulse = Math.sin((1 - k) * Math.PI);
+      v.group.rotation.x = -0.6 * pulse;
+      v.group.scale.set(1 + 0.2 * pulse, 1 - 0.18 * pulse, 1 + 0.2 * pulse);
+    } else {
+      v.group.rotation.x = 0;
+      v.group.scale.setScalar(1);
+    }
 
     // Ноги
     for (let i = 0; i < v.legs.length; i++) {
@@ -430,8 +476,8 @@ export class Mob {
     this.pos.y += (targetY - this.pos.y) * Math.min(1, dt * 2);
 
     v.group.position.set(this.pos.x, this.pos.y, this.pos.z);
-    v.group.rotation.y = this.heading + Math.PI;
-    v.group.rotation.z = Math.sin(this.animT * 0.7) * 0.15; // крен в поворотах
+    v.group.rotation.y = this.heading;   // птица летит носом вперёд
+    v.group.rotation.z = -Math.sin(this.animT * 0.7) * 0.15; // крен в поворотах
 
     // Взмахи крыльев (в полёте чаще, в парении реже)
     const flap = Math.sin(this.animT * (dist < 4 ? 16 : 9)) * 0.85;

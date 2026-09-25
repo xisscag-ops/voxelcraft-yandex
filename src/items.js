@@ -1,5 +1,6 @@
-// Выпадающие предметы: яблоки с листвы (в будущем — лут мобов)
+// Выпадающие предметы: яблоки с листвы и стрелы (подбор после выстрела)
 import * as THREE from 'three';
+import { buildArrowModel } from './projectiles.js';
 
 const APPLE = { color: 0xd64545, stem: 0x6b4a2b };
 
@@ -20,10 +21,18 @@ export class ItemDrops {
   spawn(x, y, z, kind = 'apple') {
     if (this.items.length >= this.max) return null;
     const g = new THREE.Group();
-    const body = new THREE.Mesh(this.geo, this.mats[kind] || this.mats.apple);
-    const stem = new THREE.Mesh(this.stemGeo, this.mats.stem);
-    stem.position.y = 0.18;
-    g.add(body, stem);
+    if (kind === 'arrow') {
+      // Стрела лежит на земле и медленно вращается — как выпавший предмет
+      const arrow = buildArrowModel(1);
+      arrow.rotation.y = Math.PI / 2;
+      arrow.position.y = 0.08;
+      g.add(arrow);
+    } else {
+      const body = new THREE.Mesh(this.geo, this.mats[kind] || this.mats.apple);
+      const stem = new THREE.Mesh(this.stemGeo, this.mats.stem);
+      stem.position.y = 0.18;
+      g.add(body, stem);
+    }
     g.position.set(x, y, z);
     this.scene.add(g);
     const it = {
