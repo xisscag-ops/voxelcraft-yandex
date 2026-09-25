@@ -7,6 +7,7 @@ import { ItemDrops, ITEM_MAGNET_RANGE, ITEM_PICKUP_RANGE } from './src/items.js'
 import { Player } from './src/physics.js';
 import { updateRunShake } from './src/camera-effects.js';
 import { createWorldRecord, emptyWorldProfile, normalizeWorldProfile, serializeWorldProfile } from './src/world-store.js';
+import { migrateSave } from './src/save-migration.js';
 import { raycastVoxel } from './src/raycast.js';
 import { isSolid, isOpaque, isDecor, BLOCK, BLOCKS } from './src/blocks.js';
 import { Inventory } from './src/inventory.js';
@@ -114,6 +115,12 @@ check('растение удаляется вместе с опорой, сох�
 const migrated = normalizeWorldProfile({ seed: 456, mode: 'survival', edits: [], settings: { lang: 'en' } });
 check('старое сохранение автоматически становится миром в списке',
   migrated.worlds.length === 1 && migrated.worlds[0].seed === 456 && migrated.worlds[0].save.seed === 456);
+const migratedPR6 = migrateSave({ v: 1, seed: 456, edits: ['0,62,0', 24], inventory: { ore: 2, gold_ore: 1, block_24: 1 } });
+check('сохранения PR6 мигрируют id блоков и ключи руды', migratedPR6.v === 3
+  && migratedPR6.edits[1] === BLOCK.TORCH
+  && migratedPR6.inventory.some(([key]) => key === ITEM.RAW_IRON)
+  && migratedPR6.inventory.some(([key]) => key === ITEM.RAW_GOLD)
+  && migratedPR6.inventory.some(([key]) => key === blockItem(BLOCK.TORCH)));
 const extraWorld = createWorldRecord({ name: 'Пещеры', seed: 77, difficulty: 'hard', mode: 'survival' }, 1234, () => 0.5);
 const twoWorlds = normalizeWorldProfile({ ...emptyWorldProfile(), activeWorldId: extraWorld.id, worlds: [migrated.worlds[0], extraWorld] });
 check('профиль хранит несколько миров и выбранный мир', twoWorlds.worlds.length === 2 && twoWorlds.activeWorldId === extraWorld.id);
@@ -155,6 +162,11 @@ check('color count matches', opaque.col.length === opaque.pos.length);
 check('triangles in groups of 3', opaque.idx.length % 3 === 0);
 check('no NaN in positions', !opaque.pos.some((v) => Number.isNaN(v)));
 check('shades in range', opaque.col.every((v) => v >= 0.015 && v <= 4.1));
+const topSlabMesh = meshChunk(THREE, {
+  chunkSize: 1, worldHeight: 4, getBlock: (x, y, z) => x === 0 && z === 0 && y === 2 ? BLOCK.PLANK_SLAB_TOP : BLOCK.AIR,
+}, 0, 0).opaque;
+const topSlabYs = topSlabMesh.pos.filter((_, i) => i % 3 === 1);
+check('верхняя плита занимает верхнюю половину блока', Math.min(...topSlabYs) === 2.5 && Math.max(...topSlabYs) === 3);
 
 const caveWorld = (withTorch) => {
   const blocks = new Map([
@@ -415,7 +427,7 @@ check('инвентарь полон → лишнее не влезает', (() 
 
 // ---- Крафт ----
 check('рецепты без ошибок', validateRecipes().length === 0, validateRecipes().join('; '));
-check('23 рецепта (включая два топора, верстак, лук, стрелы и блоки)', RECIPES.length === 23, 'их ' + RECIPES.length);
+check('24 рецепта (включая два топора, плиты, верстак, лук, стрелы и блоки)', RECIPES.length === 24, 'их ' + RECIPES.length);
 function craftWith(input, id) {
   const i = new Inventory(CONFIG.INV_SIZE);
   for (const [k, n] of Object.entries(input)) i.add(k, n);
@@ -468,8 +480,10 @@ function grid3(pairs) {
 check('сетка 2×2: бревно → доски', gridResult(grid2([[0, blockItem(BLOCK.LOG)]]), 2)?.out.key === blockItem(BLOCK.PLANKS));
 check('сетка 2×2: 2 доски столбиком → палки',
   gridResult(grid2([[0, blockItem(BLOCK.PLANKS)], [2, blockItem(BLOCK.PLANKS)]]), 2)?.out.key === ITEM.STICK);
-check('сетка 2×2: 2 доски в ряд — не рецепт',
-  gridResult(grid2([[0, blockItem(BLOCK.PLANKS)], [1, blockItem(BLOCK.PLANKS)]]), 2) === null);
+check('сетка 2×2: 2 доски в ряд → деревянные плиты',
+  gridResult(grid2([[0, blockItem(BLOCK.PLANKS)], [1, blockItem(BLOCK.PLANKS)]]), 2)?.out.key === blockItem(BLOCK.PLANK_SLAB));
+check('сетка 2×2: 2 булыжника в ряд → каменные плиты',
+  gridResult(grid2([[0, blockItem(BLOCK.COBBLE)], [1, blockItem(BLOCK.COBBLE)]]), 2)?.out.key === blockItem(BLOCK.COBBLE_SLAB));
 check('сетка 2×2: 4 доски → верстак',
   gridResult(grid2([[0, blockItem(BLOCK.PLANKS)], [1, blockItem(BLOCK.PLANKS)],
     [2, blockItem(BLOCK.PLANKS)], [3, blockItem(BLOCK.PLANKS)]]), 2)?.out.key === blockItem(BLOCK.TABLE));

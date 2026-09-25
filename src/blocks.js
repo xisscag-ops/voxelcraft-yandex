@@ -40,9 +40,14 @@ export const BLOCK = {
   // Прочее
   CACTUS: 33,
   OBSIDIAN: 34,
-  SLAB: 35,        // полублок
-  TORCH: 36,       // факел
-  FURNACE: 37,     // печка
+  // Id 35–37 уже встречаются в сохранениях основной ветки: не переназначаем!
+  PLANK_SLAB: 35,
+  SLAB: 35,        // совместимость со старыми сохранениями и рецептами
+  TORCH: 36,
+  FURNACE: 37,
+  PLANK_SLAB_TOP: 38,
+  COBBLE_SLAB: 39,
+  COBBLE_SLAB_TOP: 40,
 };
 
 // tiles: [top, bottom, side] — индексы тайлов атласа
@@ -83,9 +88,12 @@ export const BLOCKS = [
   { id: 32, name: 'spruce_leaves', solid: true, tiles: [42, 42, 42], break: 'fast', foliage: true, tool: 'wood' },
   { id: 33, name: 'cactus', solid: true, tiles: [44, 44, 43], break: 'default', tool: 'wood' },
   { id: 34, name: 'obsidian', solid: true, tiles: [45, 45, 45], break: 'slow', tool: 'stone' },
-  { id: 35, name: 'slab', solid: true, tiles: [46, 46, 46], break: 'default', tool: 'wood', slab: true },
-  { id: 36, name: 'torch', solid: false, tiles: [50, 50, 50], break: 'fast', transparent: true, torch: true, emissive: true, decor: true },
-  { id: 37, name: 'furnace', solid: true, tiles: [47, 47, 48], break: 'slow', tool: 'stone', interactive: 'furnace' },
+  { id: 35, name: 'plank_slab', solid: true, tiles: [8, 8, 8], break: 'default', tool: 'wood', shape: 'slab', slab: true, half: 'bottom' },
+  { id: 36, name: 'torch', solid: false, tiles: [49, 49, 49], break: 'fast', shape: 'torch', torch: true, decor: true, transparent: true, emissive: true },
+  { id: 37, name: 'furnace', solid: true, tiles: [46, 46, 47, 48], break: 'slow', tool: 'stone', interactive: 'furnace' },
+  { id: 38, name: 'plank_slab_top', solid: true, tiles: [8, 8, 8], break: 'default', tool: 'wood', shape: 'slab', slab: true, half: 'top' },
+  { id: 39, name: 'cobble_slab', solid: true, tiles: [4, 4, 4], break: 'slow', tool: 'stone', shape: 'slab', slab: true, half: 'bottom' },
+  { id: 40, name: 'cobble_slab_top', solid: true, tiles: [4, 4, 4], break: 'slow', tool: 'stone', shape: 'slab', slab: true, half: 'top' },
 ];
 
 // Названия для UI
@@ -99,7 +107,9 @@ export const BLOCK_NAMES = {
     21: 'Угольная руда', 22: 'Железная руда', 23: 'Золотая руда', 24: 'Алмазная руда',
     25: 'Гравий', 26: 'Песчаник', 27: 'Лёд', 28: 'Мшистый камень',
     29: 'Берёза', 30: 'Берёзовая листва', 31: 'Ель', 32: 'Еловая хвоя',
-    33: 'Кактус', 34: 'Обсидиан', 35: 'Полублок', 36: 'Факел', 37: 'Печка',
+    33: 'Кактус', 34: 'Обсидиан',
+    35: 'Деревянный полублок', 36: 'Факел', 37: 'Печка',
+    38: 'Деревянный полублок', 39: 'Каменный полублок', 40: 'Каменный полублок',
   },
   en: {
     1: 'Grass', 2: 'Dirt', 3: 'Stone', 4: 'Cobblestone', 5: 'Sand',
@@ -110,26 +120,42 @@ export const BLOCK_NAMES = {
     21: 'Coal ore', 22: 'Iron ore', 23: 'Gold ore', 24: 'Diamond ore',
     25: 'Gravel', 26: 'Sandstone', 27: 'Ice', 28: 'Mossy stone',
     29: 'Birch log', 30: 'Birch leaves', 31: 'Spruce log', 32: 'Spruce needles',
-    33: 'Cactus', 34: 'Obsidian', 35: 'Slab', 36: 'Torch', 37: 'Furnace',
+    33: 'Cactus', 34: 'Obsidian',
+    35: 'Wooden slab', 36: 'Torch', 37: 'Furnace',
+    38: 'Wooden slab', 39: 'Stone slab', 40: 'Stone slab',
   },
 };
 
 // Базовый набор (открыт сразу) и «набор строителя» (после рекламы за вознаграждение)
-export const STARTER_PALETTE = [BLOCK.GRASS, BLOCK.DIRT, BLOCK.STONE, BLOCK.SAND, BLOCK.LOG, BLOCK.PLANKS];
+export const STARTER_PALETTE = [
+  BLOCK.GRASS, BLOCK.DIRT, BLOCK.STONE, BLOCK.SAND, BLOCK.LOG, BLOCK.PLANKS,
+  BLOCK.PLANK_SLAB, BLOCK.COBBLE_SLAB, BLOCK.TORCH, BLOCK.FURNACE,
+];
 export const BUILDER_PALETTE = [
   BLOCK.COBBLE, BLOCK.LEAVES, BLOCK.GLASS, BLOCK.BRICK, BLOCK.GLOW, BLOCK.SNOW, BLOCK.SLATE,
   BLOCK.TALL_GRASS, BLOCK.FERN, BLOCK.CLOVER, BLOCK.FLOWER_RED, BLOCK.FLOWER_YELLOW,
   BLOCK.BIRCH_LOG, BLOCK.BIRCH_LEAVES, BLOCK.SPRUCE_LOG, BLOCK.SPRUCE_LEAVES,
   BLOCK.SANDSTONE, BLOCK.MOSSY, BLOCK.GRAVEL, BLOCK.ICE, BLOCK.CACTUS,
   BLOCK.COAL_ORE, BLOCK.IRON_ORE, BLOCK.GOLD_ORE, BLOCK.DIAMOND_ORE,
-  BLOCK.OBSIDIAN, BLOCK.SLAB, BLOCK.TORCH, BLOCK.FURNACE,
+  BLOCK.OBSIDIAN,
 ];
 
-export function isSolid(id) {
-  return id !== 0 && BLOCKS[id] && BLOCKS[id].solid;
+const FULL_BOUNDS = Object.freeze({ minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 });
+const LOWER = Object.freeze({ ...FULL_BOUNDS, maxY: 0.5 });
+const UPPER = Object.freeze({ ...FULL_BOUNDS, minY: 0.5 });
+const TORCH_BOUNDS = Object.freeze({ minX: 0.36, minY: 0, minZ: 0.36, maxX: 0.64, maxY: 0.84, maxZ: 0.64 });
+const DECOR_BOUNDS = Object.freeze({ minX: 0.2, minY: 0, minZ: 0.2, maxX: 0.8, maxY: 0.55, maxZ: 0.8 });
+export function blockBounds(id) {
+  const b = BLOCKS[id];
+  if (b?.shape === 'slab') return b.half === 'top' ? UPPER : LOWER;
+  if (b?.shape === 'torch') return TORCH_BOUNDS;
+  return b?.decor ? DECOR_BOUNDS : FULL_BOUNDS;
 }
+export function isSlab(id) { return BLOCKS[id]?.shape === 'slab'; }
+export function isSolid(id) { return !!BLOCKS[id]?.solid; }
 export function isOpaque(id) {
-  return id !== 0 && BLOCKS[id] && !BLOCKS[id].transparent && !BLOCKS[id].foliage;
+  const b = BLOCKS[id];
+  return !!(b && id !== BLOCK.AIR && !b.transparent && !b.foliage && !b.shape);
 }
 export function isDecor(id) {
   return !!(id !== 0 && BLOCKS[id] && BLOCKS[id].decor);
@@ -143,13 +169,6 @@ export function isLiquid(id) {
 /** Блок открывает свой интерфейс при использовании (верстак — крафт 3x3) */
 export function interactiveKind(id) {
   return (id !== 0 && BLOCKS[id] && BLOCKS[id].interactive) || null;
-}
-
-export function isSlab(id) {
-  return !!(id !== 0 && BLOCKS[id] && BLOCKS[id].slab);
-}
-export function isTorch(id) {
-  return !!(id !== 0 && BLOCKS[id] && BLOCKS[id].torch);
 }
 
 export function breakKind(id) {

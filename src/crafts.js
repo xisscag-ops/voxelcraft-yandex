@@ -11,9 +11,6 @@ const SAND = blockItem(BLOCK.SAND);
 const STONE = blockItem(BLOCK.STONE);
 const LEAVES = blockItem(BLOCK.LEAVES);
 const DIRT = blockItem(BLOCK.DIRT);
-const SLAB = blockItem(BLOCK.SLAB);
-const TORCH = blockItem(BLOCK.TORCH);
-const FURNACE = blockItem(BLOCK.FURNACE);
 
 // in — что тратится при крафте «кликом по рецепту»,
 // shapeless/patterns — как рецепт собирается в сетке крафта,
@@ -88,30 +85,52 @@ export const RECIPES = [
     shapeless: { [SAND]: 1, [DIRT]: 1 },
   },
   {
-    id: 'slab', in: { [PLANKS]: 3 }, out: { key: SLAB, count: 6 },
-    patterns: [['AAA']], keys: { A: PLANKS },
+    id: 'plank_slabs', in: { [PLANKS]: 2 }, out: { key: blockItem(BLOCK.PLANK_SLAB), count: 4 },
+    patterns: [['AA']], keys: { A: PLANKS },
   },
   {
-    id: 'torch', in: { [ITEM.COAL]: 1, [ITEM.STICK]: 1 }, out: { key: TORCH, count: 4 },
+    id: 'cobble_slabs', in: { [COBBLE]: 2 }, out: { key: blockItem(BLOCK.COBBLE_SLAB), count: 4 },
+    patterns: [['AA']], keys: { A: COBBLE },
+  },
+  {
+    id: 'torches', in: { [ITEM.COAL]: 1, [ITEM.STICK]: 1 }, out: { key: blockItem(BLOCK.TORCH), count: 4 },
     patterns: [['A', 'B']], keys: { A: ITEM.COAL, B: ITEM.STICK },
   },
   {
-    id: 'bread', in: { [ITEM.WHEAT]: 3 }, out: { key: ITEM.BREAD, count: 1 },
-    patterns: [['AAA']], keys: { A: ITEM.WHEAT },
-  },
-  {
-    id: 'furnace', in: { [COBBLE]: 8 }, out: { key: FURNACE, count: 1 },
+    id: 'furnace', in: { [COBBLE]: 8 }, out: { key: blockItem(BLOCK.FURNACE), count: 1 },
     patterns: [['AAA', 'A A', 'AAA']], keys: { A: COBBLE },
   },
-  {
-    id: 'iron_ingot', in: { [ITEM.RAW_IRON]: 1, [ITEM.COAL]: 1 }, out: { key: ITEM.IRON_INGOT, count: 1 },
-    shapeless: { [ITEM.RAW_IRON]: 1, [ITEM.COAL]: 1 },
-  },
-  {
-    id: 'gold_ingot', in: { [ITEM.RAW_GOLD]: 1, [ITEM.COAL]: 1 }, out: { key: ITEM.GOLD_INGOT, count: 1 },
-    shapeless: { [ITEM.RAW_GOLD]: 1, [ITEM.COAL]: 1 },
-  },
+  // Рецепты основной ветки остаются доступными и после добавления экрана печки.
+  { id: 'bread', in: { [ITEM.WHEAT]: 3 }, out: { key: ITEM.BREAD, count: 1 },
+    patterns: [['AAA']], keys: { A: ITEM.WHEAT } },
+  { id: 'iron_ingot', in: { [ITEM.RAW_IRON]: 1, [ITEM.COAL]: 1 }, out: { key: ITEM.IRON_INGOT, count: 1 },
+    shapeless: { [ITEM.RAW_IRON]: 1, [ITEM.COAL]: 1 } },
+  { id: 'gold_ingot', in: { [ITEM.RAW_GOLD]: 1, [ITEM.COAL]: 1 }, out: { key: ITEM.GOLD_INGOT, count: 1 },
+    shapeless: { [ITEM.RAW_GOLD]: 1, [ITEM.COAL]: 1 } },
 ];
+
+// Печка расходует ровно одну единицу топлива за один обжиг; ингредиенты и
+// топливо снимаются атомарно и только если помещается результат.
+export const FURNACE_RECIPES = [
+  { id: 'smelt_iron', in: { [ITEM.RAW_IRON]: 1 }, out: { key: ITEM.IRON_INGOT, count: 1 } },
+  { id: 'smelt_gold', in: { [ITEM.RAW_GOLD]: 1 }, out: { key: ITEM.GOLD_INGOT, count: 1 } },
+  { id: 'bake_bread', in: { [ITEM.WHEAT]: 3 }, out: { key: ITEM.BREAD, count: 1 } },
+];
+
+export function furnaceFuel(inv) {
+  return inv.has(ITEM.COAL) ? ITEM.COAL : inv.has(PLANKS) ? PLANKS : null;
+}
+
+export function smelt(inv, recipe) {
+  if (!FURNACE_RECIPES.includes(recipe)) return 'missing';
+  const fuel = furnaceFuel(inv);
+  if (!fuel || !Object.entries(recipe.in).every(([key, need]) => inv.has(key, need))) return 'missing';
+  if (inv.spaceFor(recipe.out.key) < recipe.out.count) return 'full';
+  for (const [key, need] of Object.entries(recipe.in)) inv.remove(key, need);
+  inv.remove(fuel, 1);
+  inv.add(recipe.out.key, recipe.out.count);
+  return 'ok';
+}
 
 export function recipeById(id) {
   return RECIPES.find((r) => r.id === id) || null;

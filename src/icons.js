@@ -8,7 +8,10 @@ import { itemDef } from './items.js';
 
 // Растения рисуем плоскими спрайтами, остальное — кубиками
 const FLAT_BLOCKS = new Set([
-  BLOCK.TALL_GRASS, BLOCK.FLOWER_RED, BLOCK.FLOWER_YELLOW, BLOCK.FERN, BLOCK.CLOVER,
+  BLOCK.TALL_GRASS, BLOCK.FLOWER_RED, BLOCK.FLOWER_YELLOW, BLOCK.FERN, BLOCK.CLOVER, BLOCK.TORCH,
+]);
+const SLAB_BLOCKS = new Set([
+  BLOCK.PLANK_SLAB, BLOCK.PLANK_SLAB_TOP, BLOCK.COBBLE_SLAB, BLOCK.COBBLE_SLAB_TOP,
 ]);
 
 // Затенение граней кубика: верх — светлый, левая — средняя, правая — тёмная
@@ -69,14 +72,14 @@ export function blockCubeCanvas(id, size = 48) {
   if (!def || !def.tiles) return c;
   const ctx = c.getContext('2d');
   ctx.imageSmoothingEnabled = false;
-  const [topId, , sideId] = def.tiles;
+  const [topId, , sideId, frontId = sideId] = def.tiles;
   const s = size;
   const cx = s / 2;
   const k = s / TILE;           // масштаб «тайл → пиксели иконки»
 
   const top = shaded(tileCanvas(topId), FACE_SHADE.top);
   const left = shaded(tileCanvas(sideId), FACE_SHADE.left);
-  const right = shaded(tileCanvas(sideId), FACE_SHADE.right);
+  const right = shaded(tileCanvas(frontId), FACE_SHADE.right);
 
   // верхняя грань: ромб
   drawFace(ctx, top, [k / 2, k / 4, -k / 2, k / 4, cx, 0]);
@@ -316,202 +319,51 @@ const SPRITES = {
       '................',
     ],
   },
-  coal: {
-    pal: { c: '#2b2b2b', C: '#3a3a3a', d: '#1a1a1a' },
-    rows: [
-      '................',
-      '................',
-      '......ccC.......',
-      '.....cCCc.......',
-      '....cCCCCc......',
-      '...cCCdCCc......',
-      '...cCCCCcc......',
-      '....cCccc.......',
-      '.....ccc........',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-    ],
-  },
-  raw_iron: {
-    pal: { r: '#c9c0b0', R: '#e8ddd0', d: '#8a8070', s: '#a99e90' },
-    rows: [
-      '................',
-      '................',
-      '.....RRR........',
-      '....RrrrrR......',
-      '...RrsRRrrR.....',
-      '...RrRddRrR.....',
-      '...RrrRrRRR.....',
-      '....RrrrR.......',
-      '.....RRR........',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-    ],
-  },
-  raw_gold: {
-    pal: { r: '#e6c85a', R: '#ffea8a', d: '#b89a2e', s: '#d8bb4a' },
-    rows: [
-      '................',
-      '................',
-      '.....RRR........',
-      '....RrrrR.......',
-      '...RrsRRrrR.....',
-      '...RrRddRrR.....',
-      '...RrrRrRRR.....',
-      '....RrrrR.......',
-      '.....RRR........',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-    ],
-  },
-  diamond: {
-    pal: { d: '#5ec8e6', D: '#8af0ff', w: '#ffffff', s: '#3a8a9e' },
-    rows: [
-      '................',
-      '.......D........',
-      '......dDd.......',
-      '.....dDwDd......',
-      '....dDwwwDd.....',
-      '...dDwDsDwDd....',
-      '....dDwwwDd.....',
-      '.....dDwDd......',
-      '......dDd.......',
-      '.......D........',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-    ],
-  },
-  bread: {
-    pal: { b: '#d8b06a', B: '#f0d090', d: '#8a6a3a', s: '#c0904a' },
-    rows: [
-      '................',
-      '................',
-      '....bbbbB.......',
-      '...bBBBBBs......',
-      '..bBBbBBbBss....',
-      '..bBBBBBBBs.....',
-      '..bBBbBBbBs.....',
-      '...bBBBBBs......',
-      '....bbbbB.......',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-    ],
-  },
-  wheat: {
-    pal: { w: '#e6d85a', W: '#f5eba0', s: '#8a7a2e', g: '#a09030' },
-    rows: [
-      '................',
-      '......wW........',
-      '.....wWWw.......',
-      '.....wWwWW......',
-      '....wWWsWw......',
-      '....wWsWw.......',
-      '...wWWsWWw......',
-      '...wWsWww.......',
-      '....wWW.........',
-      '.....ww.........',
-      '......w.........',
-      '......W.........',
-      '................',
-      '................',
-      '................',
-      '................',
-    ],
-  },
-  iron_ingot: {
-    pal: { i: '#c0c8d0', I: '#e8eef4', d: '#7a828a', s: '#a0a8b0' },
-    rows: [
-      '................',
-      '................',
-      '...IIIIII.......',
-      '..IiiiiiiI......',
-      '..IiiIiIiiI.....',
-      '..IiiIiIiiI.....',
-      '..IiiiiiiI......',
-      '...IIIIII.......',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-    ],
-  },
-  gold_ingot: {
-    pal: { i: '#e6c85a', I: '#ffe88a', d: '#b89a2e', s: '#d8bb4a' },
-    rows: [
-      '................',
-      '................',
-      '...IIIIII.......',
-      '..IiiiiiiI......',
-      '..IiiIiIiiI.....',
-      '..IiiIiIiiI.....',
-      '..IiiiiiiI......',
-      '...IIIIII.......',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-    ],
-  },
-  xp: {
-    pal: { x: '#8aff4a', X: '#c0ff8a', w: '#ffffff' },
-    rows: [
-      '................',
-      '......xXx.......',
-      '.....xXXXx......',
-      '....xXwXwXx.....',
-      '....xXXXxx......',
-      '.....xXXx.......',
-      '......xxx.......',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................',
-    ],
-  },
 };
+
+// Остальные ресурсы рисуем на сетке 16×16; ни на одной платформе не нужны emoji-шрифты.
+const RESOURCE_SPRITES = new Set(['wheat', 'coal', 'ore', 'gold_ore', 'diamond', 'ingot', 'gold_ingot', 'bread']);
+function resourceIcon(ctx, name) {
+  const box = (x, y, w, h, color) => { ctx.fillStyle = color; ctx.fillRect(x, y, w, h); };
+  if (name === 'bread') {
+    box(2, 6, 12, 8, '#78411e'); box(3, 5, 10, 8, '#b47731');
+    box(4, 4, 8, 7, '#dc9d4f'); box(5, 5, 6, 4, '#edb864');
+    for (const x of [5, 8, 11]) box(x, 5, 1, 4, '#965726');
+  } else if (name === 'wheat') {
+    box(8, 4, 1, 11, '#986c2f');
+    for (let y = 3; y <= 10; y += 2) {
+      box(5, y, 3, 2, '#e8b948'); box(9, y + 1, 3, 2, '#dca93d');
+    }
+    box(8, 2, 1, 2, '#ffe08a');
+  } else if (name === 'diamond') {
+    box(6, 2, 5, 2, '#d7ffff'); box(3, 4, 10, 4, '#48b7cb');
+    box(4, 8, 8, 3, '#3ce4d2'); box(6, 11, 4, 2, '#267eac');
+    box(5, 4, 3, 4, '#aefff0');
+  } else if (name === 'ingot' || name === 'gold_ingot') {
+    const metal = name === 'gold_ingot' ? ['#88601f', '#e1ac43', '#ffe094'] : ['#596577', '#aebbc7', '#ebf3f4'];
+    box(2, 9, 12, 4, metal[0]); box(3, 7, 10, 4, metal[1]);
+    box(5, 6, 6, 2, metal[2]);
+  } else {
+    const shades = name === 'coal' ? ['#17191d', '#333942', '#727885']
+      : name === 'gold_ore' ? ['#715e40', '#b48c44', '#ffdb66']
+        : ['#68594b', '#ad7350', '#e0a777'];
+    box(3, 5, 10, 8, shades[0]); box(4, 3, 8, 9, shades[1]);
+    box(5, 4, 4, 3, shades[2]); box(10, 8, 2, 3, shades[2]);
+  }
+}
 
 /** Пиксель-арт иконка по имени спрайта */
 export function pixelSpriteCanvas(name, size = 48) {
   const c = makeCanvas(size, size);
   const sp = SPRITES[name];
-  if (!sp) return c;
+  if (!sp) {
+    if (RESOURCE_SPRITES.has(name)) {
+      const ctx = c.getContext('2d');
+      ctx.scale(size / 16, size / 16);
+      resourceIcon(ctx, name);
+    }
+    return c;
+  }
   const ctx = c.getContext('2d');
   const k = size / 16;
   for (let y = 0; y < 16; y++) {
@@ -530,7 +382,13 @@ export function pixelSpriteCanvas(name, size = 48) {
 
 /** Иконка блока по id: кубик или плоский спрайт */
 export function blockIconCanvas(id, size = 48) {
-  return FLAT_BLOCKS.has(id) ? blockSpriteCanvas(id, size) : blockCubeCanvas(id, size);
+  if (FLAT_BLOCKS.has(id)) return blockSpriteCanvas(id, size);
+  if (SLAB_BLOCKS.has(id)) {
+    const c = makeCanvas(size, size);
+    c.getContext('2d').drawImage(blockCubeCanvas(id, size), 0, size * 0.17, size, size * 0.75);
+    return c;
+  }
+  return blockCubeCanvas(id, size);
 }
 
 /** Иконка любого предмета по ключу ('block_3', 'stick', 'tool_wood_axe', …) */
@@ -551,5 +409,5 @@ export function itemIconEl(key, size = 44) {
 
 /** Ключ спрайта инструмента — для тестов и отладки */
 export function spriteNames() {
-  return Object.keys(SPRITES);
+  return [...Object.keys(SPRITES), ...RESOURCE_SPRITES];
 }

@@ -52,7 +52,7 @@ export class Sky {
     const THREE = this.THREE;
     const t = this.time;
     // Угол солнца: 0.25 — зенит, 0.75 — полночь
-    const ang = (t - 0.25) * Math.PI * 2;
+    const ang = t * Math.PI * 2; // 0.25 — полдень, 0.75 — полночь
     const sx = Math.cos(ang), sy = Math.sin(ang);
 
     const dayness = Math.max(0, Math.min(1, sy * 2 + 0.25));       // 0 ночь, 1 день

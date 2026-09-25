@@ -152,7 +152,10 @@ const BLOCK_DETAILS = {
   [BLOCK.SPRUCE_LEAVES]: { ru: 'Еловая хвоя для декора и крыш.', en: 'Spruce needles for decoration and roofs.' },
   [BLOCK.CACTUS]: { ru: 'Кактус пустыни. Высокое декоративное растение.', en: 'A tall decorative plant from the desert.' },
   [BLOCK.OBSIDIAN]: { ru: 'Очень твёрдый тёмный блок для прочных построек.', en: 'An exceptionally hard dark block for durable builds.' },
-  [BLOCK.SLAB]: { ru: 'Полублок высотой в половину обычного блока.', en: 'A half-height building slab.' },
+  [BLOCK.SLAB]: { ru: 'Деревянная плита высотой в половину обычного блока.', en: 'A half-height wooden building slab.' },
+  [BLOCK.PLANK_SLAB_TOP]: { ru: 'Верхняя деревянная плита для ступеней и перекрытий.', en: 'A top wooden slab for steps and ceilings.' },
+  [BLOCK.COBBLE_SLAB]: { ru: 'Каменная плита высотой в половину обычного блока.', en: 'A half-height cobblestone building slab.' },
+  [BLOCK.COBBLE_SLAB_TOP]: { ru: 'Верхняя каменная плита для ступеней и перекрытий.', en: 'A top cobblestone slab for steps and ceilings.' },
   [BLOCK.TORCH]: { ru: 'Светильник для освещения тёмных мест.', en: 'A small light source for dark places.' },
   [BLOCK.FURNACE]: { ru: 'Печь для переплавки руды и песка. Положите сырьё и топливо, затем нажмите ПКМ.', en: 'Smelts ore and sand. Add an ingredient and fuel, then right-click.' },
 };
@@ -320,8 +323,10 @@ const ORE_COLORS = {
   [ITEM.BREAD]: 0xdeba7a,
   [ITEM.WHEAT]: 0xe8d86a,
   [ITEM.STICK]: 0x8b5a2b,
-  [ITEM.COAL]: 0x2e2e2e,
 };
+const SLAB_BLOCKS = new Set([
+  BLOCK.PLANK_SLAB, BLOCK.PLANK_SLAB_TOP, BLOCK.COBBLE_SLAB, BLOCK.COBBLE_SLAB_TOP,
+]);
 
 /** Яблоки, выпадающие из листвы (подбираются игроком) */
 export class ItemDrops {
@@ -352,7 +357,7 @@ export class ItemDrops {
         const h = (id * 97 + 13) % 360;
         // fallback greyish
         color = 0x8a8a9a;
-        if (id === BLOCK.SLAB) color = 0xc9a76a;
+        if (SLAB_BLOCKS.has(id)) color = id === BLOCK.PLANK_SLAB || id === BLOCK.PLANK_SLAB_TOP ? 0xc9a76a : 0x898b91;
         else if (id === BLOCK.TORCH) color = 0xffd54a;
         else if (id === BLOCK.FURNACE) color = 0x7a7a82;
       } else {
@@ -371,7 +376,7 @@ export class ItemDrops {
     const mat = this._matFor(isApple ? 'apple' : kind);
     let body;
     // slab as flat box
-    if (kind === blockItem(BLOCK.SLAB)) {
+    if (isBlockItem(kind) && SLAB_BLOCKS.has(blockIdOf(kind))) {
       body = new THREE.Mesh(this.slabGeo, mat);
     } else {
       body = new THREE.Mesh(this.geo, mat);

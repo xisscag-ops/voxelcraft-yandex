@@ -1,6 +1,6 @@
 // Физика игрока: AABB против вокселей, ходьба, прыжки, плавание, полёт
 import { CONFIG } from './config.js';
-import { isSolid, isLiquid, isSlab } from './blocks.js';
+import { isSolid, isLiquid, isSlab, blockBounds } from './blocks.js';
 
 const HW = CONFIG.PLAYER_WIDTH / 2;
 const PH = CONFIG.PLAYER_HEIGHT;
@@ -24,6 +24,7 @@ export class Player {
     this._wasFlying = false;
     // Здоровье и урон от падений
     this.hp = 20; this.maxHp = 20;
+    this.level = 0; this.xp = 0;
     this.hurtT = 0; this.regenT = 0; this._fallFrom = null;
     // Режим игры: в креативе игрок бессмертен и умеет летать
     this.invulnerable = false;
@@ -43,6 +44,19 @@ export class Player {
     return { x: this.pos.x, y: this.pos.y + CONFIG.PLAYER_EYE, z: this.pos.z };
   }
 
+  xpNeeded() { return 5 + this.level * 3; }
+
+  addXP(amount) {
+    this.xp += Math.max(0, amount);
+    let levels = 0;
+    while (this.xp >= this.xpNeeded()) {
+      this.xp -= this.xpNeeded();
+      this.level++;
+      levels++;
+    }
+    return levels;
+  }
+
   /** Урон с неуязвимостью 0.7 с. true — если урон прошёл */
   hurt(n, cause = 'unknown') {
     if (this.invulnerable) return false;
@@ -60,7 +74,7 @@ export class Player {
     if (this.events.onHeal) this.events.onHeal(n);
   }
 
-  // Пересечение AABB с блоками (полублок — только нижние 0.5)
+  // Пересечение AABB с блоками
   collides(px, py, pz) {
     const x0 = Math.floor(px - HW), x1 = Math.floor(px + HW - EPS);
     const y0 = Math.floor(py), y1 = Math.floor(py + PH - EPS);
@@ -70,17 +84,10 @@ export class Player {
         for (let x = x0; x <= x1; x++) {
           const id = this.world.getBlock(x, y, z);
           if (!isSolid(id)) continue;
-          if (isSlab(id)) {
-            const top = y + 0.5;
-            // игрок стоит ровно на верхней грани полублока — касание, не пересечение
-            if (py >= top - 1e-6) continue;
-            // игрок полностью под полублоком? полублок висит у потолка — тогда пересекается только если его низ перекрывается
-            if (py + PH <= y + 1e-6) continue;
-            // уже проверили что по Y есть перекрытие [y, top) vs [py, py+PH)
-            if (py >= top || py + PH <= y) continue;
-            return true;
-          }
-          return true;
+          const b = blockBounds(id);
+          if (px + HW > x + b.minX && px - HW < x + b.maxX &&
+              py + PH > y + b.minY && py < y + b.maxY &&
+              pz + HW > z + b.minZ && pz - HW < z + b.maxZ) return true;
         }
       }
     }
@@ -180,35 +187,31 @@ export class Player {
     if (this.flying) this._wasFlying = true;
   }
 
-  // есть ли перед игроком только полублок на уровне ног (на который можно зашагнуть)
+  /** Высота свободного полублока на пути: полный блок или низкий потолок не пускают. */
   _slabStepTop(px, py, pz) {
     const x0 = Math.floor(px - HW), x1 = Math.floor(px + HW - EPS);
     const y0 = Math.floor(py), y1 = Math.floor(py + PH - EPS);
     const z0 = Math.floor(pz - HW), z1 = Math.floor(pz + HW - EPS);
-    let slabTop = null;
-    let hasFullBlocker = false;
+    let top = null;
     for (let y = y0; y <= y1; y++) {
       for (let z = z0; z <= z1; z++) {
         for (let x = x0; x <= x1; x++) {
           const id = this.world.getBlock(x, y, z);
           if (!isSolid(id)) continue;
-          if (isSlab(id)) {
-            const top = y + 0.5;
-            if (py >= top - 1e-6) continue;
-            if (py + PH <= y + 1e-6) continue;
-            if (py >= top || py + PH <= y) continue;
-            slabTop = Math.max(slabTop ?? -Infinity, top);
-          } else {
-            hasFullBlocker = true;
-          }
+          const b = blockBounds(id);
+          if (px + HW <= x + b.minX || px - HW >= x + b.maxX ||
+              py + PH <= y + b.minY || py >= y + b.maxY) continue;
+          const height = y + b.maxY;
+          if (!isSlab(id) || height - py > 0.501 || height <= py) return null;
+          top = Math.max(top ?? -Infinity, height);
         }
       }
     }
-    if (hasFullBlocker) return null;
-    return slabTop;
+    return top;
   }
 
   _move(dt) {
+    const canStep = this.onGround && !this.flying && !this.inWater && this.vel.y <= 0;
     const step = (axis, amount) => {
       if (!amount) return;
       const p = { ...this.pos };
@@ -217,21 +220,16 @@ export class Player {
         this.pos[axis] = p[axis];
         return;
       }
-      // автошаг на полублок: если впереди только полублок, поднимемся на него
-      if ((axis === 'x' || axis === 'z') && !this.flying && !this.inWater) {
+      // На нижний полублок можно зашагнуть, если над ним нет препятствия.
+      if (canStep && (axis === 'x' || axis === 'z')) {
         const top = this._slabStepTop(p.x, p.y, p.z);
         if (top !== null) {
-          const liftedY = top + 0.001;
-          // потолок над полублоком свободен?
-          if (!this.collides(p.x, liftedY, p.z) && !this.collides(this.pos.x, liftedY, this.pos.z)) {
-            this.pos.y = liftedY;
-            // пробуем снова горизонтальный шаг с новой высоты
-            if (!this.collides(p.x, this.pos.y, p.z)) {
-              this.pos[axis] = p[axis];
-              return;
-            }
-            // откат если всё равно упираемся (узкий потолок)
-            // оставляем y как есть, дальше упремся
+          const raisedY = top + 0.001;
+          if (!this.collides(this.pos.x, raisedY, this.pos.z) &&
+              !this.collides(p.x, raisedY, p.z)) {
+            this.pos.y = raisedY;
+            this.pos[axis] = p[axis];
+            return;
           }
         }
       }
@@ -258,7 +256,7 @@ export class Player {
     step('z', this.vel.z * dt);
     step('y', this.vel.y * dt);
     if (this.vel.y === 0 && this.onGround) {
-      // прилипание к земле (учёт полублока)
+      // прилипание к земле
       const q = { ...this.pos }; q.y -= 0.05;
       if (!this.collides(q.x, q.y, q.z)) this.onGround = false;
     }
@@ -280,6 +278,7 @@ export class Player {
     return {
       x: this.pos.x, y: this.pos.y, z: this.pos.z,
       yaw: this.yaw, pitch: this.pitch, flying: this.flying, hp: this.hp,
+      level: this.level, xp: this.xp,
     };
   }
 
@@ -288,6 +287,8 @@ export class Player {
     this.yaw = d.yaw || 0; this.pitch = d.pitch || 0;
     this.hp = d.hp != null ? d.hp : 20;
     if (this.hp <= 0) this.hp = this.maxHp;
+    this.level = Math.max(0, d.level | 0);
+    this.xp = Math.max(0, Math.min(this.xpNeeded() - 1, d.xp | 0));
     this.flying = !!d.flying;
     this.vel = { x: 0, y: 0, z: 0 };
   }

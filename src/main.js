@@ -10,6 +10,7 @@ import { InventoryUI, setFullToast } from './inventory-ui.js';
 import { itemIconCanvas } from './icons.js';
 import { buildAtlas, tileColor, tileTexture, CRACK_TILES } from './textures.js';
 import { World } from './world.js';
+import { migrateSave } from './save-migration.js';
 import { meshChunk } from './mesher.js';
 import { MobManager } from './mobs.js';
 import { Player } from './physics.js';
@@ -1063,7 +1064,7 @@ function doPlace(hit) {
 // ---------------------------------------------------------------- Сохранение
 function buildSave() {
   return {
-    v: 2,
+    v: 3,
     worldName: activeWorldRecord?.name || i18n.t('new_world'),
     mode,
     difficulty,
@@ -2109,6 +2110,9 @@ window.addEventListener('keydown', (e) => {
 
   await ysdkPromise;
   worldProfile = normalizeWorldProfile(await ysdk.load());
+  for (const record of worldProfile.worlds) {
+    if (record.save) record.save = migrateSave(record.save);
+  }
   activeWorldRecord = worldProfile.worlds.find((entry) => entry.id === worldProfile.activeWorldId) || null;
   saveData = activeWorldRecord?.save || null;
   const loadedSettings = Object.keys(worldProfile.settings).length ? worldProfile.settings : saveData?.settings;
