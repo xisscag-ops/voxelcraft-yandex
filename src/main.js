@@ -722,12 +722,17 @@ let bowStringUpper, bowStringLower;
   bowStringLower.position.set(0, -BOW_TIP, 0);
   bowStringLower.rotation.z = Math.PI;
   bowPivot.add(bowStringUpper, bowStringLower);
-  const fist = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.16, 0.14), bowMats.hand);
-  fist.position.set(0.008, -0.02, D - R + 0.04);
+  // Кисть обхватывает рукоять: ладонь точно на обмотке, пальцы вокруг неё
+  const fist = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.19, 0.15), bowMats.hand);
+  fist.position.set(0, -0.01, D - R);
   bowPivot.add(fist);
-  const thumb = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.09, 0.08), bowMats.hand);
-  thumb.position.set(0.02, 0.06, D - R + 0.06);
-  thumb.rotation.z = 0.4;
+  const finger = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.05, 0.13), bowMats.hand);
+  finger.position.set(0, -0.09, D - R + 0.005);
+  bowPivot.add(finger);
+  const thumb = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.085, 0.07), bowMats.hand);
+  thumb.position.set(0.045, 0.075, D - R - 0.01);
+  thumb.rotation.z = 0.55;
+  thumb.rotation.x = -0.25;
   bowPivot.add(thumb);
 }
 bowPivot.scale.setScalar(1.28);

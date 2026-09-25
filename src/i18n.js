@@ -85,8 +85,8 @@ export const STRINGS = {
     loot_found: 'В сундуке припрятаны припасы!',
     guide_title: 'Справочник по игре',
     guide_s1_title: 'Управление',
-    guide_s1: 'Движение — WASD или стрелки, прыжок — пробел, бег — двойной W или Shift.<br>'
-      + 'Приседать — C (не упадёте с края). Полёт в креативе — двойной пробел.<br>'
+    guide_s1: 'Движение — WASD или стрелки, прыжок — пробел, бег — двойное W или Ctrl.<br>'
+      + 'Приседать — Shift или C (не упадёте с края). Полёт в креативе — двойной пробел.<br>'
       + 'ЛКМ — сломать блок, ПКМ — поставить блок или использовать предмет.<br>'
       + 'Колёсико или 1–9 — слот быстрого доступа, E/I — инвентарь и крафт.<br>'
       + 'H — этот справочник, Esc — пауза (долгое нажатие — выход из полного экрана).<br>'
@@ -300,8 +300,8 @@ export const STRINGS = {
     loot_found: 'Supplies hidden in the chest!',
     guide_title: 'Game guide',
     guide_s1_title: 'Controls',
-    guide_s1: 'Move — WASD or arrows, jump — space, sprint — double-W or Shift.<br>'
-      + 'Sneak — C (you will not fall off edges). Fly in creative — double space.<br>'
+    guide_s1: 'Move — WASD or arrows, jump — space, sprint — double-W or Ctrl.<br>'
+      + 'Sneak — Shift or C (you will not fall off edges). Fly in creative — double space.<br>'
       + 'LMB — break a block, RMB — place a block or use an item.<br>'
       + 'Mouse wheel or 1–9 — hotbar slot, E/I — inventory and crafting.<br>'
       + 'H — this guide, Esc — pause (hold Esc to leave fullscreen).<br>'

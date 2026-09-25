@@ -733,7 +733,7 @@ export class World {
       };
       // Большая крона шире на 2 клетки, поэтому такому дереву нужно больше места
       const bigRoll = rng();
-      const isBig = bigRoll < 0.26 && (tree === 'oak' || tree === 'spruce') && bigCounter < 2;
+      const isBig = bigRoll < 0.38 && (tree === 'oak' || tree === 'spruce') && bigCounter < 3;
       const crownR = isBig ? 4 : 2;
       if (tooClose(tx, tz, crownR)) continue;              // не сливаемся с соседями
       if (isBig) {

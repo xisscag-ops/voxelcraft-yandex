@@ -453,50 +453,49 @@ const painters = {
   // Берёза: светлая кора с частыми вертикальными волокнами и характерными
   // тёмными чёрточками-«чечевичками», которые идут горизонтальными штрихами.
   [T.BIRCH_SIDE](data, rng) {
-    // База — тёплый бело-кремовый с лёгкой вертикальной неоднородностью
-    for (let x = 0; x < TILE; x++) {
-      const colV = (rng() - 0.5) * 9;
-      for (let y = 0; y < TILE; y++) {
-        const v = (rng() - 0.5) * 11 + colV;
-        px(data, x, y, 226 + v, 223 + v, 212 + v);
+    // Настоящая кора берёзы: гладкий кремово-белый ствол с лёгкими
+    // горизонтальными полосами, тёмными чёрточками-чечевицами и
+    // парой грубых тёмных заплаток. Никакой вертикальной рябь.
+    const bands = [];
+    for (let y = 0; y < TILE; y++) bands.push((rng() - 0.5) * 7);
+    for (let y = 0; y < TILE; y++) {
+      // полосы чуть тянутся вверх: среднее с соседней строкой
+      const b = (bands[y] + bands[(y + 1) % TILE]) / 2;
+      for (let x = 0; x < TILE; x++) {
+        const v = (rng() - 0.5) * 5 + b;
+        px(data, x, y, 232 + v, 228 + v, 216 + v);
       }
     }
-    // Тонкие вертикальные волокна коры
-    for (let i = 0; i < 16; i++) {
-      const x = (rng() * TILE) | 0;
-      const y0 = (rng() * 8) | 0;
-      const len = 4 + ((rng() * 9) | 0);
-      const dark = rng() < 0.45;
-      for (let y = y0; y < Math.min(TILE, y0 + len); y++) {
-        const v = (rng() - 0.5) * 10;
-        if (dark) px(data, x, y, 196 + v, 192 + v, 182 + v);
-        else px(data, x, y, 240 + v, 238 + v, 231 + v);
-      }
-    }
-    // Чёрные штрихи берёзы: короткие горизонтальные полосы разной толщины
-    const dashes = 7 + ((rng() * 4) | 0);
-    for (let i = 0; i < dashes; i++) {
-      const y = 1 + ((rng() * (TILE - 2)) | 0);
-      const x = (rng() * (TILE - 5)) | 0;
-      const w = 3 + ((rng() * 6) | 0);
-      const h = rng() < 0.3 ? 2 : 1;
-      for (let k = 0; k < w; k++) {
-        for (let hh = 0; hh < h; hh++) {
-          // концы штриха чуть светлее — штрих сужается
-          const edge = k === 0 || k === w - 1;
-          const v = edge ? 46 : 0;
-          px(data, x + k, y + hh, 44 + v, 40 + v, 38 + v);
+    // Широкие тёмные заплатки (как у старой берёзы): рваные горизонтальные
+    // пятна угольного цвета с неровными краями
+    const patches = 2 + ((rng() * 2) | 0);
+    for (let i = 0; i < patches; i++) {
+      const py = 1 + ((rng() * (TILE - 3)) | 0);
+      const px0 = (rng() * TILE) | 0;
+      const w = 4 + ((rng() * 5) | 0);
+      const h = 2 + ((rng() * 2) | 0);
+      for (let yy = 0; yy < h; yy++) {
+        for (let k = -1; k <= w; k++) {
+          const xx = (px0 + k + TILE) % TILE;
+          const edge = k < 0 || k >= w || rng() < 0.25;
+          const v = (rng() - 0.5) * 12;
+          if (edge && rng() < 0.5) continue;
+          px(data, xx, py + yy, (edge ? 92 : 52) + v, (edge ? 86 : 47) + v, (edge ? 78 : 42) + v);
         }
       }
-      // тонкий светлый блик под штрихом
-      if (rng() < 0.6) px(data, x + 1 + ((rng() * (w - 2)) | 0), y + h, 246, 244, 238);
     }
-    // Тёмные «глазки» — округлые отметины
-    for (let i = 0; i < 2; i++) {
-      const x = 2 + ((rng() * (TILE - 5)) | 0);
-      const y = 2 + ((rng() * (TILE - 5)) | 0);
-      px(data, x, y, 58, 52, 48); px(data, x + 1, y, 78, 72, 66);
-      px(data, x, y + 1, 96, 90, 84); px(data, x + 1, y + 1, 58, 52, 48);
+    // Чечевицы: короткие горизонтальные тёмные чёрточки со светлой кромкой
+    const dashes = 8 + ((rng() * 5) | 0);
+    for (let i = 0; i < dashes; i++) {
+      const y = 1 + ((rng() * (TILE - 2)) | 0);
+      const x = (rng() * (TILE - 6)) | 0;
+      const w = 2 + ((rng() * 4) | 0);
+      for (let k = 0; k < w; k++) {
+        const edge = k === 0 || k === w - 1;
+        const v = edge ? 40 : 0;
+        px(data, x + k, y, 46 + v, 42 + v, 38 + v);
+      }
+      if (rng() < 0.7) px(data, x + 1 + ((rng() * Math.max(1, w - 2)) | 0), y - 1, 246, 243, 234);
     }
   },
   [T.BIRCH_TOP](data, rng) {
@@ -855,7 +854,7 @@ const tileColors = {};
 const EMISSIVE_TILES = new Set([T.GLOW, T.TORCH, T.FURNACE_FRONT, T.GLOW_SHROOM]);
 // Общий множитель яркости атласа: текстуры чуть темнее «мультяшных»,
 // ближе к реальному освещению (просили больше реализма).
-export const ATLAS_DARKEN = 0.9;
+export const ATLAS_DARKEN = 0.86;
 
 function darkenTile(data, idx) {
   const f = EMISSIVE_TILES.has(idx) ? 0.985 : ATLAS_DARKEN;

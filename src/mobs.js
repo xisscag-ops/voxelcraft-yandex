@@ -1265,6 +1265,16 @@ export class Mob {
     }
   }
 
+  /** Сколько блоков воды от рыбы до поверхности (0 — над головой воздух) */
+  waterDepth() {
+    let d = 0;
+    for (let y = Math.floor(this.pos.y + 0.8); y < Math.floor(this.pos.y) + 6; y++) {
+      if (!isLiquid(this.world.getBlock(Math.floor(this.pos.x), y, Math.floor(this.pos.z)))) break;
+      d++;
+    }
+    return d;
+  }
+
   // Рыба: плавает в воде, на суше беспомощно бьётся
   updateFish(dt, playerPos) {
     const v = this.v;
@@ -1277,22 +1287,38 @@ export class Mob {
     if (inWater) {
       this.floodT = 0;
       this.thinkT -= dt;
+      this.escapeT = Math.max(0, (this.escapeT || 0) - dt);
       if (this.thinkT <= 0) {
         this.thinkT = 1 + Math.random() * 2;
         this.heading += (Math.random() - 0.5) * 2.2;
         const hx = this.home.x - this.pos.x, hz = this.home.z - this.pos.z;
         if (hx * hx + hz * hz > 36) this.heading = Math.atan2(hx, hz);
       }
+      // Насколько глубоко под водой: в тесной колонне (блок сверху и снизу)
+      // рыба не плавает и не вертится — стоит, слегка покачиваясь.
+      const depth = this.waterDepth();
       const far = Math.hypot(this.pos.x - playerPos.x, this.pos.z - playerPos.z) > 4;
-      const sp = this.speed * (far ? 1 : 1.9);
-      const nx = this.pos.x + Math.sin(this.heading) * sp * dt;
-      const nz = this.pos.z + Math.cos(this.heading) * sp * dt;
-      const ahead = this.world.getBlock(Math.floor(nx), Math.floor(this.pos.y + 0.2), Math.floor(nz));
-      if (isLiquid(ahead)) {
-        this.pos.x = nx;
-        this.pos.z = nz;
-      } else {
-        this.heading += Math.PI * (0.5 + Math.random() * 0.5);
+      let sp = this.speed * (far ? 1 : 1.9);
+      if (depth < 1.4) sp = 0;
+      if (sp > 0) {
+        const course = this.escapeT > 0 ? this.escapeHeading : this.heading;
+        const nx = this.pos.x + Math.sin(course) * sp * dt;
+        const nz = this.pos.z + Math.cos(course) * sp * dt;
+        const ahead = this.world.getBlock(Math.floor(nx), Math.floor(this.pos.y + 0.2), Math.floor(nz));
+        if (isLiquid(ahead)) {
+          this.pos.x = nx;
+          this.pos.z = nz;
+          if (this.escapeT > 0) this.heading = course;
+        } else {
+          // Упёрлась в стену: разворот на один фиксированный угол (не случайный),
+          // иначе рыба крутилась бы на месте в тесном водоёме.
+          this.turnDir = this.turnDir || (Math.random() < 0.5 ? 1 : -1);
+          this.escapeHeading = this.heading + this.turnDir * Math.PI * 0.7;
+          this.escapeT = 0.7;
+          this.heading = this.escapeHeading;
+        }
+      } else if (this.escapeT <= 0) {
+        this.heading += Math.sin(this.animT * 0.6) * dt * 0.3;   // тихо покачивается
       }
       const targetY = this.home.y + Math.sin(this.animT * 0.8) * 0.6;
       this.pos.y += (targetY - this.pos.y) * Math.min(1, dt * 1.6);
@@ -1355,10 +1381,32 @@ export class Mob {
       speed = 5;
     }
 
-    this.pos.x += Math.sin(this.heading) * speed * dt;
-    this.pos.z += Math.cos(this.heading) * speed * dt;
-    // Плавная волна высоты; держимся над землёй
-    const targetY = this.home.y + Math.sin(this.animT * 0.9) * 1.6;
+    // Не влетаем в блоки: перед взмахом крыльев смотрим, что впереди.
+    // Впереди стена — не летим и разворачиваемся по одному выбранному курсу
+    // (случайный разворот каждый кадр выглядел как «птица крутится на месте»).
+    this.escapeT = Math.max(0, (this.escapeT || 0) - dt);
+    const stepX = this.pos.x + Math.sin(this.heading) * speed * 0.25;
+    const stepZ = this.pos.z + Math.cos(this.heading) * speed * 0.25;
+    const solidAt = (x, y, z) => {
+      const b = this.world.getBlock(Math.floor(x), Math.floor(y), Math.floor(z));
+      return b !== 0 && !isLiquid(b);
+    };
+    const bodyY = this.pos.y + 0.4;
+    if (solidAt(stepX, bodyY, stepZ)) {
+      if (this.escapeT <= 0) {
+        this.turnDir = this.turnDir || (Math.random() < 0.5 ? 1 : -1);
+        this.escapeHeading = this.heading + this.turnDir * (1.1 + Math.random() * 0.5);
+        this.escapeT = 0.6;
+      }
+      this.heading = this.escapeHeading;
+    } else {
+      this.pos.x += Math.sin(this.heading) * speed * dt;
+      this.pos.z += Math.cos(this.heading) * speed * dt;
+    }
+    // Плавная волна высоты; держимся над землёй, но не влетаем в потолок/пол
+    let targetY = this.home.y + Math.sin(this.animT * 0.9) * 1.6;
+    if (solidAt(this.pos.x, targetY + 1.1, this.pos.z)) targetY = Math.floor(targetY) - 0.4;
+    if (solidAt(this.pos.x, targetY - 0.6, this.pos.z)) targetY = Math.ceil(targetY) + 0.6;
     this.pos.y += (targetY - this.pos.y) * Math.min(1, dt * 2);
 
     v.group.position.set(this.pos.x, this.pos.y, this.pos.z);
