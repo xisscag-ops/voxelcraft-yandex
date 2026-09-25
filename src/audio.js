@@ -246,6 +246,34 @@ export class Sfx {
     this._burst({ freq: 380, dur: 0.25, gain: 0.25, type: 'bandpass', q: 2, pitchDrop: 0.6 });
   }
 
+  // ---- Новые мобы ----
+  bark(vol = 1) {
+    // Короткий лай волка: две резкие «гав»
+    this._burst({ freq: 900, dur: 0.07, gain: 0.14 * vol, type: 'bandpass', q: 1.4, pitchDrop: 0.35 });
+    setTimeout(() => this._burst({ freq: 760, dur: 0.08, gain: 0.12 * vol, type: 'bandpass', q: 1.4, pitchDrop: 0.3 }), 130);
+  }
+  hiss() {
+    // Шипение паука
+    this._burst({ freq: 2600, dur: 0.35, gain: 0.1, type: 'highpass', q: 0.9 });
+  }
+  fuse() {
+    // Крипер: нарастающее шипение перед взрывом
+    for (let i = 0; i < 5; i++) {
+      setTimeout(() => this._burst({ freq: 1800 + i * 300, dur: 0.09, gain: 0.09, type: 'highpass', q: 1.1 }), i * 130);
+    }
+  }
+  explode() {
+    this._burst({ freq: 220, dur: 0.55, gain: 0.5, pitchDrop: 0.25 });
+    setTimeout(() => this._burst({ freq: 90, dur: 0.5, gain: 0.35, pitchDrop: 0.4 }), 40);
+  }
+  flop(vol = 1) {
+    // Рыба плещется на суше/в воде
+    this._burst({ freq: 700, dur: 0.08, gain: 0.1 * vol, type: 'bandpass', q: 1.6, pitchDrop: 0.5 });
+  }
+  swim(vol = 1) {
+    this._burst({ freq: 1200, dur: 0.14, gain: 0.05 * vol, type: 'bandpass', q: 1.2, pitchDrop: 0.5 });
+  }
+
   gloom(vol = 1) {
     // Шёпот Хмари
     this._burst({ freq: 300, dur: 0.45, gain: 0.1 * vol, type: 'bandpass', q: 7 });

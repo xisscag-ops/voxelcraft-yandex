@@ -49,18 +49,32 @@ export class World {
     return c;
   }
 
+  // Температура: холодные (снежные) зоны — крупные, но редкие
+  temperatureAt(wx, wz) {
+    return fbm2d(wx * 0.0016 + 40, wz * 0.0016 - 70, this.seed + 31, 3);
+  }
+
+  // Сухие (пустынные) зоны
+  dryAt(wx, wz) {
+    return fbm2d(wx * 0.0021 - 90, wz * 0.0021 + 55, this.seed + 17, 3);
+  }
+
   // Высота поверхности в колонке
   heightAt(wx, wz) {
     const seed = this.seed;
     const cont = fbm2d(wx * 0.006, wz * 0.006, seed, 4);           // континентальность
     const hills = fbm2d(wx * 0.03, wz * 0.03, seed + 991, 3);      // холмы
-    const mt = fbm2d(wx * 0.0025, wz * 0.0025, seed + 77, 2);      // горы
+    const mt = fbm2d(wx * 0.0022, wz * 0.0022, seed + 77, 2);      // горные массивы
+    const ridgeN = fbm2d(wx * 0.0048 + 13, wz * 0.0048 - 27, seed + 505, 3);
     // tanh расширяет «кучу» значений около 0.5 — рельеф контрастнее
     const c = Math.tanh((cont - 0.5) * 5);
     let h = SEA + 3 + c * 18 + (hills - 0.5) * 12;
-    const mountain = Math.max(0, mt - 0.52) / 0.48;
-    h += mountain * mountain * 26;
-    return Math.max(3, Math.min(H - 6, Math.round(h)));
+    const mountain = Math.max(0, mt - 0.46) / 0.54;                 // 0..1
+    h += Math.pow(mountain, 1.5) * 30;
+    // Гребни: 1-|2n-1| даёт острые скалистые хребты в горах
+    const ridge = 1 - Math.abs(ridgeN * 2 - 1);
+    h += ridge * ridge * mountain * 16;
+    return Math.max(3, Math.min(H - 3, Math.round(h)));
   }
 
   generateChunk(chunk) {
@@ -68,26 +82,32 @@ export class World {
     const ox = cx * S, oz = cz * S;
     const seed = this.seed;
 
-    // Рельеф
+    // Рельеф и биомы
     for (let z = 0; z < S; z++) {
       for (let x = 0; x < S; x++) {
         const wx = ox + x, wz = oz + z;
         const h = this.heightAt(wx, wz);
-        const cold = fbm2d(wx * 0.004 + 40, wz * 0.004 - 70, seed + 31, 2) > 0.56;
+        const cold = this.temperatureAt(wx, wz) > 0.68;      // снежные зоны редкие
+        const dry = !cold && this.dryAt(wx, wz) > 0.63;      // пустыни
+        const rocky = h > 38;                                // высокогорье — голый камень
         for (let y = 0; y <= Math.max(h, SEA); y++) {
           let b = BLOCK.AIR;
           if (y > h) {
-            b = y <= SEA ? BLOCK.WATER : BLOCK.AIR;
+            // В холодных зонах вода сверху затянута льдом
+            b = y <= SEA ? ((cold && y === SEA) ? BLOCK.ICE : BLOCK.WATER) : BLOCK.AIR;
           } else if (y === h) {
-            if (h <= SEA) b = BLOCK.SAND;
-            else if (h <= SEA + 1) b = BLOCK.SAND;
-            else if (h > 36 || (cold && h > 32)) b = BLOCK.SNOW;
+            if (h <= SEA + 2) b = BLOCK.SAND;                // пляжи
+            else if (h > 47) b = BLOCK.SNOW;                 // снежные вершины
+            else if (rocky) b = BLOCK.STONE;
+            else if (cold) b = BLOCK.SNOW;
+            else if (dry) b = BLOCK.SAND;
             else b = BLOCK.GRASS;
-            // Пляжи чуть шире
-            if (h <= SEA + 2 && h > SEA) b = BLOCK.SAND;
           } else if (y >= h - 3) {
-            b = (h <= SEA + 1) ? BLOCK.SAND : BLOCK.DIRT;
-            if (y === h && h > 36) b = BLOCK.SNOW;
+            if (h <= SEA + 2) b = BLOCK.SAND;
+            else if (h > 47) b = BLOCK.SNOW;
+            else if (rocky) b = BLOCK.STONE;
+            else if (dry) b = BLOCK.SANDSTONE;
+            else b = BLOCK.DIRT;
           } else {
             b = y < 4 ? BLOCK.SLATE : BLOCK.STONE;
           }
@@ -96,31 +116,165 @@ export class World {
       }
     }
 
-    // Деревья (полностью внутри чанка, чтобы не пересекать границы)
+    // Пещеры: извилистые тоннели, вырезанные из камня
+    const rngCave = makeRng(hash3(cx, 5, cz, seed) * 0x7fffffff);
+    for (let z = 0; z < S; z++) {
+      for (let x = 0; x < S; x++) {
+        const wx = ox + x, wz = oz + z;
+        const h = this.heightAt(wx, wz);
+        // Основные тоннели
+        const t1 = fbm2d(wx * 0.031, wz * 0.031, seed + 404, 3);
+        const t2 = fbm2d(wx * 0.014 + 11, wz * 0.014 - 6, seed + 707, 3);
+        const branches = [
+          [t1, 0.63, 0.05, 0.0],
+          [t2, 0.60, 0.045, 9.0],
+        ];
+        for (const [n, thr, thick, yBase] of branches) {
+          if (n < thr) continue;
+          const k = (n - thr) / (1 - thr);
+          const floor = h - 3 > 6 ? 5 + k * 26 : 5;
+          const centerY = Math.round(yBase + floor * fbm2d(wx * 0.02 - 3, wz * 0.02 + 9, seed + 909, 2) * 1.4);
+          const rad = 1.2 + k * 3.2 + rngCave() * 0.8;
+          for (let y = Math.max(2, Math.round(centerY - rad)); y <= Math.round(centerY + rad); y++) {
+            if (y > h - 2 || y < 2) continue;
+            const wasBlock = chunk.get(x, y, z);
+            if (wasBlock === BLOCK.AIR || wasBlock === BLOCK.WATER) continue;
+            if (wasBlock === BLOCK.ICE) continue;
+            chunk.set(x, y, z, BLOCK.AIR);
+          }
+        }
+        // Редкие вертикальные колодцы на поверхность
+        if (rngCave() < 0.004 && h > SEA + 3) {
+          for (let y = h - 1; y > h - 14; y--) {
+            if (chunk.get(x, y, z) === BLOCK.SLATE) break;
+            chunk.set(x, y, z, BLOCK.AIR);
+          }
+        }
+      }
+    }
+
+    // Руды и гравий в каменных слоях
+    const rngOre = makeRng(hash3(cx, 7, cz, seed) * 0x7fffffff);
+    const veins = [
+      [BLOCK.COAL_ORE, 9, 6, 34],
+      [BLOCK.IRON_ORE, 6, 5, 28],
+      [BLOCK.GOLD_ORE, 3, 4, 18],
+      [BLOCK.DIAMOND_ORE, 2, 3, 12],
+    ];
+    for (const [ore, tries, size, maxY] of veins) {
+      for (let i = 0; i < tries; i++) {
+        const vx = (rngOre() * S) | 0;
+        const vz = (rngOre() * S) | 0;
+        const vy = 4 + ((rngOre() * maxY) | 0);
+        if (chunk.get(vx, vy, vz) !== BLOCK.STONE) continue;
+        for (let k = 0; k < size; k++) {
+          const px2 = vx + ((rngOre() * 3) | 0) - 1;
+          const pz2 = vz + ((rngOre() * 3) | 0) - 1;
+          const py2 = vy + ((rngOre() * 3) | 0) - 1;
+          if (px2 < 0 || pz2 < 0 || px2 >= S || pz2 >= S) continue;
+          if (chunk.get(px2, py2, pz2) === BLOCK.STONE) chunk.set(px2, py2, pz2, ore);
+        }
+      }
+    }
+    // Мох на стенах пещер (под поверхностью, рядом с пустотой)
+    for (let z = 1; z < S - 1; z++) {
+      for (let x = 1; x < S - 1; x++) {
+        for (let y = 6; y < 34; y++) {
+          if (chunk.get(x, y, z) !== BLOCK.STONE) continue;
+          if (rngOre() > 0.35) continue;
+          const nearAir =
+            chunk.get(x + 1, y, z) === BLOCK.AIR || chunk.get(x - 1, y, z) === BLOCK.AIR ||
+            chunk.get(x, y, z + 1) === BLOCK.AIR || chunk.get(x, y, z - 1) === BLOCK.AIR ||
+            chunk.get(x, y + 1, z) === BLOCK.AIR;
+          if (nearAir) chunk.set(x, y, z, BLOCK.MOSSY);
+        }
+      }
+    }
+
+    // Гравийные линзы
+    for (let i = 0; i < 2; i++) {
+      const gx = (rngOre() * S) | 0, gz = (rngOre() * S) | 0;
+      const gy = 8 + ((rngOre() * 30) | 0);
+      for (let k = 0; k < 7; k++) {
+        const px2 = gx + ((rngOre() * 4) | 0) - 2;
+        const pz2 = gz + ((rngOre() * 4) | 0) - 2;
+        if (px2 < 0 || pz2 < 0 || px2 >= S || pz2 >= S) continue;
+        if (chunk.get(px2, gy, pz2) === BLOCK.STONE) chunk.set(px2, gy, pz2, BLOCK.GRAVEL);
+      }
+    }
+
+    // Деревья разных пород (полностью внутри чанка, чтобы не пересекать границы)
     const rng = makeRng(hash3(cx, 0, cz, seed) * 0x7fffffff);
-    const treeCount = 2 + (rng() * 3) | 0;
+    const treeCount = 3 + ((rng() * 3) | 0);
     for (let t = 0; t < treeCount; t++) {
       const tx = 3 + ((rng() * (S - 6)) | 0);
       const tz = 3 + ((rng() * (S - 6)) | 0);
       const th = this.heightAt(ox + tx, oz + tz);
-      if (th <= SEA + 1 || th > 36) continue;
-      if (chunk.get(tx, th, tz) !== BLOCK.GRASS) continue;
-      const trunkH = 4 + ((rng() * 3) | 0);
-      // Крона
-      for (let dy = trunkH - 2; dy <= trunkH + 1; dy++) {
-        const r = dy >= trunkH ? 1 : 2;
-        for (let dx = -r; dx <= r; dx++) {
-          for (let dz = -r; dz <= r; dz++) {
-            if (Math.abs(dx) === r && Math.abs(dz) === r && rng() < 0.6) continue;
-            const lx = tx + dx, ly = th + dy, lz = tz + dz;
-            if (lx < 0 || lz < 0 || lx >= S || lz >= S || ly >= H) continue;
-            if (chunk.get(lx, ly, lz) === BLOCK.AIR) chunk.set(lx, ly, lz, BLOCK.LEAVES);
+      if (th <= SEA + 1 || th > 44) continue;
+      const surface = chunk.get(tx, th, tz);
+      if (surface !== BLOCK.GRASS && surface !== BLOCK.SNOW) continue;
+      const cold = this.temperatureAt(ox + tx, oz + tz) > 0.68;
+      const tree = (surface === BLOCK.SNOW || cold) ? 'spruce' : (rng() < 0.32 ? 'birch' : 'oak');
+      const put = (lx, ly, lz, id, onlyAir = true) => {
+        if (lx < 0 || lz < 0 || lx >= S || lz >= S || ly < 0 || ly >= H) return;
+        if (onlyAir && chunk.get(lx, ly, lz) !== BLOCK.AIR) return;
+        chunk.set(lx, ly, lz, id);
+      };
+      if (tree === 'oak') {
+        const trunkH = 4 + ((rng() * 3) | 0);
+        for (let dy = trunkH - 2; dy <= trunkH + 1; dy++) {
+          const r = dy >= trunkH ? 1 : 2;
+          for (let dx = -r; dx <= r; dx++) {
+            for (let dz = -r; dz <= r; dz++) {
+              if (Math.abs(dx) === r && Math.abs(dz) === r && rng() < 0.6) continue;
+              put(tx + dx, th + dy, tz + dz, BLOCK.LEAVES);
+            }
           }
         }
+        for (let dy = 1; dy <= trunkH; dy++) chunk.set(tx, th + dy, tz, BLOCK.LOG);
+      } else if (tree === 'birch') {
+        const trunkH = 5 + ((rng() * 3) | 0);
+        for (let dy = trunkH - 2; dy <= trunkH + 1; dy++) {
+          const r = dy >= trunkH ? 1 : 2;
+          for (let dx = -r; dx <= r; dx++) {
+            for (let dz = -r; dz <= r; dz++) {
+              if ((dx * dx + dz * dz) > r * r + 1) continue;
+              if (Math.abs(dx) === r && Math.abs(dz) === r && rng() < 0.45) continue;
+              put(tx + dx, th + dy, tz + dz, BLOCK.BIRCH_LEAVES);
+            }
+          }
+        }
+        for (let dy = 1; dy <= trunkH; dy++) chunk.set(tx, th + dy, tz, BLOCK.BIRCH_LOG);
+      } else {
+        // Ель: узкая коническая крона
+        const trunkH = 6 + ((rng() * 3) | 0);
+        for (let dy = 2; dy <= trunkH + 1; dy++) {
+          const left = trunkH + 1 - dy;
+          const r = left <= 1 ? 0 : left <= 3 ? 1 : 2;
+          for (let dx = -r; dx <= r; dx++) {
+            for (let dz = -r; dz <= r; dz++) {
+              if (Math.abs(dx) + Math.abs(dz) > r + 1) continue;
+              if (r > 0 && Math.abs(dx) === r && Math.abs(dz) === r && rng() < 0.7) continue;
+              put(tx + dx, th + dy, tz + dz, BLOCK.SPRUCE_LEAVES);
+            }
+          }
+        }
+        put(tx, th + trunkH + 2, tz, BLOCK.SPRUCE_LEAVES);
+        for (let dy = 1; dy <= trunkH; dy++) chunk.set(tx, th + dy, tz, BLOCK.SPRUCE_LOG);
       }
-      // Ствол
-      for (let dy = 1; dy <= trunkH; dy++) {
-        chunk.set(tx, th + dy, tz, BLOCK.LOG);
+    }
+
+    // Кактусы в пустынях
+    for (let i = 0; i < 3; i++) {
+      const tx = 1 + ((rng() * (S - 2)) | 0);
+      const tz = 1 + ((rng() * (S - 2)) | 0);
+      const th = this.heightAt(ox + tx, oz + tz);
+      if (th <= SEA + 1 || th > 40) continue;
+      if (this.dryAt(ox + tx, oz + tz) < 0.63) continue;
+      if (chunk.get(tx, th, tz) !== BLOCK.SAND) continue;
+      const ch = 2 + ((rng() * 2) | 0);
+      for (let dy = 1; dy <= ch; dy++) {
+        if (chunk.get(tx, th + dy, tz) === BLOCK.AIR) chunk.set(tx, th + dy, tz, BLOCK.CACTUS);
       }
     }
 
