@@ -3,7 +3,7 @@ import { makeRng } from './noise.js';
 
 export const TILE = 16;
 export const ATLAS_COLS = 8;
-export const ATLAS_ROWS = 4;
+export const ATLAS_ROWS = 5;
 
 // Индексы тайлов
 export const T = {
@@ -14,6 +14,8 @@ export const T = {
   CRACK0: 17, CRACK1: 18, CRACK2: 19, CRACK3: 20, CRACK4: 21,
   // Декоративная растительность
   GRASS_TUFT: 22, FLOWER_RED: 23, FLOWER_YELLOW: 24, FERN: 25, CLOVER: 26,
+  IRON_ORE: 27, COAL_ORE: 28, FURNACE_SIDE: 29, FURNACE_TOP: 30,
+  FURNACE_FRONT: 31, TORCH: 32,
 };
 
 export const CRACK_TILES = [17, 18, 19, 20, 21];
@@ -219,6 +221,63 @@ const painters = {
       px(data, x, y, 96, 100, 118);
     }
   },
+  [T.IRON_ORE](data, rng) {
+    painters[T.STONE](data, rng);
+    for (let i = 0; i < 11; i++) {
+      const x = 1 + ((rng() * 13) | 0), y = 1 + ((rng() * 13) | 0);
+      for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++)
+        px(data, x + dx, y + dy, 182 + (rng() * 35 | 0), 105 + (rng() * 32 | 0), 60);
+    }
+  },
+  [T.COAL_ORE](data, rng) {
+    painters[T.STONE](data, rng);
+    for (let i = 0; i < 10; i++) {
+      const x = 1 + ((rng() * 13) | 0), y = 1 + ((rng() * 13) | 0);
+      for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++)
+        px(data, x + dx, y + dy, 28 + (rng() * 18 | 0), 31, 37);
+    }
+  },
+  [T.FURNACE_SIDE](data, rng) {
+    painters[T.COBBLE](data, rng);
+    for (let i = 0; i < 16; i++) {
+      px(data, i, 0, 56, 56, 59); px(data, i, 15, 42, 42, 46);
+      px(data, 0, i, 58, 58, 62); px(data, 15, i, 45, 45, 49);
+    }
+  },
+  [T.FURNACE_TOP](data, rng) {
+    noisyFill(data, rng, [83, 85, 88], 12);
+    for (let i = 3; i <= 12; i++) {
+      px(data, i, 3, 51, 52, 54); px(data, i, 12, 51, 52, 54);
+      px(data, 3, i, 51, 52, 54); px(data, 12, i, 51, 52, 54);
+    }
+  },
+  [T.FURNACE_FRONT](data, rng) {
+    painters[T.FURNACE_SIDE](data, rng);
+    for (let y = 6; y <= 12; y++) for (let x = 3; x <= 12; x++) {
+      const rim = x === 3 || x === 12 || y === 6 || y === 12;
+      px(data, x, y, rim ? 185 : 19, rim ? 180 : 17, rim ? 163 : 23);
+    }
+    for (let x = 5; x <= 10; x++) {
+      px(data, x, 10, 216, 94, 28);
+      px(data, x, 11, 252, 158, 49);
+    }
+    px(data, 7, 9, 255, 203, 86); px(data, 9, 8, 245, 136, 35);
+    for (let x = 4; x <= 11; x++) px(data, x, 3, 45, 46, 50);
+  },
+  [T.TORCH](data, rng) {
+    // Прозрачный крестовой спрайт: тёмное древко и яркое пламя.
+    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) px(data, x, y, 0, 0, 0, 0);
+    for (let y = 7; y < 16; y++) for (let x = 6; x <= 9; x++)
+      px(data, x, y, y > 12 ? 91 : 140, y > 12 ? 63 : 94, 47);
+    for (let y = 2; y <= 8; y++) {
+      const half = y < 4 ? 1 : y > 6 ? 3 : 2;
+      for (let x = 8 - half; x < 8 + half; x++) {
+        const v = rng() * 18;
+        px(data, x, y, 248 + v, y < 5 ? 201 + v : 118 + v, 42);
+      }
+    }
+    px(data, 7, 1, 255, 231, 133); px(data, 8, 3, 255, 247, 184);
+  },
   // ---- Трещины (стадии 0..4) ----
   [T.CRACK0](data, rng) { drawCracks(data, rng, 0); },
   [T.CRACK1](data, rng) { drawCracks(data, rng, 1); },
@@ -376,6 +435,50 @@ export function tileIcon(idx, size = 48) {
   const sx = (idx % ATLAS_COLS) * TILE;
   const sy = ((idx / ATLAS_COLS) | 0) * TILE;
   ctx.drawImage(atlas, sx, sy, TILE, TILE, 0, 0, size, size);
+  return c;
+}
+
+// Иконки предметов рисуются кодом, а не emoji: видны даже в браузерах без
+// emoji-шрифта. Полублок занимает только нижнюю половину слота.
+export function slabIcon(idx, size = 44) {
+  const tile = tileIcon(idx, 44);
+  const c = document.createElement('canvas');
+  c.width = size; c.height = size;
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(tile, 0, 0, 44, 44, 2, size * 0.43, size - 4, size * 0.48);
+  ctx.fillStyle = 'rgba(255,255,255,0.36)';
+  ctx.fillRect(2, size * 0.42, size - 4, 2);
+  return c;
+}
+
+export function itemIcon(kind, size = 44) {
+  const pixels = document.createElement('canvas');
+  pixels.width = pixels.height = 16;
+  const p = pixels.getContext('2d');
+  const draw = (color, x, y, w, h) => { p.fillStyle = color; p.fillRect(x, y, w, h); };
+  if (kind === 'bow') {
+    // Деревянная дуга с тетивой и наложенной стрелой.
+    for (const [x, y] of [[9, 1], [10, 2], [11, 3], [12, 4], [12, 5], [13, 6], [13, 7],
+      [13, 8], [13, 9], [12, 10], [12, 11], [11, 12], [10, 13], [9, 14]]) {
+      draw('#663716', x, y, 2, 1); draw('#c07e3c', x, y, 1, 1);
+    }
+    draw('#f2e5bd', 8, 1, 1, 14);
+    draw('#d8aa6f', 2, 7, 10, 1);
+    draw('#eeeeea', 2, 5, 2, 1); draw('#eeeeea', 2, 9, 2, 1);
+    draw('#a7abb5', 12, 6, 2, 3); draw('#e7e9ef', 14, 7, 1, 1);
+  } else if (kind === 'bread') {
+    draw('#713c1c', 2, 7, 12, 6);
+    draw('#ac672b', 2, 5, 12, 6);
+    draw('#d68e39', 3, 4, 10, 7);
+    draw('#f1b959', 4, 3, 8, 6);
+    for (const x of [5, 8, 11]) { draw('#a26229', x, 4, 1, 3); draw('#ffe2a0', x + 1, 4, 1, 2); }
+  }
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(pixels, 0, 0, size, size);
   return c;
 }
 

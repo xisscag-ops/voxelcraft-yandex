@@ -1,6 +1,6 @@
 // Физика игрока: AABB против вокселей, ходьба, прыжки, плавание, полёт
 import { CONFIG } from './config.js';
-import { isSolid, isLiquid } from './blocks.js';
+import { isSolid, isLiquid, blockBounds } from './blocks.js';
 
 const HW = CONFIG.PLAYER_WIDTH / 2;
 const PH = CONFIG.PLAYER_HEIGHT;
@@ -15,6 +15,7 @@ export class Player {
     this.pitch = 0;
     this.onGround = false;
     this.flying = false;
+    this.mode = 'survival';
     this.inWater = false;
     this.headInWater = false;
     this.sprinting = false;
@@ -24,6 +25,7 @@ export class Player {
     this._wasFlying = false;
     // Здоровье и урон от падений
     this.hp = 20; this.maxHp = 20;
+    this.level = 0; this.xp = 0;
     this.hurtT = 0; this.regenT = 0; this._fallFrom = null;
   }
 
@@ -40,9 +42,22 @@ export class Player {
     return { x: this.pos.x, y: this.pos.y + CONFIG.PLAYER_EYE, z: this.pos.z };
   }
 
+  xpNeeded() { return 5 + this.level * 3; }
+
+  addXP(amount) {
+    this.xp += amount;
+    let levels = 0;
+    while (this.xp >= this.xpNeeded()) {
+      this.xp -= this.xpNeeded();
+      this.level++;
+      levels++;
+    }
+    return levels;
+  }
+
   /** Урон с неуязвимостью 0.7 с. true — если урон прошёл */
   hurt(n) {
-    if (this.hurtT > 0 || this.hp <= 0) return false;
+    if (this.mode === 'creative' || this.hurtT > 0 || this.hp <= 0) return false;
     this.hp = Math.max(0, this.hp - n);
     this.hurtT = 0.7;
     this.regenT = 0;
@@ -64,7 +79,12 @@ export class Player {
     for (let y = y0; y <= y1; y++) {
       for (let z = z0; z <= z1; z++) {
         for (let x = x0; x <= x1; x++) {
-          if (isSolid(this.world.getBlock(x, y, z))) return true;
+          const id = this.world.getBlock(x, y, z);
+          if (!isSolid(id)) continue;
+          const b = blockBounds(id);
+          if (px + HW > x + b.minX && px - HW < x + b.maxX &&
+              py + PH > y + b.minY && py < y + b.maxY &&
+              pz + HW > z + b.minZ && pz - HW < z + b.maxZ) return true;
         }
       }
     }
@@ -106,6 +126,7 @@ export class Player {
     let mz = fz * input.forward + rz * input.right;
     const mlen = Math.hypot(mx, mz);
     this.moving = mlen > 0.05;
+    this.sprinting = this.moving && !!input.sprint && !this.flying && !this.inWater;
     if (mlen > 0) { mx /= mlen; mz /= mlen; }
 
     if (this.flying) {
@@ -167,27 +188,30 @@ export class Player {
   _move(dt) {
     const step = (axis, amount) => {
       if (!amount) return;
-      const p = { ...this.pos };
-      p[axis] += amount;
-      if (!this.collides(p.x, p.y, p.z)) {
-        this.pos[axis] = p[axis];
-        return;
-      }
-      // Шаг по чуть-чуть (тонкого туннеля не будет: скорость*dt < размера блока)
+      // Подшаги предотвращают пролёт сквозь полублок при падении. При
+      // столкновении бинарно ищем границу, чтобы стоять ровно на высоте 0.5.
       const dir = Math.sign(amount);
-      const rem = Math.abs(amount);
-      const stepSize = 0.05;
-      let moved = 0;
-      while (moved + stepSize <= rem) {
-        moved += stepSize;
-        const q = { ...this.pos };
-        q[axis] += dir * moved;
-        if (this.collides(q.x, q.y, q.z)) break;
-        this.pos[axis] = q[axis];
+      const count = Math.ceil(Math.abs(amount) / 0.2);
+      const part = amount / count;
+      for (let i = 0; i < count; i++) {
+        const from = this.pos[axis];
+        const p = { ...this.pos, [axis]: from + part };
+        if (!this.collides(p.x, p.y, p.z)) {
+          this.pos[axis] = p[axis];
+          continue;
+        }
+        let free = 0, blocked = Math.abs(part);
+        for (let j = 0; j < 10; j++) {
+          const mid = (free + blocked) / 2;
+          p[axis] = from + dir * mid;
+          if (this.collides(p.x, p.y, p.z)) blocked = mid;
+          else free = mid;
+        }
+        this.pos[axis] = from + dir * free;
+        this.vel[axis] = 0;
+        if (axis === 'y' && dir < 0) this.onGround = true;
+        break;
       }
-      // Упираемся
-      this.vel[axis] = 0;
-      if (axis === 'y' && dir < 0) this.onGround = true;
     };
 
     this.onGround = false;
@@ -203,6 +227,7 @@ export class Player {
   }
 
   toggleFly() {
+    if (this.mode !== 'creative') return false;
     this.flying = !this.flying;
     if (this.flying) this.vel.y = 0;
     return this.flying;
@@ -212,6 +237,7 @@ export class Player {
     return {
       x: this.pos.x, y: this.pos.y, z: this.pos.z,
       yaw: this.yaw, pitch: this.pitch, flying: this.flying, hp: this.hp,
+      level: this.level, xp: this.xp,
     };
   }
 
@@ -220,7 +246,9 @@ export class Player {
     this.yaw = d.yaw || 0; this.pitch = d.pitch || 0;
     this.hp = d.hp != null ? d.hp : 20;
     if (this.hp <= 0) this.hp = this.maxHp;
-    this.flying = !!d.flying;
+    this.level = Math.max(0, d.level | 0);
+    this.xp = Math.max(0, d.xp | 0);
+    this.flying = this.mode === 'creative' && !!d.flying;
     this.vel = { x: 0, y: 0, z: 0 };
   }
 }

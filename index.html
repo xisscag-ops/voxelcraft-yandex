@@ -18,13 +18,16 @@
     <div id="crosshair"></div>
     <div id="hurt-flash"></div>
     <div id="status-row">
+      <div id="mode-label"></div>
       <div id="hearts"></div>
-      <div id="apples" class="hidden"></div>
+      <div id="food-status"></div>
     </div>
     <div id="break-bar" class="hidden"><div id="break-fill"></div></div>
     <div id="debug" class="hidden"></div>
+    <div id="xp-hud"><span id="xp-level">0</span><div id="xp-track"><div id="xp-fill"></div></div></div>
     <div id="hotbar"></div>
-    <button id="btn-pause-hud" class="icon-btn hidden" aria-label="Pause">⏸</button>
+    <button id="btn-inventory-hud" class="icon-btn hidden" aria-label="Inventory" data-i18n="touch_inventory">ИНВ</button>
+    <button id="btn-pause-hud" class="icon-btn hidden" aria-label="Pause">II</button>
   </div>
 
   <!-- ===================== Сенсорное управление ===================== -->
@@ -32,9 +35,10 @@
     <div id="look-zone"></div>
     <div id="joystick"><div id="joy-knob"></div></div>
     <div id="touch-buttons">
-      <button id="btn-fly" class="touch-btn" aria-label="Fly">🕊</button>
-      <button id="btn-break" class="touch-btn" aria-label="Break">⛏</button>
-      <button id="btn-place" class="touch-btn" aria-label="Place">🧱</button>
+      <button id="btn-fly" class="touch-btn" aria-label="Fly" data-i18n="touch_fly">ЛЕТ</button>
+      <button id="btn-break" class="touch-btn" aria-label="Break" data-i18n="touch_mine">КОП</button>
+      <button id="btn-place" class="touch-btn" aria-label="Place" data-i18n="touch_place">СТАВ</button>
+      <button id="btn-eat" class="touch-btn small" aria-label="Eat" data-i18n="touch_eat">ЕСТЬ</button>
       <button id="btn-sneak" class="touch-btn small" aria-label="Down">▼</button>
       <button id="btn-jump" class="touch-btn small" aria-label="Jump">▲</button>
     </div>
@@ -54,6 +58,13 @@
     <div class="panel">
       <h1 class="logo">Voxel<span>Craft</span></h1>
       <div class="tagline" data-i18n="tagline">Воксельная песочница</div>
+      <div class="mode-picker">
+        <label for="mode-menu" data-i18n="game_mode">Режим игры</label>
+        <select id="mode-menu" aria-label="Game mode">
+          <option value="survival" data-i18n="survival">Выживание</option>
+          <option value="creative" data-i18n="creative">Креатив</option>
+        </select>
+      </div>
       <div class="menu-buttons">
         <button id="btn-play" class="btn primary" data-i18n="play">Играть</button>
         <button id="btn-new-world" class="btn hidden" data-i18n="new_world">Новый мир</button>
@@ -67,12 +78,33 @@
   <div id="pause-screen" class="screen hidden">
     <div class="panel">
       <h2 data-i18n="pause">Пауза</h2>
+      <div class="mode-picker">
+        <label for="mode-pause" data-i18n="game_mode">Режим игры</label>
+        <select id="mode-pause" aria-label="Game mode">
+          <option value="survival" data-i18n="survival">Выживание</option>
+          <option value="creative" data-i18n="creative">Креатив</option>
+        </select>
+      </div>
       <div class="menu-buttons">
         <button id="btn-resume" class="btn primary" data-i18n="resume">Продолжить игру</button>
         <button id="btn-home" class="btn" data-i18n="to_spawn">К спавну</button>
         <button id="btn-reward2" class="btn reward" data-i18n="reward_btn">Смотреть рекламу</button>
         <button id="btn-settings2" class="btn" data-i18n="settings">Настройки</button>
         <button id="btn-save-quit" class="btn" data-i18n="save_quit">Сохранить и выйти</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="inventory-screen" class="screen hidden">
+    <div class="panel wide inventory-panel">
+      <h2 id="inventory-title" data-i18n="inventory_title">Рюкзак и крафт</h2>
+      <p class="inventory-hint" data-i18n="inventory_hint">Выберите предмет в панели, соберите блоки или найдите руду.</p>
+      <h3 data-i18n="supplies">Запасы</h3>
+      <div id="inventory-stock"></div>
+      <h3 data-i18n="recipes">Рецепты</h3>
+      <div id="inventory-recipes"></div>
+      <div class="menu-buttons">
+        <button id="btn-inventory-back" class="btn primary" data-i18n="back_to_game">Вернуться в игру</button>
       </div>
     </div>
   </div>

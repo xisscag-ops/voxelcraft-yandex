@@ -1,48 +1,56 @@
-// Выпадающие предметы: яблоки с листвы (в будущем — лут мобов)
+// Подбираемые яблоки, руда, уголь, пшеница и сферы опыта.
 import * as THREE from 'three';
-
-const APPLE = { color: 0xd64545, stem: 0x6b4a2b };
+import { isSolid, blockBounds } from './blocks.js';
 
 export class ItemDrops {
   constructor(scene) {
     this.scene = scene;
     this.items = [];
     this.geo = new THREE.BoxGeometry(0.28, 0.28, 0.28);
-    this.stemGeo = new THREE.BoxGeometry(0.08, 0.1, 0.08);
+    this.stemGeo = new THREE.BoxGeometry(0.07, 0.10, 0.07);
+    this.orbGeo = new THREE.OctahedronGeometry(0.16, 0);
     this.mats = {
-      apple: new THREE.MeshBasicMaterial({ color: APPLE.color }),
-      stem: new THREE.MeshBasicMaterial({ color: APPLE.stem }),
+      apple: new THREE.MeshBasicMaterial({ color: 0xda4545 }),
+      stem: new THREE.MeshBasicMaterial({ color: 0x6b4a2b }),
+      ore: new THREE.MeshBasicMaterial({ color: 0xbd7650 }),
+      coal: new THREE.MeshBasicMaterial({ color: 0x27282e }),
+      wheat: new THREE.MeshBasicMaterial({ color: 0xeac564 }),
+      xp: new THREE.MeshBasicMaterial({ color: 0x95ff3b }),
     };
-    this.onPickup = null; // (kind) => void
-    this.max = 40;
+    this.onPickup = null; // (kind, amount) => void
+    this.max = 80;
   }
 
-  spawn(x, y, z, kind = 'apple') {
-    if (this.items.length >= this.max) return null;
-    const g = new THREE.Group();
-    const body = new THREE.Mesh(this.geo, this.mats[kind] || this.mats.apple);
-    const stem = new THREE.Mesh(this.stemGeo, this.mats.stem);
-    stem.position.y = 0.18;
-    g.add(body, stem);
-    g.position.set(x, y, z);
-    this.scene.add(g);
+  spawn(x, y, z, kind = 'apple', amount = 1) {
+    if (!this.mats[kind] || this.items.length >= this.max) return null;
+    const group = new THREE.Group();
+    const body = new THREE.Mesh(kind === 'xp' ? this.orbGeo : this.geo, this.mats[kind]);
+    group.add(body);
+    if (kind === 'apple' || kind === 'wheat') {
+      const stem = new THREE.Mesh(this.stemGeo, this.mats.stem);
+      stem.position.y = 0.18;
+      group.add(stem);
+    }
+    if (kind === 'ore') {
+      const grain = new THREE.Mesh(this.stemGeo, this.mats.coal);
+      grain.position.set(0.13, 0.04, 0.12);
+      group.add(grain);
+    }
+    group.position.set(x, y, z);
+    this.scene.add(group);
     const it = {
-      kind,
-      group: g,
+      kind, amount, group,
       vel: { x: (Math.random() - 0.5) * 1.2, y: 2.2, z: (Math.random() - 0.5) * 1.2 },
-      t: 0,
-      life: 90,
-      rest: false,
+      t: 0, life: kind === 'xp' ? 55 : 90, rest: false,
     };
     this.items.push(it);
     return it;
   }
 
   _floorY(world, x, y, z) {
-    // Верхняя грань первого твёрдого блока снизу (в радиусе падения)
     for (let yy = Math.floor(y); yy > Math.floor(y) - 5; yy--) {
-      const b = world.getBlock(Math.floor(x), yy, Math.floor(z));
-      if (b && b !== 13) return yy + 1; // 13 = вода (упрощённо)
+      const id = world.getBlock(Math.floor(x), yy, Math.floor(z));
+      if (isSolid(id)) return yy + blockBounds(id).maxY;
     }
     return null;
   }
@@ -53,7 +61,6 @@ export class ItemDrops {
       it.t += dt;
       it.life -= dt;
       const p = it.group.position;
-
       if (!it.rest) {
         it.vel.y -= 9 * dt;
         p.x += it.vel.x * dt;
@@ -64,28 +71,42 @@ export class ItemDrops {
           p.y = fy + 0.16;
           it.vel.x *= 0.3; it.vel.z *= 0.3;
           if (Math.abs(it.vel.y) < 1.2) { it.rest = true; it.vel.y = 0; }
-          else it.vel.y = -it.vel.y * 0.25; // мягкий рикошет
+          else it.vel.y = -it.vel.y * 0.25;
         }
       } else {
         p.y += Math.sin(it.t * 3) * 0.0016;
       }
+      it.group.rotation.y += dt * (it.kind === 'xp' ? 3.5 : 1.8);
+      if (it.kind === 'xp') it.group.position.y += Math.sin(it.t * 5) * 0.002;
 
-      it.group.rotation.y += dt * 1.8;
-
-      // Подбор
       const dx = p.x - playerPos.x, dz = p.z - playerPos.z, dy = p.y - (playerPos.y + 0.9);
-      if (dx * dx + dz * dz + dy * dy < 1.7) {
+      if (dx * dx + dz * dz + dy * dy < 2.4) {
         this.scene.remove(it.group);
         this.items.splice(i, 1);
-        if (this.onPickup) this.onPickup(it.kind);
+        this.onPickup?.(it.kind, it.amount);
         continue;
       }
-
-      // Старые исчезают
       if (it.life <= 0) {
         this.scene.remove(it.group);
         this.items.splice(i, 1);
       }
+    }
+  }
+
+  serialize() {
+    return this.items.map((it) => ({
+      kind: it.kind, amount: it.amount,
+      x: it.group.position.x, y: it.group.position.y, z: it.group.position.z,
+      life: it.life,
+    }));
+  }
+
+  load(saved) {
+    this.clear();
+    for (const data of (Array.isArray(saved) ? saved : []).slice(0, this.max)) {
+      if (!Number.isFinite(data.x) || !Number.isFinite(data.y) || !Number.isFinite(data.z)) continue;
+      const it = this.spawn(data.x, data.y, data.z, data.kind, Math.max(1, data.amount | 0));
+      if (it) it.life = Math.max(0, Math.min(90, Number(data.life) || 30));
     }
   }
 

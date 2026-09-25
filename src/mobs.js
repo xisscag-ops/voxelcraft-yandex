@@ -1,6 +1,6 @@
 // Мобы: зайчик, барашек и слизень из коробок, с ходьбой, прыжками и настроениями
 import * as THREE from 'three';
-import { isSolid, isLiquid, BLOCK } from './blocks.js';
+import { isSolid, isLiquid, blockBounds, BLOCK } from './blocks.js';
 
 // Затенение граней как у блоков мира
 function partGeometry(w, h, d, color) {
@@ -156,28 +156,76 @@ function buildBird(mat, geoCache, ci) {
   return { group: g, legs: [], head: null, ears: [], wings, hop: false, bird: true };
 }
 
-// Хмарь — ночной охотник: парящая тень с горящими глазами (своя, процедурная модель)
+// Хмарь стала меньше, но её лицо теперь видно даже ночью: красные глаза,
+// скошенные брови, чёрная пасть и светлые клыки. Лицевая сторона — +Z.
 function buildGloom(mat, geoCache, eyeMat) {
   const g = new THREE.Group();
-  const body = fixedPart(mat, geoCache, 'gl-body', 0.5, 0.5, 0.38, [0.03, 0.02, 0.05]);
-  body.position.set(0, 0.45, 0);
-  const head = fixedPart(mat, geoCache, 'gl-head', 0.4, 0.3, 0.36, [0.04, 0.03, 0.07]);
-  head.position.set(0, 0.82, 0);
-  const wisp = fixedPart(mat, geoCache, 'gl-wisp', 0.2, 0.55, 0.2, [0.015, 0.01, 0.03]);
-  wisp.position.set(0, -0.05, 0);
-  const eyeL = fixedPart(eyeMat, geoCache, 'gl-eye', 0.09, 0.09, 0.06, [1, 1, 1]);
-  eyeL.position.set(-0.1, 0.85, 0.18);
-  const eyeR = fixedPart(eyeMat, geoCache, 'gl-eye', 0.09, 0.09, 0.06, [1, 1, 1]);
-  eyeR.position.set(0.1, 0.85, 0.18);
-  g.add(body, head, wisp, eyeL, eyeR);
+  const body = fixedPart(mat, geoCache, 'gl-body', 0.49, 0.47, 0.38, [0.07, 0.055, 0.1]);
+  body.position.set(0, 0.43, 0);
+  const head = fixedPart(mat, geoCache, 'gl-head', 0.47, 0.39, 0.36, [0.13, 0.11, 0.17]);
+  head.position.set(0, 0.82, 0.02);
+  const wisp = fixedPart(mat, geoCache, 'gl-wisp', 0.17, 0.44, 0.17, [0.035, 0.025, 0.05]);
+  wisp.position.set(0, -0.02, 0);
+  g.add(body, head, wisp);
+  for (const s of [-1, 1]) {
+    const brow = fixedPart(mat, geoCache, 'gl-brow', 0.18, 0.05, 0.045, [0.015, 0.01, 0.025]);
+    brow.position.set(s * 0.115, 0.92, 0.226);
+    brow.rotation.z = -s * 0.28;
+    const eye = fixedPart(eyeMat, geoCache, 'gl-eye', 0.105, 0.073, 0.045, [1, 1, 1]);
+    eye.position.set(s * 0.12, 0.855, 0.231);
+    g.add(brow, eye);
+  }
+  const mouth = fixedPart(mat, geoCache, 'gl-mouth', 0.29, 0.085, 0.045, [0.007, 0.005, 0.015]);
+  mouth.position.set(0, 0.71, 0.231);
+  g.add(mouth);
+  for (const sx of [-0.105, -0.025, 0.04, 0.11]) {
+    const fang = fixedPart(mat, geoCache, 'gl-fang', 0.027, 0.055, 0.028, [0.94, 0.88, 0.75]);
+    fang.position.set(sx, sx > 0 ? 0.70 : 0.73, 0.263);
+    g.add(fang);
+  }
+  g.scale.setScalar(0.72);
   return { group: g, legs: [], head: null, ears: [], hop: false, gloom: true };
+}
+
+// Чёрный паук: брюшко, головогрудь, восемь сгибающихся ног и четыре глаза.
+function buildSpider(mat, geoCache, eyeMat) {
+  const g = new THREE.Group();
+  const body = fixedPart(mat, geoCache, 'sp-body', 0.55, 0.32, 0.62, [0.085, 0.085, 0.105]);
+  body.position.set(0, 0.36, -0.18);
+  const stripe = fixedPart(mat, geoCache, 'sp-stripe', 0.24, 0.025, 0.34, [0.17, 0.16, 0.19]);
+  stripe.position.set(0, 0.535, -0.18);
+  const head = fixedPart(mat, geoCache, 'sp-head', 0.39, 0.28, 0.37, [0.095, 0.09, 0.12]);
+  head.position.set(0, 0.36, 0.29);
+  g.add(body, stripe, head);
+  const legs = [];
+  for (const side of [-1, 1]) {
+    for (let j = 0; j < 4; j++) {
+      const leg = new THREE.Group();
+      leg.position.set(side * 0.25, 0.42, -0.32 + j * 0.2);
+      const upper = fixedPart(mat, geoCache, 'sp-leg-upper', 0.35, 0.09, 0.085, [0.065, 0.065, 0.075]);
+      upper.position.set(side * 0.17, 0.06, 0);
+      upper.rotation.z = side * 0.38;
+      const lower = fixedPart(mat, geoCache, 'sp-leg-lower', 0.34, 0.075, 0.075, [0.038, 0.038, 0.045]);
+      lower.position.set(side * 0.48, -0.12, 0);
+      lower.rotation.z = -side * 0.67;
+      leg.add(upper, lower);
+      g.add(leg);
+      legs.push(leg);
+    }
+    for (let j = 0; j < 2; j++) {
+      const eye = fixedPart(eyeMat, geoCache, 'sp-eye', 0.065, 0.065, 0.035, [1, 1, 1]);
+      eye.position.set(side * (0.09 + j * 0.07), 0.38 + j * 0.075, 0.495);
+      g.add(eye);
+    }
+  }
+  return { group: g, legs, head: null, ears: [], hop: false, spider: true };
 }
 
 export class Mob {
   constructor(world, visuals, type, x, y, z) {
     this.world = world;
     this.v = visuals;
-    this.type = type;            // 'bunny' | 'sheep' | 'slime' | 'bird'
+    this.type = type;            // 'bunny' | 'sheep' | 'slime' | 'bird' | 'gloom' | 'spider'
     this.pos = { x, y, z };
     this.home = { x, y, z };
     this.heading = Math.random() * Math.PI * 2;
@@ -188,8 +236,8 @@ export class Mob {
     this.soundT = 1 + Math.random() * 3;
     this.onSound = null;         // (kind, dist) => void
     this.onAttack = null;        // (mob, playerPos) => void
-    this.speed = type === 'bunny' ? 2.2 : type === 'slime' ? 1.6 : type === 'gloom' ? 2.0 : 1.1;
-    this.hp = type === 'gloom' ? 3 : 1;
+    this.speed = type === 'bunny' ? 2.2 : type === 'slime' ? 1.6 : type === 'gloom' ? 1.9 : type === 'spider' ? 2.3 : 1.1;
+    this.hp = (type === 'gloom' || type === 'spider') ? 3 : 1;
     this.attackT = 0;
     this.flashT = 0;
     this.burnT = 0;
@@ -225,11 +273,11 @@ export class Mob {
       const pulse = Math.sin((1 - k) * Math.PI);        // 0 -> 1 -> 0
       v.group.rotation.x = -0.55 * pulse;               // отклоняется назад
       v.group.rotation.z += Math.sin(this.animT * 60) * 0.12 * k;
-      v.group.scale.set(1 + 0.25 * pulse, 1 - 0.22 * pulse, 1 + 0.25 * pulse);
+      v.group.scale.set(0.72 * (1 + 0.25 * pulse), 0.72 * (1 - 0.22 * pulse), 0.72 * (1 + 0.25 * pulse));
       v.group.position.y += 0.12 * pulse;
     } else {
       v.group.rotation.x = 0;
-      v.group.scale.setScalar(1);
+      v.group.scale.setScalar(0.72);
     }
     // Плавный отброс после удара
     if (this.kbT > 0) {
@@ -241,7 +289,7 @@ export class Mob {
 
     // Атака
     this.attackT -= dt;
-    if (dist < 1.6 && this.attackT <= 0) {
+    if (this.night && dist < 1.6 && this.attackT <= 0) {
       this.attackT = 1.1;
       if (this.onAttack) this.onAttack(this, playerPos);
     }
@@ -251,6 +299,53 @@ export class Mob {
     if (this.soundT <= 0) {
       this.soundT = 3 + Math.random() * 4;
       if (this.onSound && dist < 18) this.onSound('gloom', dist);
+    }
+  }
+
+  updateSpider(dt, playerPos) {
+    this.animT += dt;
+    const dx = playerPos.x - this.pos.x, dz = playerPos.z - this.pos.z;
+    const dist = Math.hypot(dx, dz) || 0.001;
+    const hunting = this.night && dist < 22;
+    if (hunting) {
+      this.heading = Math.atan2(dx, dz);
+    } else {
+      this.thinkT -= dt;
+      if (this.thinkT <= 0) {
+        this.heading += (Math.random() - 0.5) * 2;
+        this.thinkT = 2 + Math.random() * 3;
+      }
+    }
+    const move = hunting ? dist > 1.1 : Math.sin(this.animT * 0.7) > -0.3;
+    if (move) {
+      const nx = this.pos.x + Math.sin(this.heading) * this.speed * dt;
+      const nz = this.pos.z + Math.cos(this.heading) * this.speed * dt;
+      const g = this.groundAt(nx, nz, this.pos.y);
+      if (g !== null && Math.abs(g - this.pos.y) < 1.1 &&
+          !isLiquid(this.world.getBlock(Math.floor(nx), Math.floor(g - 0.01), Math.floor(nz)))) {
+        this.pos.x = nx; this.pos.z = nz; this.yBase = g;
+      } else this.heading += Math.PI * 0.7;
+    }
+    if (this.kbT > 0) {
+      const step = Math.min(this.kbT, dt);
+      this.kbT -= dt;
+      this.pos.x += this.kbX * step;
+      this.pos.z += this.kbZ * step;
+    }
+    this.pos.y += (this.yBase - this.pos.y) * Math.min(1, dt * 9);
+    const v = this.v;
+    v.group.position.set(this.pos.x, this.pos.y + Math.abs(Math.sin(this.animT * 8)) * 0.025, this.pos.z);
+    v.group.rotation.y = this.heading;
+    for (let i = 0; i < v.legs.length; i++) {
+      const side = i < 4 ? -1 : 1;
+      v.legs[i].rotation.y = move ? Math.sin(this.animT * 11 + i * Math.PI / 2) * 0.27 * side : 0;
+    }
+    this.flashT = Math.max(0, this.flashT - dt);
+    v.group.scale.setScalar(1 + this.flashT * 0.22);
+    this.attackT -= dt;
+    if (hunting && dist < 1.4 && this.attackT <= 0) {
+      this.attackT = 1.4;
+      this.onAttack?.(this, playerPos);
     }
   }
 
@@ -310,7 +405,7 @@ export class Mob {
     const y0 = Math.floor(fromY) + 1;
     for (let y = y0; y > y0 - 6; y--) {
       const b = this.world.getBlock(Math.floor(x), y, Math.floor(z));
-      if (isSolid(b)) return y + 1;
+      if (isSolid(b)) return y + blockBounds(b).maxY;
     }
     return null;
   }
@@ -319,6 +414,7 @@ export class Mob {
     // Птицы летают отдельно — без привязки к земле
     if (this.type === 'bird') return this.updateBird(dt, playerPos);
     if (this.type === 'gloom') return this.updateGloom(dt, playerPos);
+    if (this.type === 'spider') return this.updateSpider(dt, playerPos);
 
     this.thinkT -= dt;
     if (this.thinkT <= 0) {
@@ -448,6 +544,16 @@ export class Mob {
   }
 }
 
+// Спавним исключительно за пределами поля зрения (позади игрока) и не
+// ближе минимального радиуса. yaw=0 означает взгляд по -Z.
+export function isHiddenSpawn(playerPos, yaw, x, z, minDist = 18) {
+  const dx = x - playerPos.x, dz = z - playerPos.z;
+  const dist = Math.hypot(dx, dz);
+  if (dist < minDist) return false;
+  const forwardDot = (-Math.sin(yaw) * dx - Math.cos(yaw) * dz) / dist;
+  return forwardDot < -0.16;
+}
+
 export class MobManager {
   constructor(scene, world) {
     this.scene = scene;
@@ -456,14 +562,18 @@ export class MobManager {
     this.geoCache = new Map();
     this.mat = new THREE.MeshBasicMaterial({ vertexColors: true });
     this.slimeMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.8 });
-    this.spawnT = 0;
-    this.max = 10;
-    this.onHop = null; // (dist) => void — звук
-    this.onAttack = null; // (mob, playerPos) => void — атака Хмари
-    this.onDeath = null;  // (mob) => void
-    this.night = true;
-    this.eyeMat = new THREE.MeshBasicMaterial({ color: 0x8ef6ff });
     this.gloomMat = new THREE.MeshBasicMaterial({ vertexColors: true });
+    this.eyeMat = new THREE.MeshBasicMaterial({ color: 0xff4242 });
+    this.spawnT = 8;
+    this.hostileT = 20;
+    this.maxPassive = 10;
+    this.maxHostile = 3;
+    this.night = false;
+    this.hostileEnabled = true;
+    this.onSound = null;
+    this.onAttack = null;
+    this.onDeath = null; // только после убийства, не при исчезновении на рассвете
+    this.onSpawn = null;
   }
 
   setLight(level) {
@@ -483,99 +593,106 @@ export class MobManager {
     if (type === 'bunny') return buildBunny(this.mat, this.geoCache, ci);
     if (type === 'sheep') return buildSheep(this.mat, this.geoCache, ci);
     if (type === 'gloom') return buildGloom(this.gloomMat, this.geoCache, this.eyeMat);
+    if (type === 'spider') return buildSpider(this.mat, this.geoCache, this.eyeMat);
     if (type === 'bird') return buildBird(this.mat, this.geoCache, ci);
     return buildSlime(this.slimeMat, this.geoCache);
   }
 
-  trySpawn(playerPos) {
-    if (this.mobs.length >= this.max) return;
-    for (let attempt = 0; attempt < 4; attempt++) {
+  _addMob(type, x, y, z) {
+    const visuals = this._buildVisuals(type);
+    const mob = new Mob(this.world, visuals, type, x, y, z);
+    mob.onSound = (k, d) => this.onSound?.(k, d);
+    mob.onAttack = (m, pp) => this.onAttack?.(m, pp);
+    this.scene.add(visuals.group);
+    this.mobs.push(mob);
+    this.onSpawn?.(mob);
+    return mob;
+  }
+
+  _countHostile() { return this.mobs.filter((m) => m.type === 'gloom' || m.type === 'spider').length; }
+
+  trySpawn(playerPos, yaw = 0) {
+    if (this.mobs.length - this._countHostile() >= this.maxPassive) return null;
+    for (let attempt = 0; attempt < 16; attempt++) {
       const ang = Math.random() * Math.PI * 2;
-      const r = 16 + Math.random() * 18;
-      const x = playerPos.x + Math.sin(ang) * r;
-      const z = playerPos.z + Math.cos(ang) * r;
+      const r = 22 + Math.random() * 16;
+      const x = playerPos.x + Math.sin(ang) * r, z = playerPos.z + Math.cos(ang) * r;
+      if (!isHiddenSpawn(playerPos, yaw, x, z, 22)) continue;
       const h = this.world.heightAt(Math.floor(x), Math.floor(z));
       const type = this._randomType();
-
-      // Птицы — в небе над любой поверхностью
       if (type === 'bird') {
         if (h <= 2) continue;
-        const visuals = this._buildVisuals(type);
-        const mob = new Mob(this.world, visuals, type, x, Math.max(h + 7, this.world.seaLevel + 6) + Math.random() * 5, z);
-        mob.onSound = this.onSound;
-        this.scene.add(visuals.group);
-        this.mobs.push(mob);
-        return;
+        return this._addMob(type, x, Math.max(h + 7, this.world.seaLevel + 6) + Math.random() * 5, z);
       }
-
       if (h <= this.world.seaLevel + 1) continue;
-      // Проверяем настоящий блок сверху
-      const top = this.world.getBlock(Math.floor(x), h, Math.floor(z));
-      const above = this.world.getBlock(Math.floor(x), h + 1, Math.floor(z));
-      const above2 = this.world.getBlock(Math.floor(x), h + 2, Math.floor(z));
-      if ((top !== BLOCK.GRASS && top !== BLOCK.SNOW) || above !== BLOCK.AIR || above2 !== BLOCK.AIR) continue;
-      const visuals = this._buildVisuals(type);
-      const mob = new Mob(this.world, visuals, type, x + 0.5, h + 1, z + 0.5);
-      mob.onSound = this.onSound;
-      this.scene.add(visuals.group);
-      this.mobs.push(mob);
-      return;
-    }
-  }
-
-  setNight(n) {
-    this.night = n;
-  }
-
-  // Ночной спавн Хмари (и отдельный хук для тестов)
-  trySpawnGloom(playerPos) {
-    if (this.mobs.filter((m) => m.type === 'gloom').length >= 4) return null;
-    for (let attempt = 0; attempt < 6; attempt++) {
-      const ang = Math.random() * Math.PI * 2;
-      const r = 8 + Math.random() * 10;
-      const x = playerPos.x + Math.sin(ang) * r;
-      const z = playerPos.z + Math.cos(ang) * r;
-      const h = this.world.heightAt(Math.floor(x), Math.floor(z));
-      if (h <= this.world.seaLevel) continue;
-      return this.spawnGloomAt(x + 0.5, h + 1, z + 0.5);
+      const ix = Math.floor(x), iz = Math.floor(z);
+      const top = this.world.getBlock(ix, h, iz);
+      if ((top !== BLOCK.GRASS && top !== BLOCK.SNOW) ||
+          isSolid(this.world.getBlock(ix, h + 1, iz)) || isSolid(this.world.getBlock(ix, h + 2, iz))) continue;
+      return this._addMob(type, ix + 0.5, h + 1, iz + 0.5);
     }
     return null;
   }
 
-  spawnGloomAt(x, y, z) {
-    const visuals = buildGloom(this.gloomMat, this.geoCache, this.eyeMat);
-    const mob = new Mob(this.world, visuals, 'gloom', x, y, z);
-    mob.onSound = (k, d) => { if (this.onSound) this.onSound(k, d); };
-    mob.onAttack = (m, pp) => { if (this.onAttack) this.onAttack(m, pp); };
-    this.scene.add(visuals.group);
-    this.mobs.push(mob);
-    return mob;
+  setNight(n) { this.night = n; }
+
+  _spawnHostile(type, playerPos, yaw) {
+    if (!this.night || !this.hostileEnabled || this._countHostile() >= this.maxHostile) return null;
+    for (let attempt = 0; attempt < 18; attempt++) {
+      const ang = Math.random() * Math.PI * 2;
+      const r = 19 + Math.random() * 13;
+      const x = playerPos.x + Math.sin(ang) * r, z = playerPos.z + Math.cos(ang) * r;
+      if (!isHiddenSpawn(playerPos, yaw, x, z, 19)) continue;
+      const ix = Math.floor(x), iz = Math.floor(z);
+      const h = this.world.heightAt(ix, iz);
+      if (h <= this.world.seaLevel || h + 2 >= this.world.worldHeight) continue;
+      if (!isSolid(this.world.getBlock(ix, h, iz)) ||
+          isSolid(this.world.getBlock(ix, h + 1, iz)) || isSolid(this.world.getBlock(ix, h + 2, iz))) continue;
+      return this._addMob(type, ix + 0.5, h + 1, iz + 0.5);
+    }
+    return null;
   }
 
-  update(dt, playerPos, active = true) {
-    // Спавн/деспавн
-    this.spawnT -= dt;
-    if (this.spawnT <= 0) {
-      this.spawnT = 2.5;
-      if (active) this.trySpawn(playerPos);
+  trySpawnGloom(playerPos, yaw = 0) { return this._spawnHostile('gloom', playerPos, yaw); }
+  trySpawnSpider(playerPos, yaw = 0) { return this._spawnHostile('spider', playerPos, yaw); }
+  trySpawnHostile(playerPos, yaw = 0) {
+    return Math.random() < 0.5 ? this.trySpawnGloom(playerPos, yaw) : this.trySpawnSpider(playerPos, yaw);
+  }
+
+  // Явный спавн для отладки/тестов не зависит от времени суток.
+  spawnGloomAt(x, y, z) { return this._addMob('gloom', x, y, z); }
+  spawnSpiderAt(x, y, z) { return this._addMob('spider', x, y, z); }
+
+  update(dt, playerPos, yaw = 0, active = true) {
+    if (active) {
+      this.spawnT -= dt;
+      if (this.spawnT <= 0) {
+        this.spawnT = 12 + Math.random() * 10;
+        this.trySpawn(playerPos, yaw);
+      }
+      if (this.night && this.hostileEnabled) {
+        this.hostileT -= dt;
+        if (this.hostileT <= 0) {
+          this.hostileT = 20 + Math.random() * 15;
+          this.trySpawnHostile(playerPos, yaw);
+        }
+      }
     }
     for (let i = this.mobs.length - 1; i >= 0; i--) {
       const m = this.mobs[i];
       if (m.dead) {
         this.mobs.splice(i, 1);
         m.dispose(this.scene);
-        if (this.onDeath) this.onDeath(m);
+        this.onDeath?.(m);
         continue;
       }
-      // Рассвет сжигает Хмарь
       if (m.type === 'gloom' && !this.night) {
         m.burnT += dt;
-        if (m.burnT <= dt * 1.5 && this.onSound) this.onSound('burn', 3);
         if (m.burnT > 1.6) {
-          this.mobs.splice(i, 1);
+          this.onSound?.('burn', 3);
           m.dispose(this.scene);
-          if (this.onDeath) this.onDeath(m);
-          continue;
+          this.mobs.splice(i, 1);
+          continue; // естественное исчезновение НЕ даёт опыта
         }
       }
       const dx = m.pos.x - playerPos.x, dz = m.pos.z - playerPos.z;
@@ -585,7 +702,9 @@ export class MobManager {
         this.mobs.splice(i, 1);
         continue;
       }
-      // Дальних обновляем реже
+      m.night = this.night && this.hostileEnabled && active;
+      // Без движения игроков в меню враждебные мобы не атакуют.
+      if (!active && (m.type === 'gloom' || m.type === 'spider')) continue;
       if (d2 > 32 * 32 && (this.spawnT * 3) % 2 > 1) continue;
       m.update(dt, playerPos);
     }
@@ -593,6 +712,8 @@ export class MobManager {
 
   clear() {
     for (const m of this.mobs) m.dispose(this.scene);
-    this.mobs = [];
+    this.mobs.length = 0;
+    this.spawnT = 8;
+    this.hostileT = 20;
   }
 }

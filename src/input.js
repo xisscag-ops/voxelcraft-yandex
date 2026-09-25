@@ -11,7 +11,7 @@ export class Input {
     this.isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
     this.handlers = {
       onToggleFly: null, onDigit: null, onScroll: null, onPause: null,
-      onActionBreak: null, onActionPlace: null,
+      onActionBreak: null, onActionPlace: null, onMouseBreak: null, onInventory: null,
     };
     this._flyTapT = 0;
     this._swallowLook = 0;
@@ -84,10 +84,11 @@ export class Input {
   _bind() {
     this._bindGuards();
     window.addEventListener('keydown', (e) => {
-      if (e.repeat) return;
+      if (e.repeat || e.target?.matches?.('input, select, textarea')) return;
       this.keys.add(e.code);
       if (e.code === 'Escape') this.handlers.onPause?.();
-      if (e.code === 'KeyF') this.handlers.onToggleFly?.();
+      if (e.code === 'KeyG') this.handlers.onToggleFly?.();
+      if (e.code === 'KeyE') this.handlers.onInventory?.();
       if (e.code === 'F1') e.preventDefault();
       if (e.code.startsWith('Digit')) {
         const n = Number(e.code.slice(5));
@@ -121,8 +122,14 @@ export class Input {
     });
     window.addEventListener('mousedown', (e) => {
       if (!this.locked) return;
-      if (e.button === 0) this.mouse.left = true;
-      if (e.button === 2) this.mouse.right = true;
+      if (e.button === 0) {
+        this.mouse.left = true;
+        this.handlers.onMouseBreak?.(); // даже если клик короче кадра
+      }
+      if (e.button === 2) {
+        this.mouse.right = true;
+        this.handlers.onActionPlace?.(); // ПКМ срабатывает сразу, не только на следующем кадре
+      }
     });
     window.addEventListener('mouseup', (e) => {
       if (e.button === 0) this.mouse.left = false;
@@ -145,6 +152,9 @@ export class Input {
     const joyRect = () => joyEl.getBoundingClientRect();
 
     const onTouchStart = (e) => {
+      // Тапы по меню, слоту хотбара и кнопкам HUD — не жест обзора.
+      if (document.getElementById('touch-controls')?.classList.contains('hidden') ||
+          e.target?.closest?.('button, #hotbar, .screen')) return;
       for (const t of e.changedTouches) {
         const jr = joyRect();
         const inJoy = t.clientX >= jr.left - 20 && t.clientX <= jr.right + 20 &&
@@ -176,8 +186,11 @@ export class Input {
     };
 
     const onTouchMove = (e) => {
+      if (document.getElementById('touch-controls')?.classList.contains('hidden')) return;
+      let handled = false;
       for (const t of e.changedTouches) {
         if (t.identifier === this._joystick.id) {
+          handled = true;
           const dx = t.clientX - this._joystick.baseX;
           const dy = t.clientY - this._joystick.baseY;
           const max = 52;
@@ -187,6 +200,7 @@ export class Input {
           this._joystick.y = (dy / len) * cl;
           if (knob) knob.style.transform = `translate(${(dx / len) * cl * max}px, ${(dy / len) * cl * max}px)`;
         } else if (t.identifier === this._look.id) {
+          handled = true;
           const dx = t.clientX - this._look.lastX;
           const dy = t.clientY - this._look.lastY;
           this._look.lastX = t.clientX;
@@ -196,7 +210,7 @@ export class Input {
           this.mouse.dy += dy * 1.5;
         }
       }
-      e.preventDefault();
+      if (handled) e.preventDefault();
     };
 
     const onTouchEnd = (e) => {

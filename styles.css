@@ -83,10 +83,12 @@ html, body {
   border-radius: 6px;
   max-width: 92vw;
   overflow-x: auto;
+  touch-action: pan-x;
   scrollbar-width: thin;
 }
 .slot {
   position: relative;
+  flex: 0 0 50px;
   width: 50px; height: 50px;
   background: rgba(20, 20, 30, 0.55);
   border: 2px solid rgba(255,255,255,0.3);
@@ -94,6 +96,13 @@ html, body {
   display: flex; align-items: center; justify-content: center;
   cursor: pointer;
 }
+.slot.empty { opacity: 0.48; }
+.slot-count {
+  position: absolute; right: 3px; bottom: 1px;
+  font: bold 12px/1 system-ui, sans-serif;
+  text-shadow: 1px 1px #000, -1px -1px #000;
+}
+.slot-symbol { font-size: 30px; line-height: 1; }
 .slot.selected {
   border-color: #fff;
   box-shadow: 0 0 0 2px rgba(255,255,255,0.55), 0 0 14px rgba(255,255,255,0.35);
@@ -129,6 +138,7 @@ html, body {
   pointer-events: auto;
   cursor: pointer;
 }
+#btn-inventory-hud { right: 64px; font-size: 12px; font-weight: 700; }
 
 /* ---------- Сенсорное управление ---------- */
 #touch-controls { position: fixed; inset: 0; z-index: 12; pointer-events: none; }
@@ -164,11 +174,12 @@ html, body {
   border: 2px solid rgba(255,255,255,0.4);
   background: rgba(0,0,0,0.4);
   color: #fff;
-  font-size: 24px;
+  font: 700 13px/1 'Segoe UI', Arial, sans-serif;
+  letter-spacing: 0.2px;
   cursor: pointer;
 }
 .touch-btn:active { background: rgba(255,255,255,0.3); }
-.touch-btn.small { width: 52px; height: 52px; font-size: 18px; align-self: center; justify-self: center; }
+.touch-btn.small { width: 52px; height: 52px; font-size: 12px; align-self: center; justify-self: center; }
 
 /* ---------- Экраны ---------- */
 .screen {
@@ -185,6 +196,11 @@ html, body {
   padding: 28px 40px;
   min-width: 320px;
   max-width: 90vw;
+  max-height: 94vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
   text-align: center;
   box-shadow: 0 12px 48px rgba(0,0,0,0.5);
 }
@@ -199,7 +215,30 @@ html, body {
   text-shadow: 3px 3px 0 #2c4a1e, 6px 6px 0 rgba(0,0,0,0.35);
 }
 .logo span { color: #f4f4f4; text-shadow: 3px 3px 0 #333, 6px 6px 0 rgba(0,0,0,0.35); }
-.tagline { color: #aab4cc; margin-bottom: 22px; font-size: 14px; letter-spacing: 1px; }
+.tagline { color: #aab4cc; margin-bottom: 16px; font-size: 14px; letter-spacing: 1px; }
+.mode-picker {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin: 10px 0 14px; font-size: 14px;
+}
+.mode-picker select {
+  min-width: 134px; padding: 8px; background: #1d2c3c; color: #fff;
+  border: 1px solid #78ad61; border-radius: 6px; font: inherit; cursor: pointer;
+}
+.inventory-panel { width: min(620px, 95vw); text-align: left; }
+.inventory-panel h2 { text-align: center; }
+.inventory-panel h3 { color: #a3df80; margin: 14px 0 7px; font-size: 15px; }
+.inventory-hint { color: #c2c9d2; font-size: 13px; text-align: center; }
+#inventory-stock { display: flex; flex-wrap: wrap; gap: 6px; }
+.stock-chip { border-radius: 5px; background: #27344a; padding: 5px 8px; font-size: 12px; }
+#inventory-recipes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.recipe-btn {
+  padding: 8px; background: #284337; color: #fff; text-align: left;
+  border: 1px solid #559461; border-radius: 5px; cursor: pointer; font: 600 13px/1.35 system-ui, sans-serif;
+}
+.recipe-btn small { display: block; font-size: 11px; color: #d3dfd5; font-weight: 400; }
+.recipe-btn:disabled { background: #252d38; border-color: #445064; color: #acb2bf; cursor: default; }
+.recipe-btn:disabled small { color: #8995a4; }
+@media (max-width: 520px) { #inventory-recipes { grid-template-columns: 1fr; } }
 
 .menu-buttons { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
 
@@ -284,6 +323,7 @@ html, body {
   text-align: center;
 }
 #toast.visible { opacity: 1; transform: translateX(-50%) translateY(0); }
+#toast.in-menu { top: 6%; }
 
 /* ---------- Реклама ---------- */
 #ad-overlay {
@@ -319,7 +359,17 @@ html, body {
 
 /* ---------- Вспышка молнии ---------- */
 /* Сердца, еда и урон */
-#status-row { position: absolute; left: 16px; bottom: 84px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+#status-row { position: absolute; left: 16px; bottom: 99px; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; pointer-events: none; }
+#mode-label { background: rgba(8, 13, 20, 0.66); padding: 2px 7px; border-radius: 5px; font-size: 11px; color: #afe793; }
+#food-status { background: rgba(8, 13, 20, 0.66); padding: 3px 7px; border-radius: 5px; font-size: 12px; }
+#xp-hud {
+  position: absolute; bottom: 76px; left: 50%; transform: translateX(-50%);
+  width: min(460px, 64vw); height: 14px;
+  display: flex; align-items: center; gap: 7px;
+  color: #b4fc68; font: bold 13px/1 system-ui, sans-serif; text-shadow: 1px 1px #000;
+}
+#xp-track { height: 9px; flex: 1; border: 1px solid #a5dc6f; background: #1d281a; border-radius: 5px; overflow: hidden; }
+#xp-fill { width: 0; height: 100%; background: linear-gradient(90deg, #5dc433, #a1ff5c); }
 #hearts { display: flex; gap: 3px; }
 .heart { font-size: 18px; line-height: 1; color: #d33; text-shadow: 0 1px 2px #000; }
 .heart:not(.full):not(.half) { color: #3b3b42; }
@@ -328,14 +378,6 @@ html, body {
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-}
-#apples {
-  align-self: flex-start;
-  background: rgba(12, 14, 20, 0.72);
-  color: #fff;
-  border-radius: 8px;
-  padding: 3px 8px;
-  font: 600 12px/1.4 system-ui, sans-serif;
 }
 #hurt-flash {
   position: absolute; inset: 0; pointer-events: none; opacity: 0;
@@ -365,11 +407,21 @@ html, body {
   .logo { font-size: 32px; }
   .panel { padding: 20px 22px; min-width: 280px; }
   .btn { min-width: 200px; padding: 12px 18px; font-size: 15px; }
-  .slot { width: 42px; height: 42px; }
+  .slot { flex-basis: 42px; width: 42px; height: 42px; }
   .slot-icon { width: 36px; height: 36px; }
+  #status-row { top: 12px; bottom: auto; left: 8px; }
+  #debug { top: 98px; }
+  #xp-hud { bottom: 66px; width: min(340px, 60vw); }
   #joystick { left: 60px; bottom: 70px; width: 104px; height: 104px; }
   #touch-buttons { right: 14px; bottom: 60px; grid-template-columns: repeat(2, 56px); }
-  .touch-btn { width: 56px; height: 56px; font-size: 20px; }
+  .touch-btn { width: 56px; height: 56px; font-size: 12px; }
+  .touch-btn.small { font-size: 11px; }
+}
+
+/* На телефоне в альбомной ориентации высота мала даже при ширине > 760px. */
+@media (max-height: 550px) {
+  #status-row { top: 12px; bottom: auto; left: 8px; }
+  #debug { top: 98px; }
 }
 
 /* ---------- Защита: ничего не двигается и не масштабируется ---------- */

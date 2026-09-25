@@ -20,6 +20,7 @@ export class Chunk {
     this.dirty = true;       // нужно перестроить меш
     this.meshOpaque = null;
     this.meshWater = null;
+    this.meshTorch = null;
     this.generated = false;
   }
   get(x, y, z) { return this.blocks[idx(x, y, z)]; }
@@ -34,6 +35,7 @@ export class World {
     this.seaLevel = SEA;
     this.chunks = new Map();          // "cx,cz" -> Chunk
     this.edits = new Map();           // "x,y,z" -> id (правки игрока, сохраняются)
+    this.torches = new Set();         // только установленные факелы (для локального света)
   }
 
   key(cx, cz) { return cx + ',' + cz; }
@@ -90,6 +92,13 @@ export class World {
             if (y === h && h > 36) b = BLOCK.SNOW;
           } else {
             b = y < 4 ? BLOCK.SLATE : BLOCK.STONE;
+            // Небольшие детерминированные залежи; в обнажившихся склонах
+            // жилы видны снаружи, в остальных местах их можно выкопать.
+            if (b === BLOCK.STONE && y > 5) {
+              const vein = hash3(Math.floor(wx / 3), Math.floor(y / 2), Math.floor(wz / 3), seed + 813);
+              if (vein < 0.012) b = BLOCK.COAL_ORE;
+              else if (vein < 0.019) b = BLOCK.IRON_ORE;
+            }
           }
           if (b !== BLOCK.AIR) chunk.set(x, y, z, b);
         }
@@ -167,12 +176,14 @@ export class World {
     const cx = Math.floor(wx / S), cz = Math.floor(wz / S);
     const chunk = this.getChunk(cx, cz);
     const lx = wx - cx * S, lz = wz - cz * S;
-    if (chunk.get(lx, wy, lz) === id) return false;
+    const prev = chunk.get(lx, wy, lz);
+    if (prev === id) return false;
     chunk.set(lx, wy, lz, id);
     chunk.dirty = true;
-    if (recordEdit) {
-      this.edits.set(`${wx},${wy},${wz}`, id);
-    }
+    const key = `${wx},${wy},${wz}`;
+    if (prev === BLOCK.TORCH) this.torches.delete(key);
+    if (id === BLOCK.TORCH) this.torches.add(key);
+    if (recordEdit) this.edits.set(key, id);
     // Соседние чанки на границе тоже перестраиваем
     if (lx === 0) this.markDirty(cx - 1, cz);
     if (lx === S - 1) this.markDirty(cx + 1, cz);
@@ -213,8 +224,10 @@ export class World {
 
   loadEdits(arr) {
     this.edits.clear();
+    this.torches.clear();
     for (let i = 0; i + 1 < arr.length; i += 2) {
       this.edits.set(arr[i], arr[i + 1]);
+      if (arr[i + 1] === BLOCK.TORCH) this.torches.add(arr[i]);
     }
   }
 }

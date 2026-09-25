@@ -12,6 +12,30 @@ export const STRINGS = {
     resume: 'Продолжить игру',
     save_quit: 'Сохранить и выйти',
     pause: 'Пауза',
+    game_mode: 'Режим игры',
+    touch_fly: 'ЛЕТ', touch_mine: 'КОП', touch_place: 'СТАВ',
+    touch_eat: 'ЕСТЬ', touch_inventory: 'ИНВ',
+    creative: 'Креатив',
+    survival: 'Выживание',
+    creative_hint: 'В креативе все блоки и предметы доступны без ограничений.',
+    creative_only: 'Летать можно только в креативе',
+    inventory_title: 'Рюкзак и крафт',
+    furnace_title: 'Печка и крафт',
+    inventory_hint: 'Ломайте блоки и подбирайте руду. Выберите рецепт или вернитесь к строительству.',
+    supplies: 'Запасы',
+    recipes: 'Рецепты',
+    fuel: 'уголь / доски ×1',
+    back_to_game: 'Вернуться в игру',
+    no_blocks: 'Сначала добудьте или создайте этот блок',
+    no_arrows: 'Нет стрел! Создайте их из слитка и доски',
+    ore_get: 'Руда подобрана! Переплавьте её в печке',
+    coal_get: 'Уголь подобран! Из него получаются факелы',
+    xp_level: 'Новый уровень!',
+    need_torch_floor: 'Факел ставится на твёрдый блок',
+    furnace_open: 'Откройте печку кнопкой «Поставить» или ПКМ',
+    bread_eaten: 'Хлеб съеден! +3 сердца',
+    mode_changed: 'Режим: ',
+
     sound: 'Звук',
     language: 'Язык',
     view_distance: 'Дальность прорисовки',
@@ -19,6 +43,7 @@ export const STRINGS = {
     reward_desc: 'Посмотрите рекламу и разблокируйте декоративные блоки: стекло, кирпич, светокамень и другие.',
     reward_btn: 'Смотреть рекламу',
     reward_got: 'Набор строителя разблокирован!',
+    reward_creative: 'Все блоки уже доступны',
     reward_fail: 'Реклама не загрузилась. Попробуйте позже.',
     ad_loading: 'Загрузка рекламы…',
     saved: 'Игра сохранена',
@@ -26,12 +51,14 @@ export const STRINGS = {
     loading: 'Генерация мира…',
     ready: 'Мир готов!',
     howto_text: `
-      <b>ПК:</b> WASD — движение, мышь — обзор, ЛКМ — сломать (удерживать), ПКМ — поставить,
-      колесо/1-9 — выбор блока, пробел — прыжок, Ctrl — бег, Shift — вниз в полёте,
-      двойной пробел или F — режим полёта, Esc — пауза.<br><br>
-      <b>Телефон:</b> слева — джойстик, справа — обзор; короткий тап — сломать блок.
-      Кнопки: прыжок, поставить, полёт, вниз/вверх.<br><br>
-      Ставьте и ломайте блоки, стройте что угодно. Прогресс сохраняется автоматически.`,
+      <b>ПК:</b> WASD — движение, мышь — обзор, ЛКМ — копать/стрелять, ПКМ — поставить или открыть печку,
+      колесо/1-9 — выбор предмета, E — рюкзак и крафт, F — съесть выбранный хлеб или яблоко,
+      Ctrl — бег, пробел — прыжок, G / двойной пробел — полёт в креативе, Esc — пауза.<br><br>
+      <b>Телефон:</b> слева — джойстик, справа — обзор; короткий тап — сломать/выстрелить.
+      Кнопки: СТАВ, КОП, ЕСТЬ, ЛЕТ (креатив), ИНВ и пауза.<br><br>
+      <b>Выживание:</b> стройте из добытых блоков; трава даёт пшеницу, из камня получается булыжник.
+      Уголь нужен для факелов, руда и пшеница готовятся в печке с углём или доской. Убитые монстры оставляют опыт.
+      <b>Креатив:</b> бесконечные блоки, полёт и неуязвимость. Режим меняется в меню паузы.`,
     howto_title: 'Как играть',
     pause_hint: 'Esc — пауза и освобождение мыши',
     unlocked_blocks: 'Открыты новые блоки в панели!',
@@ -48,8 +75,8 @@ export const STRINGS = {
     fly_on: 'Режим полёта: включён',
     fly_off: 'Режим полёта: выключен',
     hint_break: 'Удерживайте ЛКМ, чтобы сломать блок',
-    hint_place: 'ПКМ — поставить блок',
-    hint_fly: 'Дважды пробел — полёт',
+    hint_place: 'ПКМ — поставить блок, E — рюкзак и крафт',
+    hint_fly: 'G / двойной пробел — полёт в креативе',
     to_spawn: 'К спавну',
     to_spawn_ok: 'Вы у дома!',
     rain_start: 'Пошёл дождь…',
@@ -59,8 +86,8 @@ export const STRINGS = {
     respawned: 'Возрождение у спавна',
     apple_get: 'Яблоко подобрано (F — съесть)',
     eat_ok: 'Хрусть! +2 сердца',
-    eat_none: 'Яблок нет',
-    gloom_warn: 'Ночью опасно: Хмари рядом!',
+    eat_none: 'Нет хлеба или яблок',
+    gloom_warn: 'Ночью опасно: монстры рядом!',
   },
   en: {
     title: 'VoxelCraft',
@@ -74,6 +101,30 @@ export const STRINGS = {
     resume: 'Resume',
     save_quit: 'Save & quit',
     pause: 'Pause',
+    game_mode: 'Game mode',
+    touch_fly: 'FLY', touch_mine: 'MINE', touch_place: 'PLACE',
+    touch_eat: 'EAT', touch_inventory: 'BAG',
+    creative: 'Creative',
+    survival: 'Survival',
+    creative_hint: 'All blocks and items are unlimited in creative mode.',
+    creative_only: 'Flying is only available in creative mode',
+    inventory_title: 'Inventory and crafting',
+    furnace_title: 'Furnace and crafting',
+    inventory_hint: 'Mine blocks and collect ore, then choose a recipe or keep building.',
+    supplies: 'Supplies',
+    recipes: 'Recipes',
+    fuel: 'coal / planks ×1',
+    back_to_game: 'Back to game',
+    no_blocks: 'Mine or craft this block first',
+    no_arrows: 'Out of arrows! Craft more from an ingot and a plank',
+    ore_get: 'Ore collected! Smelt it in a furnace',
+    coal_get: 'Coal collected! Use it for torches',
+    xp_level: 'Level up!',
+    need_torch_floor: 'Torches need a solid block below',
+    furnace_open: 'Use Place or RMB on a furnace to open it',
+    bread_eaten: 'Bread eaten! +3 hearts',
+    mode_changed: 'Mode: ',
+
     sound: 'Sound',
     language: 'Language',
     view_distance: 'View distance',
@@ -81,6 +132,7 @@ export const STRINGS = {
     reward_desc: 'Watch an ad to unlock decorative blocks: glass, brick, glowstone and more.',
     reward_btn: 'Watch ad',
     reward_got: 'Builder Pack unlocked!',
+    reward_creative: 'All blocks are available',
     reward_fail: 'Ad failed to load. Try again later.',
     ad_loading: 'Loading ad…',
     saved: 'Game saved',
@@ -88,12 +140,14 @@ export const STRINGS = {
     loading: 'Generating world…',
     ready: 'World ready!',
     howto_text: `
-      <b>Desktop:</b> WASD — move, mouse — look, LMB — break (hold), RMB — place,
-      wheel/1-9 — pick block, Space — jump, Ctrl — sprint, Shift — down while flying,
-      double-tap Space or F — fly mode, Esc — pause.<br><br>
-      <b>Mobile:</b> joystick on the left, look on the right; quick tap — break a block.
-      Buttons: jump, place, fly, up/down.<br><br>
-      Break and place blocks, build anything. Progress saves automatically.`,
+      <b>Desktop:</b> WASD — move, mouse — look, LMB — mine/shoot, RMB — place or open furnace,
+      wheel/1-9 — select item, E — inventory and crafting, F — eat selected bread or an apple,
+      Ctrl — sprint, Space — jump, G / double-tap Space — fly in creative, Esc — pause.<br><br>
+      <b>Mobile:</b> joystick on the left, look on the right; tap — mine or shoot.
+      Buttons: PLACE, MINE, EAT, FLY (creative), BAG and pause.<br><br>
+      <b>Survival:</b> build with mined blocks; grass drops wheat and stone gives cobble.
+      Use coal for torches, smelt ore and bake bread in a furnace using coal or planks. Monsters drop XP.
+      <b>Creative:</b> unlimited blocks, flight and invulnerability. Switch modes in the pause menu.`,
     howto_title: 'How to play',
     pause_hint: 'Esc — pause & release mouse',
     unlocked_blocks: 'New blocks unlocked in the hotbar!',
@@ -110,8 +164,8 @@ export const STRINGS = {
     fly_on: 'Fly mode: on',
     fly_off: 'Fly mode: off',
     hint_break: 'Hold LMB to break a block',
-    hint_place: 'RMB — place a block',
-    hint_fly: 'Double-tap Space to fly',
+    hint_place: 'RMB — place, E — inventory and crafting',
+    hint_fly: 'G / double-tap Space — fly in creative',
     to_spawn: 'To spawn',
     to_spawn_ok: 'Welcome home!',
     rain_start: 'It starts raining…',
@@ -121,8 +175,8 @@ export const STRINGS = {
     respawned: 'Respawned at spawn',
     apple_get: 'Apple picked up (F to eat)',
     eat_ok: 'Crunch! +2 hearts',
-    eat_none: 'No apples',
-    gloom_warn: 'Night is dangerous: Gloom is near!',
+    eat_none: 'No bread or apples',
+    gloom_warn: 'Night is dangerous: monsters are near!',
   },
 };
 

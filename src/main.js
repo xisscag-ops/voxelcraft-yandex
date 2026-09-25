@@ -1,7 +1,7 @@
 // VoxelCraft — точка входа: игровой цикл, чанки, строительство, сохранения
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
-import { BLOCK, BLOCKS, STARTER_PALETTE, BUILDER_PALETTE, breakKind, isSolid, isDecor } from './blocks.js';
+import { BLOCK, BLOCKS, STARTER_PALETTE, BUILDER_PALETTE, breakKind, blockBounds, blockDrop, isSolid, isDecor, isSlab } from './blocks.js';
 import { buildAtlas, tileColor, tileTexture, CRACK_TILES } from './textures.js';
 import { World } from './world.js';
 import { meshChunk } from './mesher.js';
@@ -11,6 +11,8 @@ import { raycastVoxel } from './raycast.js';
 import { Particles } from './particles.js';
 import { Weather } from './weather.js';
 import { ItemDrops } from './items.js';
+import { Inventory, ITEM, RECIPES, blockKey, slotKey, starterInventory, itemName } from './inventory.js';
+import { Arrows, createBowModel } from './bow.js';
 import { Sky } from './sky.js';
 import { Sfx } from './audio.js';
 import { Input } from './input.js';
@@ -33,9 +35,12 @@ const settings = {
   paletteUnlocked: false,
 };
 
-let state = 'loading';           // loading | menu | game | pause
+let state = 'loading';           // loading | menu | game | pause | inventory
 let world = null;
 let player = null;
+let gameMode = 'survival';
+let inventory = starterInventory();
+let activeFurnace = null;
 let palette = [...STARTER_PALETTE];
 let hotbarIndex = 0;
 let saveData = null;
@@ -63,6 +68,60 @@ const waterMat = new THREE.MeshBasicMaterial({
   map: atlasTex, vertexColors: true, transparent: true, opacity: 0.72,
   depthWrite: false, side: THREE.DoubleSide,
 });
+const torchMat = new THREE.MeshBasicMaterial({ map: atlasTex, vertexColors: true, alphaTest: 0.5, side: THREE.DoubleSide });
+
+// Недорогой локальный свет на вершинах: до шести ближайших факелов.
+// Днём влияние выключено, ночью блоки вокруг реально освещаются, но
+// количество источников и сложность шейдера не зависят от размера мира.
+const TORCH_LIGHTS = 6;
+const torchPositions = Array.from({ length: TORCH_LIGHTS }, () => new THREE.Vector3(0, -1000, 0));
+terrainMat.onBeforeCompile = (shader) => {
+  shader.uniforms.torchPositions = { value: torchPositions };
+  shader.uniforms.torchNight = { value: 0 };
+  shader.uniforms.torchActive = { value: 0 };
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', '#include <common>\nuniform vec3 torchPositions[6];\nuniform float torchActive;\nvarying float vTorchLight;')
+    .replace('#include <begin_vertex>', `#include <begin_vertex>
+      vTorchLight = 0.0;
+      if (torchActive > 0.5) {
+        for (int i = 0; i < 6; i++) {
+          vec3 delta = position - torchPositions[i];
+          float falloff = max(0.0, 1.0 - dot(delta, delta) / 36.0);
+          vTorchLight = max(vTorchLight, falloff * falloff);
+        }
+      }`);
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>', '#include <common>\nuniform float torchNight;\nvarying float vTorchLight;')
+    .replace('#include <color_fragment>', `#include <color_fragment>
+      diffuseColor.rgb *= vec3(1.0) + vec3(2.9, 1.9, 0.8) * (vTorchLight * torchNight);`);
+  terrainMat.userData.torchShader = shader;
+};
+let torchRefreshT = 0;
+let nearbyTorchCount = 0;
+function updateTorchLights(dt, level) {
+  const shader = terrainMat.userData.torchShader;
+  if (shader) {
+    shader.uniforms.torchNight.value = Math.max(0, 1 - level);
+    shader.uniforms.torchActive.value = nearbyTorchCount > 0 && level < 0.98 ? 1 : 0;
+  }
+  if (!world || !player) return;
+  torchRefreshT -= dt;
+  if (torchRefreshT > 0) return;
+  torchRefreshT = 0.35;
+  const nearby = [];
+  for (const key of world.torches) {
+    const [x, y, z] = key.split(',').map(Number);
+    const d2 = (x + 0.5 - player.pos.x) ** 2 + (y - player.pos.y) ** 2 + (z + 0.5 - player.pos.z) ** 2;
+    if (d2 < 12 * 12) nearby.push({ x, y, z, d2 });
+  }
+  nearby.sort((a, b) => a.d2 - b.d2);
+  nearbyTorchCount = Math.min(TORCH_LIGHTS, nearby.length);
+  if (shader) shader.uniforms.torchActive.value = nearbyTorchCount > 0 && level < 0.98 ? 1 : 0;
+  for (let i = 0; i < TORCH_LIGHTS; i++) {
+    const t = nearby[i];
+    torchPositions[i].set(t ? t.x + 0.5 : 0, t ? t.y + 0.65 : -1000, t ? t.z + 0.5 : 0);
+  }
+}
 
 const sky = new Sky(THREE, scene);
 sky.viewDistance = settings.viewDistance;
@@ -70,10 +129,8 @@ const particles = new Particles(THREE, scene);
 const mobManager = new MobManager(scene, null);
 const weather = new Weather(THREE, scene);
 const items = new ItemDrops(scene);
-// Выживание
-let apples = 0;
+const arrows = new Arrows(scene);
 let attackCd = 0;
-let gloomT = 6;
 let gloomWarned = false;
 let prevEat = false;
 // Звуки мобов с затуханием по расстоянию
@@ -85,6 +142,12 @@ mobManager.onSound = (kind, dist) => {
   else if (kind === 'gloom') sfx.gloom(vol);
   else if (kind === 'die') sfx.mobDie();
   else if (kind === 'burn') sfx.burn();
+};
+mobManager.onSpawn = (mob) => {
+  if ((mob.type === 'gloom' || mob.type === 'spider') && !gloomWarned) {
+    gloomWarned = true;
+    ui.toast(i18n.t('gloom_warn'), 3200);
+  }
 };
 
 // Счётчик построенных блоков (лидерборд Яндекса)
@@ -112,6 +175,27 @@ hand.position.set(0, 0, -0.1);
 handPivot.add(hand);
 camera.add(handPivot);
 handPivot.visible = false;
+
+const bowVisual = createBowModel();
+const bowPivot = new THREE.Group();
+bowPivot.add(bowVisual.group);
+bowPivot.position.set(0.57, -0.29, -1.18);
+bowPivot.rotation.set(-0.07, -0.28, -0.15);
+camera.add(bowPivot);
+let bowRecoil = 0;
+
+const loafPivot = new THREE.Group();
+const loaf = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.22, 0.36), new THREE.MeshBasicMaterial({ color: 0xbb7635, depthTest: false }));
+loaf.position.set(0, 0, -0.12);
+loafPivot.add(loaf);
+for (const x of [-0.09, 0.03, 0.14]) {
+  const score = new THREE.Mesh(new THREE.BoxGeometry(0.023, 0.015, 0.23), new THREE.MeshBasicMaterial({ color: 0xf4c776, depthTest: false }));
+  score.position.set(x, 0.12, -0.12);
+  loafPivot.add(score);
+}
+loafPivot.position.set(0.42, -0.38, -0.6);
+loafPivot.renderOrder = 999;
+camera.add(loafPivot);
 let handSwing = 0;       // 1 -> 0 во время взмаха
 let handSwingPow = 1;
 const HAND_SWING_TIME = 0.28;
@@ -121,18 +205,27 @@ function swingHand(power = 1) {
   handSwingPow = power;
 }
 function updateHand(dt, light) {
-  handPivot.visible = state === 'game';
+  const held = palette[hotbarIndex];
+  handPivot.visible = state === 'game' && held !== ITEM.BOW && held !== ITEM.BREAD;
+  bowPivot.visible = state === 'game' && held === ITEM.BOW;
+  loafPivot.visible = state === 'game' && held === ITEM.BREAD;
+  bowVisual.arrow.visible = gameMode === 'creative' || inventory.get(ITEM.ARROW) > 0;
   if (handSwing > 0) handSwing = Math.max(0, handSwing - dt / HAND_SWING_TIME);
-  const p = Math.sin((1 - handSwing) * Math.PI) * handSwingPow; // 0 -> 1 -> 0
-  const moving = Math.abs(input.move.forward) + Math.abs(input.move.right) > 0.1;
-  handBob += dt * (moving ? 9 : 1.5);
-  const bob = moving ? 0.025 : 0.006;
+  bowRecoil = Math.max(0, bowRecoil - dt * 4);
+  const p = Math.sin((1 - handSwing) * Math.PI) * handSwingPow;
+  const moving = state === 'game' && player?.moving;
+  const sprint = moving && player?.sprinting && player?.onGround;
+  handBob += dt * (moving ? sprint ? 15 : 9 : 1.5);
+  const bob = moving ? sprint ? 0.045 : 0.025 : 0.006;
   handPivot.rotation.set(-1.1 * p + 0.1, 0.35 * p, 0.4 * p);
   handPivot.position.set(
     0.42 - 0.18 * p + Math.cos(handBob) * bob,
     -0.36 + 0.08 * p - Math.abs(Math.sin(handBob)) * bob,
     -0.55 - 0.15 * p,
   );
+  bowPivot.position.set(0.57 + Math.cos(handBob) * bob, -0.29 - Math.abs(Math.sin(handBob)) * bob, -1.18 + bowRecoil * 0.14);
+  bowPivot.rotation.set(-0.07 + bowRecoil * 0.12, -0.28, -0.15 + Math.sin(handBob) * bob);
+  loafPivot.position.set(0.42 + Math.cos(handBob) * bob, -0.38 - Math.abs(Math.sin(handBob)) * bob, -0.6);
   hand.material.color.setHex(0xd9a27a).multiplyScalar(0.35 + 0.65 * light);
 }
 let handBob = 0;
@@ -150,9 +243,19 @@ const crackMesh = new THREE.Mesh(new THREE.BoxGeometry(1.005, 1.005, 1.005), cra
 crackMesh.visible = false;
 scene.add(crackMesh);
 
+function fitBlockOutline(mesh, hit, padding = 0) {
+  const b = blockBounds(hit.id);
+  mesh.position.set(
+    hit.x + (b.minX + b.maxX) / 2,
+    hit.y + (b.minY + b.maxY) / 2,
+    hit.z + (b.minZ + b.maxZ) / 2,
+  );
+  mesh.scale.set(b.maxX - b.minX + padding, b.maxY - b.minY + padding, b.maxZ - b.minZ + padding);
+}
+
 function showCrack(hit, progress) {
   crackMesh.visible = true;
-  crackMesh.position.set(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
+  fitBlockOutline(crackMesh, hit, 0.012);
   crackMesh.material = crackMats[Math.max(0, Math.min(4, Math.floor(progress * 5)))];
 }
 
@@ -209,7 +312,7 @@ function processQueue(limit) {
 
 function buildChunkMesh(cx, cz) {
   const chunk = world.getChunk(cx, cz);
-  const { opaque, water } = meshChunk(THREE, world, cx, cz);
+  const { opaque, water, torch } = meshChunk(THREE, world, cx, cz);
 
   if (!chunk.meshOpaque) {
     chunk.meshOpaque = new THREE.Mesh(new THREE.BufferGeometry(), terrainMat);
@@ -218,6 +321,10 @@ function buildChunkMesh(cx, cz) {
   if (!chunk.meshWater) {
     chunk.meshWater = new THREE.Mesh(new THREE.BufferGeometry(), waterMat);
     scene.add(chunk.meshWater);
+  }
+  if (!chunk.meshTorch) {
+    chunk.meshTorch = new THREE.Mesh(new THREE.BufferGeometry(), torchMat);
+    scene.add(chunk.meshTorch);
   }
 
   chunk.meshOpaque.geometry.dispose();
@@ -233,22 +340,35 @@ function buildChunkMesh(cx, cz) {
     chunk.meshWater.geometry = water.toGeometry(THREE);
     chunk.meshWater.visible = true;
   }
+  chunk.meshTorch.geometry.dispose();
+  chunk.meshTorch.geometry = torch.isEmpty() ? new THREE.BufferGeometry() : torch.toGeometry(THREE);
+  chunk.meshTorch.visible = !torch.isEmpty();
   chunk.dirty = false;
 }
 
 function disposeChunkMeshes(c) {
   if (c.meshOpaque) { scene.remove(c.meshOpaque); c.meshOpaque.geometry.dispose(); c.meshOpaque = null; }
   if (c.meshWater) { scene.remove(c.meshWater); c.meshWater.geometry.dispose(); c.meshWater = null; }
+  if (c.meshTorch) { scene.remove(c.meshTorch); c.meshTorch.geometry.dispose(); c.meshTorch = null; }
 }
 
 // ---------------------------------------------------------------- Хотбар
 function rebuildPalette() {
-  palette = settings.paletteUnlocked
+  const held = palette[hotbarIndex];
+  palette = (gameMode === 'creative' || settings.paletteUnlocked)
     ? [...STARTER_PALETTE, ...BUILDER_PALETTE]
     : [...STARTER_PALETTE];
-  hotbarIndex = Math.min(hotbarIndex, palette.length - 1);
+  hotbarIndex = Math.max(0, palette.indexOf(held));
   ui.buildHotbar(palette, i18n.lang);
   ui.setHotbarSelection(hotbarIndex);
+  refreshResources();
+}
+
+function refreshResources() {
+  ui.setHotbarCounts(inventory, gameMode);
+  ui.setFood(inventory);
+  if (player) ui.setXP(player.level, player.xp, player.xpNeeded());
+  if (state === 'inventory') ui.showInventory(inventory, activeFurnace ? 'furnace' : null, gameMode);
 }
 
 // ---------------------------------------------------------------- Действия
@@ -268,13 +388,27 @@ function doBreak(hit) {
   if (!hit) return;
   const id = world.getBlock(hit.x, hit.y, hit.z);
   if (!id || id === BLOCK.WATER) return;
-  world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
+  if (!world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR)) return;
   particles.burst(hit.x, hit.y, hit.z, tileColor(BLOCKS[id].tiles[0]), 16);
   sfx.breakBlock(breakKind(id));
-  // С листвы иногда падает яблоко
-  if (id === BLOCK.LEAVES && Math.random() < 0.14) {
-    items.spawn(hit.x + 0.5, hit.y + 0.8, hit.z + 0.5, 'apple');
+  const drop = blockDrop(id);
+  if (drop === ITEM.ORE || drop === ITEM.COAL) {
+    // Руда именно выпадает в мир и должна быть подобрана, а не мгновенно
+    // оказывается в инвентаре.
+    items.spawn(hit.x + 0.5, hit.y + 0.72, hit.z + 0.5, drop);
+  } else if (drop && gameMode === 'survival') {
+    inventory.add(drop);
   }
+  if (id === BLOCK.LEAVES && Math.random() < 0.14)
+    items.spawn(hit.x + 0.5, hit.y + 0.8, hit.z + 0.5, ITEM.APPLE);
+  if ((id === BLOCK.TALL_GRASS || id === BLOCK.FERN || id === BLOCK.GRASS) && Math.random() < 0.38)
+    items.spawn(hit.x + 0.5, hit.y + 0.8, hit.z + 0.5, ITEM.WHEAT);
+  // Без опоры факел не должен висеть в воздухе.
+  if (world.getBlock(hit.x, hit.y + 1, hit.z) === BLOCK.TORCH) {
+    world.setBlock(hit.x, hit.y + 1, hit.z, BLOCK.AIR);
+    if (gameMode === 'survival') inventory.add(blockKey(BLOCK.TORCH));
+  }
+  refreshResources();
   breakTarget = null;
   breakProgress = 0;
   breakQuick = false;
@@ -295,45 +429,83 @@ function handleDeath() {
 }
 
 function tryEat() {
-  if (apples <= 0) { ui.toast(i18n.t('eat_none'), 1400); return; }
+  if (!player || state !== 'game' || gameMode !== 'survival') return;
+  const bread = inventory.get(ITEM.BREAD), apples = inventory.get(ITEM.APPLE);
+  const kind = palette[hotbarIndex] === ITEM.BREAD && bread > 0 ? ITEM.BREAD
+    : apples > 0 ? ITEM.APPLE : bread > 0 ? ITEM.BREAD : null;
+  if (!kind) { ui.toast(i18n.t('eat_none'), 1400); return; }
   if (player.hp >= player.maxHp) return;
-  apples--;
-  ui.setApples(apples);
-  sfx.crunch();
-  player.heal(4);
+  inventory.spend(kind);
+  player.heal(kind === ITEM.BREAD ? 6 : 4);
   ui.setHealth(player.hp, player.maxHp);
-  ui.toast(i18n.t('eat_ok'), 1600);
+  refreshResources();
+  sfx.crunch();
+  ui.toast(i18n.t(kind === ITEM.BREAD ? 'bread_eaten' : 'eat_ok'), 1600);
 }
 
 function doPlace(hit) {
-  if (!hit) return;
-  swingHand(0.6);
-  // Прицел на траве/цветке — ставим блок на её место
+  if (!hit || state !== 'game') return;
+  if (hit.id === BLOCK.FURNACE && !input.sneak) {
+    openInventory({ x: hit.x, y: hit.y, z: hit.z });
+    return;
+  }
+  const selected = palette[hotbarIndex];
+  if (selected === ITEM.BREAD) { tryEat(); return; }
+  if (typeof selected !== 'number') return;
+  if (gameMode === 'survival' && inventory.get(slotKey(selected)) < 1) {
+    ui.toast(i18n.t('no_blocks'), 1500);
+    return;
+  }
   const onDecor = isDecor(hit.id);
-  const x = onDecor ? hit.x : hit.x + hit.nx;
-  const y = onDecor ? hit.y : hit.y + hit.ny;
-  const z = onDecor ? hit.z : hit.z + hit.nz;
+  if (selected === BLOCK.TORCH && hit.ny !== 1 && !onDecor) {
+    ui.toast(i18n.t('need_torch_floor'), 1300);
+    return;
+  }
+  let x = onDecor ? hit.x : hit.x + hit.nx;
+  let y = onDecor ? hit.y : hit.y + hit.ny;
+  let z = onDecor ? hit.z : hit.z + hit.nz;
+  let id = selected;
+  if (selected === BLOCK.PLANK_SLAB || selected === BLOCK.COBBLE_SLAB) {
+    const bottom = selected;
+    const top = selected + 1;
+    const full = selected === BLOCK.PLANK_SLAB ? BLOCK.PLANKS : BLOCK.COBBLE;
+    // Щёлкнуть по внутренней стороне полублока — сложить два в целый.
+    if ((hit.id === bottom && hit.ny === 1) || (hit.id === top && hit.ny === -1)) {
+      x = hit.x; y = hit.y; z = hit.z;
+      id = full;
+    } else {
+      id = hit.ny < 0 || (hit.ny === 0 && hit.py - hit.y > 0.5) ? top : bottom;
+    }
+  }
   const cur = world.getBlock(x, y, z);
-  if (cur !== BLOCK.AIR && cur !== BLOCK.WATER && !isDecor(cur)) return;
-  // Не ставим блок внутрь игрока
+  const stacking = isSlab(cur) && (id === BLOCK.PLANKS || id === BLOCK.COBBLE) &&
+    ((cur === BLOCK.PLANK_SLAB || cur === BLOCK.PLANK_SLAB_TOP) ? id === BLOCK.PLANKS : id === BLOCK.COBBLE);
+  if (!stacking && cur !== BLOCK.AIR && cur !== BLOCK.WATER && !isDecor(cur)) return;
+  if (id === BLOCK.TORCH) {
+    const below = world.getBlock(x, y - 1, z);
+    if (cur === BLOCK.WATER || !isSolid(below) || blockBounds(below).maxY !== 1) {
+      ui.toast(i18n.t('need_torch_floor'), 1300);
+      return;
+    }
+  }
   const px = player.pos.x, py = player.pos.y, pz = player.pos.z;
-  const HW = CONFIG.PLAYER_WIDTH / 2 + 0.01;
-  const overlap = x + 1 > px - HW && x < px + HW &&
-    y + 1 > py && y < py + CONFIG.PLAYER_HEIGHT &&
-    z + 1 > pz - HW && z < pz + HW;
-  const id = palette[hotbarIndex];
+  const b = blockBounds(id), hw = CONFIG.PLAYER_WIDTH / 2 + 0.01;
+  const overlap = x + b.maxX > px - hw && x + b.minX < px + hw &&
+    y + b.maxY > py && y + b.minY < py + CONFIG.PLAYER_HEIGHT &&
+    z + b.maxZ > pz - hw && z + b.minZ < pz + hw;
   if (overlap && isSolid(id)) return;
   if (isDecor(cur)) {
-    // Трава автоматически ломается при установке блока
-    if (isDecor(id) && cur === id) return;
     particles.burst(x, y, z, tileColor(BLOCKS[cur].tiles[0]), 8);
     sfx.breakBlock(breakKind(cur));
   }
   if (world.setBlock(x, y, z, id)) {
+    if (gameMode === 'survival') inventory.spend(slotKey(selected));
+    swingHand(0.6);
     sfx.place();
     particles.burst(x, y, z, tileColor(BLOCKS[id].tiles[0]), 5);
     blocksBuilt++;
     ui.setBlocksBuilt(blocksBuilt);
+    refreshResources();
     ysdk.setStats({ blocksBuilt });
   }
 }
@@ -345,6 +517,9 @@ function buildSave() {
     seed: world.seed,
     edits: world.serializeEdits(),
     player: player.serialize(),
+    mode: gameMode,
+    inventory: inventory.serialize(),
+    drops: items.serialize(),
     time: sky.serialize(),
     blocksBuilt,
     paletteUnlocked: settings.paletteUnlocked,
@@ -359,46 +534,103 @@ function buildSave() {
 
 async function saveGame(showToast = false) {
   if (!world || !player) return;
-  const ok = await ysdk.save(buildSave());
+  const data = buildSave();
+  const ok = await ysdk.save(data);
+  if (ok) saveData = data;
   if (showToast) ui.toast(i18n.t(ok ? 'saved' : 'save_fail'));
 }
 
 function attachPlayerEvents() {
   mobManager.onAttack = (mob) => {
-  const dx = player.pos.x - mob.pos.x, dz = player.pos.z - mob.pos.z;
-  const dl = Math.hypot(dx, dz) || 1;
-  if (player.hurt(3)) {
-    player.vel.x = (dx / dl) * 5;
-    player.vel.z = (dz / dl) * 5;
-    player.vel.y = 3;
-    ui.setHealth(player.hp, player.maxHp);
-  }
-};
-mobManager.onDeath = (mob) => {
-  sfx.mobDie();
-  particles.burst(mob.pos.x, mob.pos.y + 0.5, mob.pos.z, 0x2a2140, 14);
-};
-items.onPickup = (kind) => {
-  if (kind === 'apple') {
-    apples++;
-    ui.setApples(apples);
-    sfx.pickup();
-    if (apples === 1) ui.toast(i18n.t('apple_get'), 3200);
-  }
-};
-player.events.onStep = (inWater) => sfx.step(inWater);
+    if (gameMode !== 'survival') return;
+    const dx = player.pos.x - mob.pos.x, dz = player.pos.z - mob.pos.z;
+    const dl = Math.hypot(dx, dz) || 1;
+    if (player.hurt(mob.type === 'spider' ? 2 : 3)) {
+      player.vel.x = dx / dl * 5;
+      player.vel.z = dz / dl * 5;
+      player.vel.y = 3;
+      ui.setHealth(player.hp, player.maxHp);
+    }
+  };
+  mobManager.onDeath = (mob) => {
+    sfx.mobDie();
+    particles.burst(mob.pos.x, mob.pos.y + 0.5, mob.pos.z, mob.type === 'spider' ? 0x17181c : 0x2a2140, 14);
+    if (mob.type === 'spider' || mob.type === 'gloom' || mob.type === 'slime') {
+      const amount = mob.type === 'slime' ? 1 : 2;
+      for (let i = 0; i < amount; i++)
+        items.spawn(mob.pos.x + (Math.random() - 0.5) * 0.4, mob.pos.y + 0.7, mob.pos.z, 'xp', 2);
+    }
+  };
+  items.onPickup = (kind, amount) => {
+    if (kind === 'xp') {
+      const levels = player.addXP(amount);
+      sfx.xp();
+      if (levels) ui.toast(i18n.t('xp_level') + ' ' + player.level);
+    } else {
+      const first = inventory.get(kind) === 0;
+      inventory.add(kind, amount);
+      sfx.pickup();
+      if (first && (kind === ITEM.APPLE || kind === ITEM.ORE || kind === ITEM.COAL)) {
+        ui.toast(i18n.t(kind === ITEM.APPLE ? 'apple_get' : kind === ITEM.ORE ? 'ore_get' : 'coal_get'), 3000);
+      }
+    }
+    refreshResources();
+  };
+  arrows.onHitMob = (mob) => {
+    sfx.hitMob();
+    particles.burst(mob.pos.x, mob.pos.y + 0.4, mob.pos.z, 0xaa3842, 8);
+  };
+  arrows.onHitBlock = (hit) => {
+    particles.burst(hit.x, hit.y, hit.z, tileColor(BLOCKS[hit.id].tiles[0]), 4);
+  };
+  player.events.onStep = (inWater) => sfx.step(inWater);
   player.events.onJump = () => sfx.jump();
   player.events.onLand = () => sfx.land();
   player.events.onHurt = () => {
-    sfx.hurt();
-    ui.flashHurt();
-    ui.setHealth(player.hp, player.maxHp);
+    sfx.hurt(); ui.flashHurt(); ui.setHealth(player.hp, player.maxHp);
   };
   player.events.onDeath = () => handleDeath();
   player.events.onSplash = () => sfx.splash();
 }
 
 // ---------------------------------------------------------------- Стейты
+function setGameMode(mode, announce = false) {
+  gameMode = mode === 'creative' ? 'creative' : 'survival';
+  ui.setMode(gameMode);
+  ui.setRewardButton(settings.paletteUnlocked);
+  mobManager.hostileEnabled = gameMode === 'survival';
+  if (player) {
+    player.mode = gameMode;
+    if (gameMode === 'creative') player.hp = player.maxHp;
+    else if (player.flying) { player.flying = false; player.vel.y = 0; }
+    ui.setHealth(player.hp, player.maxHp);
+    rebuildPalette();
+    if (announce) {
+      ui.toast(i18n.t('mode_changed') + i18n.t(gameMode));
+      saveGame();
+    }
+  }
+}
+
+function openInventory(furnace = null) {
+  if (state !== 'game') return;
+  activeFurnace = furnace;
+  state = 'inventory';
+  input.keys.clear();
+  input.mouse.left = input.mouse.right = false;
+  ysdk.gameplayStop();
+  ui.showScreen('inventory-screen');
+  ui.showInventory(inventory, furnace ? 'furnace' : null, gameMode);
+  ui.setTouchVisible(false);
+  if (document.pointerLockElement) document.exitPointerLock();
+}
+
+function closeInventory() {
+  if (state !== 'inventory') return;
+  activeFurnace = null;
+  resumeGame();
+}
+
 function enterGame() {
   state = 'game';
   sessionStart = sessionStart || performance.now();
@@ -476,14 +708,26 @@ async function startWorld(newWorld = false) {
   ui.setLoading(0.05, i18n.t('loading'));
 
   const data = newWorld ? null : saveData;
+  // Сначала удаляем GPU-меши предыдущего мира (игрок мог вернуться в меню).
+  if (world) {
+    for (const chunk of world.chunks.values()) disposeChunkMeshes(chunk);
+    world.chunks.clear();
+  }
+  mobManager.clear();
+  items.clear();
+  arrows.clear();
   const seed = (data?.seed != null) ? data.seed : ((Math.random() * 0x7fffffff) | 0);
   world = new World(seed);
   player = new Player(world);
-  mobManager.clear();
-  items.clear();
-  apples = 0;
-  ui.setApples(0);
+  player.mode = gameMode;
+  inventory = data?.inventory ? new Inventory(data.inventory) : starterInventory();
   mobManager.world = world;
+  mobManager.hostileEnabled = gameMode === 'survival';
+  gloomWarned = false;
+  attackCd = 0;
+  torchRefreshT = 0;
+  nearbyTorchCount = 0;
+  for (const p of torchPositions) p.set(0, -1000, 0);
   attachPlayerEvents();
 
   if (data) {
@@ -498,11 +742,15 @@ async function startWorld(newWorld = false) {
       settings.viewDistance = data.settings.viewDistance || settings.viewDistance;
     }
     if (data.time != null) sky.setTime(data.time);
+    items.load(data.drops);
     i18n.setLang(settings.lang);
     sfx.setVolume(settings.volume);
     sfx.setEnabled(settings.sound);
   } else {
     settings.paletteUnlocked = false;
+    blocksBuilt = 0;
+    ui.setBlocksBuilt(0);
+    sky.setTime(0.3);
   }
   ui.applySettings(settings);
   ui.applyI18n();
@@ -516,9 +764,7 @@ async function startWorld(newWorld = false) {
   if (data?.player) {
     player.deserialize(data.player);
     // Защита от сохранения «внутри блоков»
-    if (isSolid(world.getBlock(Math.floor(player.pos.x), Math.floor(player.pos.y), Math.floor(player.pos.z)))) {
-      player.pos.y += 2;
-    }
+    if (player.collides(player.pos.x, player.pos.y, player.pos.z)) player.pos.y += 2;
   }
 
   // Предгенерация вокруг спавна
@@ -536,15 +782,62 @@ async function startWorld(newWorld = false) {
   ui.setLoading(1, i18n.t('ready'));
   ui.setRewardButton(settings.paletteUnlocked);
 
-  // Несколько мобов сразу, чтобы мир был живым
-  for (let i = 0; i < 5; i++) mobManager.trySpawn(player.pos);
+  // Мобы появляются за спиной даже при первом запуске: никаких
+  // «всплывающих» существ прямо перед камерой.
+  for (let i = 0; i < 3; i++) mobManager.trySpawn(player.pos, player.yaw);
   ui.setHealth(player.hp, player.maxHp);
-  ui.setApples(apples);
+  ui.setMode(gameMode);
+  refreshResources();
 
   ysdk.gameplayReady();
   saveData = buildSave(); // «Продолжить» имеет смысл и до первого сохранения
 
   enterGame();
+}
+
+// ---------------------------------------------------------------- Бой
+function aimedMob(reach) {
+  const eye = player.eyePos(), dir = player.lookDir();
+  const wall = raycastVoxel(world, eye.x, eye.y, eye.z, dir.x, dir.y, dir.z, reach);
+  let bestT = wall ? wall.t + 0.15 : reach;
+  let target = null;
+  for (const mob of mobManager.mobs) {
+    if (mob.dead) continue;
+    const h = mob.type === 'spider' ? 0.37 : mob.type === 'bird' ? 0 : 0.48;
+    const dx = mob.pos.x - eye.x, dy = mob.pos.y + h - eye.y, dz = mob.pos.z - eye.z;
+    const t = dx * dir.x + dy * dir.y + dz * dir.z;
+    if (t < 0.2 || t >= bestT) continue;
+    const radius = mob.type === 'bird' ? 0.33 : mob.type === 'gloom' ? 0.42 : 0.6;
+    if (dx * dx + dy * dy + dz * dz - t * t > radius * radius) continue;
+    bestT = t;
+    target = mob;
+  }
+  return target;
+}
+
+function meleeAttack(mob) {
+  if (!mob || attackCd > 0) return;
+  attackCd = 0.38;
+  swingHand(1);
+  mob.hurt(1);
+  sfx.hitMob();
+  particles.burst(mob.pos.x, mob.pos.y + 0.4, mob.pos.z, mob.type === 'spider' ? 0x161619 : 0x30253a, 8);
+  mob.knockback(mob.pos.x - player.pos.x, mob.pos.z - player.pos.z, 3.2);
+}
+
+function shootBow() {
+  if (state !== 'game' || palette[hotbarIndex] !== ITEM.BOW || attackCd > 0) return;
+  attackCd = 0.66;
+  if (gameMode === 'survival' && !inventory.get(ITEM.ARROW)) {
+    ui.toast(i18n.t('no_arrows'), 1500);
+    return;
+  }
+  if (arrows.fire(player.eyePos(), player.lookDir())) {
+    if (gameMode === 'survival') inventory.spend(ITEM.ARROW);
+    bowRecoil = 1;
+    sfx.bow();
+    refreshResources();
+  }
 }
 
 // ---------------------------------------------------------------- Обработчики UI
@@ -553,6 +846,21 @@ ui.handlers.onNewWorld = () => { input.enterFullscreen(); sfx.resume(); sfx.uiOk
 ui.handlers.onResume = () => { input.enterFullscreen(); sfx.uiClick(); resumeGame(); };
 ui.handlers.onSaveQuit = async () => { sfx.uiOk(); await saveAndQuit(); };
 ui.handlers.onReward = () => requestReward();
+ui.handlers.onModeChange = (mode) => setGameMode(mode, true);
+ui.handlers.onOpenInventory = () => openInventory();
+ui.handlers.onCloseInventory = () => closeInventory();
+ui.handlers.onEat = () => tryEat();
+ui.handlers.onCraft = (id) => {
+  if (state !== 'inventory' || gameMode !== 'survival') return;
+  const recipe = RECIPES.find((r) => r.id === id);
+  if (!recipe) return;
+  if (recipe.station && (!activeFurnace || world.getBlock(activeFurnace.x, activeFurnace.y, activeFurnace.z) !== BLOCK.FURNACE)) return;
+  if (!inventory.craft(recipe)) return;
+  sfx.place();
+  ui.toast(itemName(recipe.output, i18n.lang) + ' ×' + recipe.amount, 1200);
+  refreshResources();
+  saveGame();
+};
 ui.handlers.onSlot = (i) => {
   hotbarIndex = i;
   ui.setHotbarSelection(i);
@@ -577,6 +885,7 @@ ui.handlers.onSettingsChange = (delta) => {
     if (palette.length) {
       ui.buildHotbar(palette, i18n.lang);
       ui.setHotbarSelection(hotbarIndex);
+      refreshResources();
     }
     ui.setRewardButton(settings.paletteUnlocked);
   }
@@ -590,9 +899,18 @@ ui.handlers.onSettingsChange = (delta) => {
 input.handlers.onPause = () => {
   if (state === 'game') pauseGame();
   else if (state === 'pause') resumeGame();
+  else if (state === 'inventory') closeInventory();
+};
+input.handlers.onInventory = () => {
+  if (state === 'game') openInventory();
+  else if (state === 'inventory') closeInventory();
 };
 input.handlers.onToggleFly = () => {
   if (state !== 'game') return;
+  if (gameMode !== 'creative') {
+    ui.toast(i18n.t('creative_only'), 1400);
+    return;
+  }
   const on = player.toggleFly();
   ui.toast(i18n.t(on ? 'fly_on' : 'fly_off'), 1500);
   sfx.uiClick();
@@ -611,6 +929,9 @@ input.handlers.onScroll = (dir) => {
 };
 input.handlers.onActionBreak = () => {
   if (state !== 'game') return;
+  if (palette[hotbarIndex] === ITEM.BOW) { shootBow(); return; }
+  const mob = aimedMob(3.7);
+  if (mob) { meleeAttack(mob); return; }
   const hit = pickTarget();
   if (!hit) return;
   // Тап — быстрое ломание с короткой анимацией трещин
@@ -619,9 +940,15 @@ input.handlers.onActionBreak = () => {
   breakQuick = true;
   sfx.dig(breakKind(hit.id));
 };
+input.handlers.onMouseBreak = () => {
+  if (state !== 'game') return;
+  if (palette[hotbarIndex] === ITEM.BOW) shootBow();
+  else meleeAttack(aimedMob(3.7));
+};
 input.handlers.onActionPlace = () => {
   if (state !== 'game') return;
   doPlace(pickTarget());
+  placeCooldown = 0.25;
 };
 
 // Потеря фокуса — пауза и стоп звука
@@ -654,6 +981,23 @@ setInterval(() => { if (state === 'game') saveGame(); }, CONFIG.AUTO_SAVE_SEC * 
 // ---------------------------------------------------------------- Главный цикл
 let lastT = performance.now();
 let fpsEma = 60;
+let sprintPhase = 0;
+let sprintStrength = 0;
+
+function updateCamera(dt) {
+  const eye = player.eyePos();
+  const target = player.sprinting && player.onGround
+    ? Math.min(1, Math.hypot(player.vel.x, player.vel.z) / CONFIG.SPRINT_SPEED) : 0;
+  sprintStrength += (target - sprintStrength) * Math.min(1, dt * 10);
+  if (sprintStrength > 0.001) sprintPhase += dt * 15;
+  const sway = Math.sin(sprintPhase) * sprintStrength;
+  camera.position.set(
+    eye.x + Math.cos(player.yaw) * sway * 0.024,
+    eye.y + (Math.abs(Math.sin(sprintPhase)) - 0.55) * sprintStrength * 0.07,
+    eye.z - Math.sin(player.yaw) * sway * 0.024,
+  );
+  camera.rotation.set(player.pitch, player.yaw, sway * 0.016);
+}
 
 function frame() {
   requestAnimationFrame(frame);
@@ -692,69 +1036,36 @@ function frame() {
     }
     processQueue(CONFIG.MAX_MESH_PER_FRAME);
 
-    // --- Выживание: предметы, еда, ночные Хмари ---
+    // Подбираемые ресурсы, еда и бой.
     items.update(dt, world, player.pos);
     const eatPressed = input.keys.has('KeyF');
     if (eatPressed && !prevEat) tryEat();
     prevEat = eatPressed;
-
+    attackCd = Math.max(0, attackCd - dt);
     mobManager.setNight(sky.lightLevel < 0.32);
-    if (sky.lightLevel < 0.32) {
-      gloomT -= dt;
-      if (gloomT <= 0) {
-        gloomT = 7 + Math.random() * 7;
-        const spawned = mobManager.trySpawnGloom(player.pos);
-        if (spawned && !gloomWarned) {
-          gloomWarned = true;
-          ui.toast(i18n.t('gloom_warn'), 3200);
-        }
-      }
-    } else {
-      gloomWarned = false;
-    }
+    if (sky.lightLevel >= 0.32) gloomWarned = false;
 
-    // Удар по Хмари (ЛКМ) вместо ломания блока
     let mobTarget = null;
     if (input.breakHeld) {
-      const eye = player.eyePos();
-      const d = player.lookDir();
-      let bestT = 4.5;
-      for (const m of mobManager.mobs) {
-        if (m.type !== 'gloom') continue;
-        const cx = m.pos.x - eye.x, cy = m.pos.y + 0.5 - eye.y, cz = m.pos.z - eye.z;
-        const t = cx * d.x + cy * d.y + cz * d.z;
-        if (t < 0.3 || t > 4.5) continue;
-        const px = cx - d.x * t, py = cy - d.y * t, pz = cz - d.z * t;
-        if (px * px + py * py + pz * pz > 0.72 * 0.72) continue;
-        if (t < bestT) { bestT = t; mobTarget = m; }
+      if (palette[hotbarIndex] === ITEM.BOW) shootBow();
+      else {
+        mobTarget = aimedMob(3.7);
+        meleeAttack(mobTarget);
       }
-      attackCd -= dt;
-      if (mobTarget && attackCd <= 0) {
-        attackCd = 0.36;
-        swingHand(1);
-        mobTarget.hurt(1);
-        sfx.hitMob();
-        particles.burst(mobTarget.pos.x, mobTarget.pos.y + 0.5, mobTarget.pos.z, 0x2a2140, 8);
-        const kx = mobTarget.pos.x - player.pos.x, kz = mobTarget.pos.z - player.pos.z;
-        const kl = Math.hypot(kx, kz) || 1;
-        mobTarget.knockback(kx / kl, kz / kl, 3.2);
-      }
-    } else {
-      attackCd = 0;
     }
 
     // Прицел и действия
     const hit = pickTarget();
     if (hit) {
       highlight.visible = true;
-      highlight.position.set(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
+      fitBlockOutline(highlight, hit, 0.008);
     } else {
       highlight.visible = false;
     }
 
     // Ломание: удержание ЛКМ/кнопки или быстрое по тапу (с анимацией трещин)
     let breaking = null;
-    if (hit && !mobTarget) {
+    if (hit && !mobTarget && palette[hotbarIndex] !== ITEM.BOW) {
       const same = breakTarget && breakTarget.x === hit.x && breakTarget.y === hit.y && breakTarget.z === hit.z;
       if (breakQuick) {
         if (same) breaking = hit;
@@ -772,7 +1083,7 @@ function frame() {
     }
     if (breaking) {
       const kind = breakKind(breaking.id);
-      const rate = breakQuick
+      const rate = gameMode === 'creative' ? dt / 0.08 : breakQuick
         ? dt / 0.3
         : dt / (CONFIG.BREAK_TIME[kind] ?? CONFIG.BREAK_TIME.default);
       breakProgress += rate;
@@ -804,11 +1115,8 @@ function frame() {
       placeCooldown = 0.25;
     }
 
-    // Камера
-    const eye = player.eyePos();
-    camera.position.set(eye.x, eye.y, eye.z);
-    camera.rotation.y = player.yaw;
-    camera.rotation.x = player.pitch;
+    // Небольшая затухающая тряска только при беге по земле.
+    updateCamera(dt);
 
     // Небо, свет, вода, погода
     sky.update(dt, player.pos);
@@ -825,7 +1133,9 @@ function frame() {
     terrainMat.color.setScalar(0.28 + 0.72 * L);
     waterMat.color.setScalar(0.3 + 0.7 * L);
     mobManager.setLight(L);
-    mobManager.update(dt, player.pos, true);
+    updateTorchLights(dt, L);
+    mobManager.update(dt, player.pos, player.yaw, true);
+    arrows.update(dt, world, mobManager.mobs);
 
     // Сверчки по ночам в ясную погоду
     cricketsT -= dt;
@@ -849,14 +1159,15 @@ function frame() {
     const eye = player.eyePos();
     camera.position.set(eye.x, eye.y, eye.z);
     player.yaw += dt * 0.05;
-    camera.rotation.y = player.yaw;
-    camera.rotation.x = player.pitch;
+    camera.rotation.set(player.pitch, player.yaw, 0);
+    sprintStrength = 0;
     sky.update(dt * 0.3, player.pos);
     const L = sky.lightLevel;
     terrainMat.color.setScalar(0.28 + 0.72 * L);
     waterMat.color.setScalar(0.3 + 0.7 * L);
     mobManager.setLight(L);
-    mobManager.update(dt * 0.5, player.pos, false);
+    updateTorchLights(dt, L);
+    mobManager.update(dt * 0.5, player.pos, player.yaw, false);
     if (world) weather.update(dt * 0.5, player.pos, world, L, {});
     sfx.setRainLevel(weather.wetness);
   }
@@ -890,7 +1201,9 @@ window.addEventListener('keydown', (e) => {
     i18n.setLang('en');
   }
   settings.paletteUnlocked = !!saveData?.paletteUnlocked;
+  gameMode = saveData?.mode === 'creative' ? 'creative' : 'survival';
   ui.applySettings(settings);
+  ui.setMode(gameMode);
   ui.applyI18n();
   ui.setRewardButton(settings.paletteUnlocked);
 
@@ -929,4 +1242,7 @@ window.VoxelCraft = {
   get weather() { return weather; },
   get sky() { return sky; },
   get items() { return items; },
+  get arrows() { return arrows; },
+  get inventory() { return inventory; },
+  get mode() { return gameMode; },
 };

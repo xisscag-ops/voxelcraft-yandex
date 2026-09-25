@@ -227,4 +227,13 @@ export class Sfx {
   pickup() {
     this._tone({ freq: 880, dur: 0.07, gain: 0.1, type: 'triangle', slide: 240 });
   }
+
+  bow() {
+    this._tone({ freq: 350, dur: 0.13, gain: 0.12, type: 'triangle', slide: -180 });
+    this._burst({ freq: 1200, dur: 0.07, gain: 0.1, pitchDrop: 0.6 });
+  }
+
+  xp() {
+    this._tone({ freq: 1100, dur: 0.12, gain: 0.07, type: 'sine', slide: 380 });
+  }
 }
