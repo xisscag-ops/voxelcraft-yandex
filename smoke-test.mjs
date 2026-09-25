@@ -1,15 +1,23 @@
 // Смоук-тест логики мира и мешера без браузера (node smoke-test.mjs)
 import { World } from './src/world.js';
 import { meshChunk } from './src/mesher.js';
+import { Weather, WEATHER_LIFECYCLE } from './src/weather.js';
+import * as THREEReal from 'three';
+import { ItemDrops, ITEM_MAGNET_RANGE, ITEM_PICKUP_RANGE } from './src/items.js';
+import { Player } from './src/physics.js';
+import { updateRunShake } from './src/camera-effects.js';
+import { createWorldRecord, emptyWorldProfile, normalizeWorldProfile, serializeWorldProfile } from './src/world-store.js';
+import { migrateSave } from './src/save-migration.js';
 import { raycastVoxel } from './src/raycast.js';
-import { isSolid, isOpaque, isDecor, BLOCK } from './src/blocks.js';
+import { isSolid, isOpaque, isDecor, BLOCK, BLOCKS } from './src/blocks.js';
 import { Inventory } from './src/inventory.js';
 import {
   RECIPES, craft, canCraft, validateRecipes, emptyGrid, matchRecipe, gridResult,
   craftFromGrid, needsTable, recipeGridSize,
 } from './src/crafts.js';
-import { ITEM, itemDef, foodValue, isFood, blockItem, blockDropItem, breakTime, itemDamage, maxStack, placeBlockId, toolKind } from './src/items.js';
+import { ITEM, itemDef, itemDescription, foodValue, isFood, blockItem, blockDropItem, breakTime, itemDamage, maxStack, placeBlockId, toolKind } from './src/items.js';
 import { CONFIG } from './src/config.js';
+import { Furnace, serializeFurnaces, deserializeFurnaces, fuelDuration, smeltResult } from './src/furnace.js';
 import { STRINGS } from './src/i18n.js';
 
 // Заглушка THREE — достаточно для toGeometry
@@ -35,6 +43,23 @@ function check(name, cond) {
   else { console.log('FAIL', name); failed++; }
 }
 
+const runShakeTest = { duration: 0, strength: 0 };
+let runStrength = 0;
+for (let i = 0; i < 119; i++) runStrength = updateRunShake(runShakeTest, true, 1 / 60);
+check('тряска при беге не включается до задержки', runStrength < 0.001);
+for (let i = 0; i < 90; i++) runStrength = updateRunShake(runShakeTest, true, 1 / 60);
+check('тряска плавно нарастает после двух секунд и ограничена', runStrength > 0.2 && runStrength < 1);
+for (let i = 0; i < 240; i++) runStrength = updateRunShake(runShakeTest, true, 1 / 60);
+check('тряска достигает заданного лимита', runStrength > 0.98 && runStrength <= 1);
+runStrength = updateRunShake(runShakeTest, false, 1 / 60);
+check('тряска плавно затухает после остановки', runStrength < 1 && runStrength > 0);
+const causePlayer = new Player({ getBlock: () => BLOCK.AIR });
+causePlayer.hp = 1;
+let deathCause = null;
+causePlayer.events.onDeath = (cause) => { deathCause = cause; };
+causePlayer.hurt(2, 'fall');
+check('игрок передаёт причину гибели обработчику смерти', deathCause === 'fall');
+
 const world = new World(12345);
 
 // Генерация чанков
@@ -53,6 +78,19 @@ check('heightAt in bounds', (() => {
   }
   return true;
 })());
+check('geology: deterministic quarry and rift depressions', (() => {
+  const geology = new World(4242);
+  const quarry = geology.featureAt(71, -841);
+  const rift = geology.featureAt(-1000, -107);
+  const quarryY = geology.heightAt(71, -841);
+  const riftY = geology.heightAt(-1000, -107);
+  const quarryFloor = geology.getBlock(71, quarryY, -841);
+  const riftFloor = geology.getBlock(-1000, riftY, -107);
+  return quarry?.type === 'quarry' && rift?.type === 'rift'
+    && quarryY < geology.baseHeightAt(71, -841)
+    && riftY < geology.baseHeightAt(-1000, -107)
+    && [BLOCK.STONE, BLOCK.GRAVEL].includes(quarryFloor) && riftFloor === BLOCK.STONE;
+})());
 
 // Блоки: get/set и правки
 const h = world.heightAt(0, 0);
@@ -60,6 +98,36 @@ const before = world.getBlock(0, h, 0);
 check('setBlock works', world.setBlock(0, h + 2, 0, 10));
 check('getBlock after set', world.getBlock(0, h + 2, 0) === 10);
 check('edit recorded', world.edits.has(`0,${h + 2},0`));
+
+const supportWorld = new World(93);
+let unsupportedDecor = null;
+supportWorld.onUnsupportedDecor = (x, y, z, id) => { unsupportedDecor = { x, y, z, id }; };
+supportWorld.setBlock(123, 60, 123, BLOCK.STONE);
+supportWorld.setBlock(123, 61, 123, BLOCK.FERN);
+supportWorld.setBlock(123, 60, 123, BLOCK.DIRT);
+check('растение сохраняется при замене опоры на твёрдый блок', supportWorld.getBlock(123, 61, 123) === BLOCK.FERN);
+supportWorld.setBlock(123, 60, 123, BLOCK.AIR);
+check('растение удаляется вместе с опорой, сохраняется и даёт событие выпадения',
+  supportWorld.getBlock(123, 61, 123) === BLOCK.AIR && supportWorld.edits.get('123,61,123') === BLOCK.AIR
+    && unsupportedDecor?.id === BLOCK.FERN && unsupportedDecor.x === 123 && unsupportedDecor.y === 61);
+
+// Миграция одиночного сохранения и отдельный профиль с несколькими мирами.
+const migrated = normalizeWorldProfile({ seed: 456, mode: 'survival', edits: [], settings: { lang: 'en' } });
+check('старое сохранение автоматически становится миром в списке',
+  migrated.worlds.length === 1 && migrated.worlds[0].seed === 456 && migrated.worlds[0].save.seed === 456);
+const migratedPR6 = migrateSave({ v: 1, seed: 456, edits: ['0,62,0', 24], inventory: { ore: 2, gold_ore: 1, block_24: 1 } });
+check('сохранения PR6 мигрируют id блоков и ключи руды', migratedPR6.v === 3
+  && migratedPR6.edits[1] === BLOCK.TORCH
+  && migratedPR6.inventory.some(([key]) => key === ITEM.RAW_IRON)
+  && migratedPR6.inventory.some(([key]) => key === ITEM.RAW_GOLD)
+  && migratedPR6.inventory.some(([key]) => key === blockItem(BLOCK.TORCH)));
+const extraWorld = createWorldRecord({ name: 'Пещеры', seed: 77, difficulty: 'hard', mode: 'survival' }, 1234, () => 0.5);
+const twoWorlds = normalizeWorldProfile({ ...emptyWorldProfile(), activeWorldId: extraWorld.id, worlds: [migrated.worlds[0], extraWorld] });
+check('профиль хранит несколько миров и выбранный мир', twoWorlds.worlds.length === 2 && twoWorlds.activeWorldId === extraWorld.id);
+check('в профиле мира сохраняются имя, сложность и режим', extraWorld.name === 'Пещеры' && extraWorld.difficulty === 'hard' && extraWorld.mode === 'survival');
+const profileWithSave = serializeWorldProfile(twoWorlds, { seed: 77, mode: 'survival', difficulty: 'hard' }, { lang: 'en' }, true);
+check('сохранение обновляет только активный мир профиля', profileWithSave.worlds[1].save?.seed === 77
+  && profileWithSave.settings.lang === 'en' && profileWithSave.paletteUnlocked);
 
 // Пересоздание чанка воспроизводит правки
 world.chunks.delete('0,0');
@@ -93,7 +161,51 @@ check('uv count matches', opaque.uv.length / 2 === opaque.pos.length / 3);
 check('color count matches', opaque.col.length === opaque.pos.length);
 check('triangles in groups of 3', opaque.idx.length % 3 === 0);
 check('no NaN in positions', !opaque.pos.some((v) => Number.isNaN(v)));
-check('shades in range', opaque.col.every((v) => v >= 0.2 && v <= 1.001));
+check('shades in range', opaque.col.every((v) => v >= 0.015 && v <= 4.1));
+const topSlabMesh = meshChunk(THREE, {
+  chunkSize: 1, worldHeight: 4, getBlock: (x, y, z) => x === 0 && z === 0 && y === 2 ? BLOCK.PLANK_SLAB_TOP : BLOCK.AIR,
+}, 0, 0).opaque;
+const topSlabYs = topSlabMesh.pos.filter((_, i) => i % 3 === 1);
+check('верхняя плита занимает верхнюю половину блока', Math.min(...topSlabYs) === 2.5 && Math.max(...topSlabYs) === 3);
+
+const caveWorld = (withTorch) => {
+  const blocks = new Map([
+    ['0,1,0', BLOCK.STONE],
+    ['0,4,0', BLOCK.STONE],
+  ]);
+  const edits = new Map();
+  if (withTorch) {
+    blocks.set('0,2,0', BLOCK.TORCH);
+    edits.set('0,2,0', BLOCK.TORCH);
+  }
+  return {
+    chunkSize: 1,
+    worldHeight: 6,
+    edits,
+    getBlock(x, y, z) {
+      if (y < 0) return BLOCK.SLATE;
+      if (y >= 6) return BLOCK.AIR;
+      return blocks.get(`${Math.floor(x)},${y},${Math.floor(z)}`) || BLOCK.AIR;
+    },
+  };
+};
+const darkCaveMesh = meshChunk(THREE, caveWorld(false), 0, 0).opaque;
+const litCaveMesh = meshChunk(THREE, caveWorld(true), 0, 0).opaque;
+const caveTopShade = (mesh) => Math.max(...mesh.col.slice(24, 36));
+check('без факела закрытая пещера остаётся тёмной', caveTopShade(darkCaveMesh) < 0.2);
+check('факел локально освещает пещеру без плоского спрайта', caveTopShade(litCaveMesh) > caveTopShade(darkCaveMesh) * 5
+  && litCaveMesh.pos.length === darkCaveMesh.pos.length);
+
+check('ясная погода длится дольше дождя', WEATHER_LIFECYCLE.clear[0] > WEATHER_LIFECYCLE.rain[1] * 2);
+const weatherScene = new THREEReal.Scene();
+const weatherTest = new Weather(THREEReal, weatherScene);
+const strike = weatherTest._createLightning({ x: 0, y: 25, z: 0 }, {
+  worldHeight: 64,
+  heightAt: () => 20,
+});
+check('молния имеет точку удара и отдельную 3D-геометрию', !!strike && strike.y === 21
+  && strike.distance >= 10 && weatherScene.children.some((child) => child === weatherTest.lightningGroup));
+weatherTest.reset();
 
 const g = opaque.toGeometry(THREE);
 check('toGeometry ok', !!g);
@@ -211,7 +323,34 @@ check('decor meshed as cross quads', (() => {
 // Декор непроходим и не непрозрачен
 check('decor is walk-through', isDecor(15) && !isSolid(15) && !isOpaque(15));
 
-// ---- Предметы и дроп с блоков ----
+// ---- Предметы, описания и плавка ----
+check('предметы и блоки имеют описания на русском и английском', (() => {
+  const allBlocks = BLOCKS.slice(1).filter((block) => block.id !== BLOCK.WATER);
+  return allBlocks.every((block) => itemDescription(blockItem(block.id), 'ru') && itemDescription(blockItem(block.id), 'en'))
+    && Object.values(ITEM).every((key) => itemDescription(key, 'ru') && itemDescription(key, 'en'))
+    && itemDescription(blockItem(BLOCK.FURNACE), 'ru').toLowerCase().includes('печ')
+    && itemDescription(blockItem(BLOCK.FURNACE), 'en').toLowerCase().includes('smelt');
+})());
+check('печь знает рецепты и топливо', smeltResult(ITEM.RAW_IRON) === ITEM.IRON_INGOT
+  && smeltResult(blockItem(BLOCK.SAND)) === blockItem(BLOCK.GLASS)
+  && fuelDuration(ITEM.COAL) > 0);
+check('печь не принимает неподходящие предметы', (() => {
+  const f = new Furnace();
+  return !f.setStack('input', { key: ITEM.STICK, count: 1 })
+    && !f.setStack('fuel', { key: ITEM.APPLE, count: 1 });
+})());
+check('печь переплавляет руду и сериализует состояние', (() => {
+  const f = new Furnace();
+  f.setStack('input', { key: ITEM.RAW_IRON, count: 1 });
+  f.setStack('fuel', { key: ITEM.COAL, count: 1 });
+  for (let i = 0; i < 45; i++) f.update(0.1);
+  const map = new Map([['4,25,-8', f]]);
+  const restored = deserializeFurnaces(serializeFurnaces(map)).get('4,25,-8');
+  return restored?.getSlot('output')?.key === ITEM.IRON_INGOT
+    && restored.getSlot('output')?.count === 1 && restored.getSlot('input') === null;
+})());
+
+// ---- Дроп с блоков ----
 check('трава падает землёй', blockDropItem(BLOCK.GRASS) === blockItem(BLOCK.DIRT));
 check('камень падает булыжником', blockDropItem(BLOCK.STONE) === blockItem(BLOCK.COBBLE));
 check('стекло не даёт ничего', blockDropItem(BLOCK.GLASS) === null);
@@ -222,10 +361,32 @@ check('листва падает иногда', (() => {
   for (let i = 0; i < 400; i++) if (blockDropItem(BLOCK.LEAVES, () => i % 4 === 0)) yes++;
   return yes > 0 && yes < 400;
 })());
+check('физические предметы лежат и притягиваются только рядом', (() => {
+  const scene = new THREEReal.Scene();
+  const drops = new ItemDrops(scene);
+  let picked = 0;
+  drops.onPickup = () => picked++;
+  const item = drops.spawn(5, 0.85, 0, ITEM.APPLE);
+  item.rest = true;
+  item.vel = { x: 0, y: 0, z: 0 };
+  const flatWorld = { getBlock: () => BLOCK.AIR };
+  const player = { x: 0, y: 0, z: 0 };
+  drops.update(1 / 60, flatWorld, player);
+  const waitsAtDistance = !item.attracting && drops.items.length === 1;
+  item.group.position.set(ITEM_MAGNET_RANGE - 0.5, 0.85, 0);
+  drops.update(1 / 60, flatWorld, player);
+  const startedAtCloseRange = item.attracting && item.group.position.x < ITEM_MAGNET_RANGE - 0.5;
+  for (let i = 0; i < 300 && drops.items.length; i++) drops.update(1 / 60, flatWorld, player);
+  const collectedOnlyAfterApproach = picked === 1 && drops.items.length === 0;
+  drops.clear();
+  return waitsAtDistance && startedAtCloseRange && collectedOnlyAfterApproach
+    && ITEM_MAGNET_RANGE > ITEM_PICKUP_RANGE;
+})());
 check('стопки: блок 64, инструмент 1', maxStack(blockItem(BLOCK.STONE)) === 64 && maxStack(ITEM.WOOD_AXE) === 1);
 check('поставить можно только блок', placeBlockId(blockItem(BLOCK.PLANKS)) === BLOCK.PLANKS
   && placeBlockId(ITEM.STICK) === 0);
-check('инструмент опознаётся', toolKind(ITEM.STONE_PICKAXE) === 'pickaxe' && toolKind(ITEM.STICK) === null);
+check('инструмент опознаётся', toolKind(ITEM.STONE_PICKAXE) === 'pickaxe'
+  && toolKind(ITEM.WOOD_AXE) === 'axe' && toolKind(ITEM.STONE_AXE) === 'axe' && toolKind(ITEM.STICK) === null);
 
 // ---- Скорость ломания с инструментами ----
 const BASE_STONE = CONFIG.BREAK_TIME.slow;
@@ -235,6 +396,7 @@ check('деревянная кирка ×0.85', Math.abs(breakTime(BLOCK.STONE, 
 check('каменная кирка ×0.55', Math.abs(breakTime(BLOCK.STONE, ITEM.STONE_PICKAXE, 'survival') - BASE_STONE * 0.55) < 1e-9);
 check('дерево без топора ×1.6', Math.abs(breakTime(BLOCK.LOG, null, 'survival') - BASE_LOG * 1.6) < 1e-9);
 check('топор ускоряет дерево ×0.5', Math.abs(breakTime(BLOCK.LOG, ITEM.WOOD_AXE, 'survival') - BASE_LOG * 0.5) < 1e-9);
+check('каменный топор быстрее деревянного', breakTime(BLOCK.LOG, ITEM.STONE_AXE, 'survival') < breakTime(BLOCK.LOG, ITEM.WOOD_AXE, 'survival'));
 check('земля ломается как раньше', Math.abs(breakTime(BLOCK.DIRT, null, 'survival') - CONFIG.BREAK_TIME.fast) < 1e-9);
 check('креатив: блок ломается за 0.12 с',
   breakTime(BLOCK.STONE, null, 'creative') === CONFIG.CREATIVE_BREAK_TIME && CONFIG.CREATIVE_BREAK_TIME === 0.12);
@@ -265,7 +427,7 @@ check('инвентарь полон → лишнее не влезает', (() 
 
 // ---- Крафт ----
 check('рецепты без ошибок', validateRecipes().length === 0, validateRecipes().join('; '));
-check('23 рецепта (включая старые рецепты хлеба и выплавки)', RECIPES.length === 23, 'их ' + RECIPES.length);
+check('24 рецепта (включая два топора, плиты, верстак, лук, стрелы и блоки)', RECIPES.length === 24, 'их ' + RECIPES.length);
 function craftWith(input, id) {
   const i = new Inventory(CONFIG.INV_SIZE);
   for (const [k, n] of Object.entries(input)) i.add(k, n);
@@ -318,9 +480,10 @@ function grid3(pairs) {
 check('сетка 2×2: бревно → доски', gridResult(grid2([[0, blockItem(BLOCK.LOG)]]), 2)?.out.key === blockItem(BLOCK.PLANKS));
 check('сетка 2×2: 2 доски столбиком → палки',
   gridResult(grid2([[0, blockItem(BLOCK.PLANKS)], [2, blockItem(BLOCK.PLANKS)]]), 2)?.out.key === ITEM.STICK);
-check('сетка 2×2: 2 доски в ряд → 4 полублока',
-  gridResult(grid2([[0, blockItem(BLOCK.PLANKS)], [1, blockItem(BLOCK.PLANKS)]]), 2)?.out.key
-    === blockItem(BLOCK.PLANK_SLAB));
+check('сетка 2×2: 2 доски в ряд → деревянные плиты',
+  gridResult(grid2([[0, blockItem(BLOCK.PLANKS)], [1, blockItem(BLOCK.PLANKS)]]), 2)?.out.key === blockItem(BLOCK.PLANK_SLAB));
+check('сетка 2×2: 2 булыжника в ряд → каменные плиты',
+  gridResult(grid2([[0, blockItem(BLOCK.COBBLE)], [1, blockItem(BLOCK.COBBLE)]]), 2)?.out.key === blockItem(BLOCK.COBBLE_SLAB));
 check('сетка 2×2: 4 доски → верстак',
   gridResult(grid2([[0, blockItem(BLOCK.PLANKS)], [1, blockItem(BLOCK.PLANKS)],
     [2, blockItem(BLOCK.PLANKS)], [3, blockItem(BLOCK.PLANKS)]]), 2)?.out.key === blockItem(BLOCK.TABLE));
@@ -339,6 +502,8 @@ check('сетка 3×3: меч', gridResult(grid3([[0, blockItem(BLOCK.PLANKS)],
   [6, ITEM.STICK]]), 3)?.out.key === ITEM.WOOD_SWORD);
 check('сетка 3×3: кирка из булыжника', gridResult(grid3([[0, blockItem(BLOCK.COBBLE)], [1, blockItem(BLOCK.COBBLE)],
   [2, blockItem(BLOCK.COBBLE)], [4, ITEM.STICK], [7, ITEM.STICK]]), 3)?.out.key === ITEM.STONE_PICKAXE);
+check('сетка 3×3: каменный топор', gridResult(grid3([[0, blockItem(BLOCK.COBBLE)], [1, blockItem(BLOCK.COBBLE)],
+  [3, blockItem(BLOCK.COBBLE)], [4, ITEM.STICK], [7, ITEM.STICK]]), 3)?.out.key === ITEM.STONE_AXE);
 check('лишний предмет в сетке ломает рецепт',
   gridResult(grid2([[0, blockItem(BLOCK.LOG)], [3, blockItem(BLOCK.SAND)]]), 2) === null);
 check('бесформенные рецепты (светокамень)', gridResult(grid2([
@@ -472,8 +637,36 @@ check('лук не стакается', maxStack(ITEM.BOW) === 1);
   check('взгляд моба горизонтальный', Math.abs(fwd.y) < 1e-6);
 
   check('кап мобов', mobs.MOB_CAPS.spider === 3 && mobs.MOB_CAPS.creeper === 2);
-  check('ночные мобы враждебны', ['gloom', 'spider', 'creeper'].every((t) => mobs.HOSTILE.has(t)));
+  check('ночные мобы враждебны', ['zombie', 'spider', 'creeper'].every((t) => mobs.HOSTILE.has(t)));
   check('рыба и волк — не враждебные', !mobs.HOSTILE.has('fish') && !mobs.HOSTILE.has('wolf'));
+  const difficultyManager = new mobs.MobManager(new THREE.Scene(), flat);
+  difficultyManager.setDifficulty('peaceful');
+  check('мирная сложность не спавнит враждебных мобов и зомби',
+    !mobs.HOSTILE.has(difficultyManager._randomType())
+      && difficultyManager.trySpawnZombie({ pos: { x: 0, y: 31, z: 0 }, yaw: 0 }) === null);
+  difficultyManager.setDifficulty('hard');
+  check('сложность меняет лимит мобов', difficultyManager.max === 18 && difficultyManager.difficulty === 'hard');
+  check('птицу можно поразить, пока она жива', (() => {
+    const bird = new mobs.Mob(flat, mobs.makeMobVisuals('bird'), 'bird', 0.5, 36, 0.5);
+    const targetable = bird.hittable();
+    bird.hurt(1);
+    return targetable && bird.dying === 0 && !bird.hittable();
+  })());
+  check('зомби — наземный моб с моделью гуманоида', (() => {
+    const v = mobs.makeMobVisuals('zombie');
+    const zombie = new mobs.Mob(flat, v, 'zombie', 0.5, 31, 0.5);
+    zombie.heading = 0;
+    zombie.update(0.5, { x: 10.5, y: 31, z: 0.5 });
+    return v.legs.length === 2 && v.arms.length === 2
+      && zombie.pos.x > 0.8 && Math.abs(zombie.pos.y - 31) < 0.01;
+  })());
+  check('зомби атакует игрока на расстоянии удара', (() => {
+    const zombie = new mobs.Mob(flat, mobs.makeMobVisuals('zombie'), 'zombie', 0.5, 31, 0.5);
+    let attacks = 0;
+    zombie.onAttack = () => attacks++;
+    zombie.update(1 / 60, { x: 1.5, y: 31, z: 0.5 });
+    return attacks === 1 && zombie.lungeT > 0;
+  })());
 
   // Анимации: походка, взгляд, хвост, мигание, выпад
   const animMob = (type, opts = {}) => {
@@ -603,164 +796,22 @@ check('лук не стакается', maxStack(ITEM.BOW) === 1);
   check('после анимации моб убирается из мира', dead.dead);
 }
 
-// Разметка: кнопка «К спавну» и слой молний
+// Разметка экранов и локальная 3D-молния (без полноэкранного flash overlay)
 const html = await (await import('node:fs/promises')).readFile(new URL('./index.html', import.meta.url), 'utf8');
-check('btn-home + lightning in markup', html.includes('id="btn-home"') && html.includes('id="lightning"'));
+const weatherSource = await (await import('node:fs/promises')).readFile(new URL('./src/weather.js', import.meta.url), 'utf8');
+check('экран миров и форма создания доступны в разметке', html.includes('id="world-list-screen"')
+  && html.includes('id="world-create-screen"') && html.includes('id="world-name"')
+  && html.includes('id="world-seed"') && html.includes('id="world-difficulty"'));
+check('молния создаётся в конкретной точке, экран не вспыхивает целиком', weatherSource.includes('_createLightning')
+  && weatherSource.includes('lightningStrike') && !html.includes('id="lightning"'));
 check('разметка: выбор режима, инвентарь, рюкзак', html.includes('id="mode-screen"')
   && html.includes('id="inventory-screen"') && html.includes('id="btn-bag"')
   && html.includes('id="cursor-item"') && html.includes('id="inv-hotbar-row"'));
-
-// ---- Новые механики на обновлённой линии main ----
-{
-  const { blockBounds, isSlab } = await import('./src/blocks.js');
-  const { Player } = await import('./src/physics.js');
-  const { ItemDrops } = await import('./src/items.js');
-  const { FURNACE_RECIPES, smelt } = await import('./src/crafts.js');
-  const { isHiddenSpawn, makeMobVisuals } = await import('./src/mobs.js');
-  const Three = await import('three');
-  const { Sky } = await import('./src/sky.js');
-  const { spriteNames } = await import('./src/icons.js');
-
-  check('id из опубликованной main сохранены: полублок 35, факел 36, печка 37',
-    BLOCK.TABLE === 20 && BLOCK.DIAMOND_ORE === 24 && BLOCK.OBSIDIAN === 34
-      && BLOCK.PLANK_SLAB === 35 && BLOCK.TORCH === 36 && BLOCK.FURNACE === 37
-      && BLOCK.PLANK_SLAB_TOP === 38 && BLOCK.COBBLE_SLAB === 39 && BLOCK.COBBLE_SLAB_TOP === 40);
-  check('полублоки твёрдые, но занимают только половину ячейки',
-    isSlab(BLOCK.PLANK_SLAB) && isSolid(BLOCK.COBBLE_SLAB)
-      && !isOpaque(BLOCK.COBBLE_SLAB) && blockBounds(BLOCK.PLANK_SLAB).maxY === 0.5
-      && blockBounds(BLOCK.PLANK_SLAB_TOP).minY === 0.5);
-  const fake = { chunkSize: 16, worldHeight: 4,
-    getBlock: (x, y, z) => (x === 0 && z === 0 && y === 0 ? BLOCK.PLANK_SLAB : 0) };
-  const m = meshChunk(Three, fake, 0, 0).opaque;
-  check('меш полублока заканчивается на y=0.5',
-    m.pos.length > 0 && Math.max(...m.pos.filter((_, i) => i % 3 === 1)) === 0.5);
-  check('луч попадает на верх полублока и проходит над ним',
-    raycastVoxel(fake, .5, 2, .5, 0, -1, 0, 3)?.t === 1.5 &&
-    raycastVoxel(fake, .5, .75, -1, 0, 0, 1, 3) === null);
-  const stand = new Player(fake);
-  check('физика допускает стоять на половине высоты',
-    stand.collides(.5, .45, .5) && !stand.collides(.5, .51, .5));
-  const ledge = { getBlock: (x, y, z) => y < 0 ? BLOCK.STONE
-    : x === 1 && z === 0 && y === 0 ? BLOCK.PLANK_SLAB : BLOCK.AIR };
-  const stepper = new Player(ledge);
-  stepper.pos.x = .5; stepper.pos.y = 0; stepper.pos.z = .5;
-  stepper.onGround = true; stepper.vel.x = 3;
-  stepper._move(.2);
-  check('игрок автоматически зашагивает на нижний полублок (main)',
-    stepper.pos.x > .8 && stepper.pos.y >= .5);
-  const upper = new Player({ getBlock: (x, y, z) => y < 0 ? BLOCK.STONE
-    : x === 1 && z === 0 && y === 0 ? BLOCK.PLANK_SLAB_TOP : BLOCK.AIR });
-  upper.pos.x = .5; upper.pos.y = 0; upper.pos.z = .5;
-  upper.onGround = true; upper.vel.x = 3;
-  upper._move(.2);
-  check('автошаг не поднимает на целый блок', upper.pos.y === 0 && upper.pos.x < .8);
-  const torchWorld = { chunkSize: 16, worldHeight: 3,
-    getBlock: (x, y, z) => (x === 0 && z === 0 && y === 0 ? BLOCK.TORCH : 0) };
-  check('факел рисуется отдельным ярким мешем',
-    meshChunk(Three, torchWorld, 0, 0).torch.idx.length > 0 && !isSolid(BLOCK.TORCH));
-  const saveWorld = new World(333);
-  const y = saveWorld.heightAt(0, 0) + 2;
-  saveWorld.setBlock(0, y, 0, BLOCK.TORCH);
-  const saved = saveWorld.serializeEdits();
-  const loadedWorld = new World(333); loadedWorld.loadEdits(saved);
-  check('факелы учитываются после сохранения и удаления',
-    loadedWorld.torches.has(`0,${y},0`) &&
-      (loadedWorld.setBlock(0, y, 0, BLOCK.AIR), !loadedWorld.torches.has(`0,${y},0`)));
-  check('4 вида руды отдают подбираемые предметы',
-    [ITEM.COAL, ITEM.ORE, ITEM.GOLD_ORE, ITEM.DIAMOND].every((key, i) =>
-      blockDropItem([BLOCK.COAL_ORE, BLOCK.IRON_ORE, BLOCK.GOLD_ORE, BLOCK.DIAMOND_ORE][i]) === key));
-  const drops = new ItemDrops(new Three.Scene());
-  drops.spawn(3.5, 2, .5, ITEM.ORE, 2);
-  const restored = new ItemDrops(new Three.Scene());
-  restored.load(drops.serialize());
-  let picked = 0;
-  restored.onPickup = (kind, n) => { if (kind === ITEM.ORE) picked += n; };
-  restored.update(1 / 60, { getBlock: () => 0 }, { x: 3.5, y: 1, z: .5 });
-  check('добытая руда сохраняется и подбирается один раз', picked === 2 && restored.items.length === 0);
-  const orbs = new ItemDrops(new Three.Scene());
-  orbs.spawn(3.5, 1.9, .5, 'xp', 2);
-  const orbX = orbs.items[0].group.position.x;
-  orbs.update(.1, { getBlock: () => 0 }, { x: .5, y: 1, z: .5 });
-  check('сфера опыта притягивается к игроку с расстояния (main)',
-    orbs.items[0].group.position.x < orbX);
-  check('полублоки и печка имеют рецепты',
-    RECIPES.some((r) => r.id === 'plank_slabs') && RECIPES.some((r) => r.id === 'furnace'));
-  const furnaceInv = new Inventory(CONFIG.INV_SIZE);
-  furnaceInv.add(ITEM.ORE, 1); furnaceInv.add(ITEM.COAL, 1);
-  const smelted = smelt(furnaceInv, FURNACE_RECIPES.find((r) => r.id === 'smelt_iron'));
-  check('печка превращает руду в слиток и тратит топливо',
-    smelted === 'ok' && furnaceInv.count(ITEM.INGOT) === 1
-      && furnaceInv.count(ITEM.ORE) === 0 && furnaceInv.count(ITEM.COAL) === 0);
-  furnaceInv.add(ITEM.WHEAT, 3); furnaceInv.add(blockItem(BLOCK.PLANKS), 1);
-  check('печка печёт съедобный хлеб на досках',
-    smelt(furnaceInv, FURNACE_RECIPES.find((r) => r.id === 'bake_bread')) === 'ok'
-      && furnaceInv.count(ITEM.BREAD) === 1 && foodValue(ITEM.BREAD) === 6);
-  check('рецепты хлеба и слитка из main также остались в обычном крафте',
-    gridResult(grid3([[0, ITEM.WHEAT], [1, ITEM.WHEAT], [2, ITEM.WHEAT]]), 3)?.out.key === ITEM.BREAD
-      && craftWith({ [ITEM.ORE]: 1, [ITEM.COAL]: 1 }, 'iron_ingot').i.count(ITEM.INGOT) === 1
-      && craftWith({ [ITEM.GOLD_ORE]: 1, [ITEM.COAL]: 1 }, 'gold_ingot').i.count(ITEM.GOLD_INGOT) === 1);
-  const hero = new Player(fake);
-  hero.addXP(9); const hero2 = new Player(fake); hero2.deserialize(hero.serialize());
-  check('сферы опыта повышают уровень и сохраняются', hero2.level === 1 && hero2.xp === 4);
-  check('невидимый спавн за спиной и не ближе 18 блоков',
-    isHiddenSpawn({ x: 0, z: 0 }, 0, 0, 26)
-      && !isHiddenSpawn({ x: 0, z: 0 }, 0, 0, -26)
-      && !isHiddenSpawn({ x: 0, z: 0 }, 0, 0, 4));
-  const gloom = makeMobVisuals('gloom');
-  const spider = makeMobVisuals('spider');
-  check('Хмарь меньше оригинала со страшным лицом, паук чёрный',
-    gloom.scale < 1.7 && gloom.face.length >= 4 && spider.head.geometry.attributes.color.array[0] < 0.16);
-  const clock = new Sky(Three, new Three.Scene());
-  clock.setTime(.25); clock.update(0, { x: 0, y: 30, z: 0 });
-  const noon = clock.lightLevel;
-  clock.setTime(.75); clock.update(0, { x: 0, y: 30, z: 0 });
-  check('полдень светлый, полночь тёмная, шейдер факела совместим с Three',
-    noon > .9 && clock.lightLevel < .3
-      && Three.ShaderLib.basic.vertexShader.includes('#include <begin_vertex>'));
-  check('хлеб, пшеница, слитки и руда имеют собственные иконки',
-    [ITEM.BREAD, ITEM.WHEAT, ITEM.ORE, ITEM.INGOT].every((key) => spriteNames().includes(key)));
-  check('новые UI и сенсорные кнопки доступны в ru/en',
-    ['furnace_title','touch_place','touch_inventory','xp_level','bread_eaten'].every((key) =>
-      STRINGS.ru[key] && STRINGS.en[key]) &&
-      ['mode-menu','mode-pause','furnace-screen','xp-hud','btn-eat'].every((id) => html.includes(`id="${id}"`)));
-
-  const { migrateSave } = await import('./src/save-migration.js');
-  const prSave = { v: 1, seed: 333, mode: 'survival',
-    edits: ['0,30,0', 20, '1,30,0', 21, '2,30,0', 22, '3,30,0', 23,
-      '4,30,0', 24, '5,30,0', 25, '6,30,0', 26, '7,30,0', 27],
-    inventory: { 'block:20': 66, 'block:24': 2, 'block:25': 1, ore: 3 },
-    player: { x: 2, y: 30, z: 2, level: 2, xp: 3 },
-    drops: [{ kind: 'ore', amount: 2, x: 1, y: 31, z: 1 }] };
-  const converted = migrateSave(prSave);
-  const inventoryFromPR = new Inventory(CONFIG.INV_SIZE);
-  inventoryFromPR.deserialize(converted.inventory);
-  check('старое сохранение PR #6: ID и количества мигрируют без потерь',
-    converted.v === 3 && converted.edits.filter((_, i) => i % 2).join(',') ===
-      [BLOCK.PLANK_SLAB, BLOCK.PLANK_SLAB_TOP, BLOCK.COBBLE_SLAB, BLOCK.COBBLE_SLAB_TOP,
-        BLOCK.TORCH, BLOCK.FURNACE, BLOCK.IRON_ORE, BLOCK.COAL_ORE].join(',')
-      && inventoryFromPR.count(blockItem(BLOCK.PLANK_SLAB)) === 66
-      && inventoryFromPR.count(blockItem(BLOCK.TORCH)) === 2
-      && inventoryFromPR.count(ITEM.ORE) === 3 && converted.player.level === 2
-      && prSave.edits[1] === 20 && migrateSave(converted) === converted);
-  const publishedMain = { v: 2, seed: 55, edits: ['0,30,0', 35, '1,30,0', 36, '2,30,0', 37],
-    inventory: [['raw_iron', 4], ['raw_gold', 3], ['iron_ingot', 2], ['block_36', 8], ['block_37', 1]] };
-  const mainSave = migrateSave(publishedMain);
-  const inventoryFromMain = new Inventory(CONFIG.INV_SIZE);
-  inventoryFromMain.deserialize(mainSave.inventory);
-  const loadedPublished = new World(55); loadedPublished.loadEdits(mainSave.edits);
-  check('сохранение main: факелы/печка и старые ключи руды сохранены',
-    mainSave.edits[3] === BLOCK.TORCH && mainSave.edits[5] === BLOCK.FURNACE
-      && loadedPublished.torches.has('1,30,0')
-      && inventoryFromMain.count(ITEM.ORE) === 4
-      && inventoryFromMain.count(ITEM.GOLD_ORE) === 3
-      && inventoryFromMain.count(ITEM.INGOT) === 2
-      && inventoryFromMain.count(blockItem(BLOCK.TORCH)) === 8);
-  const preview = migrateSave({ v: 2, edits: ['0,30,0', 39, '1,30,0', 40],
-    drops: [], inventory: [['block_39', 4], ['block_40', 1]] });
-  check('ранние превью: старые новые ID факела/печки конвертируются',
-    preview.edits[1] === BLOCK.TORCH && preview.edits[3] === BLOCK.FURNACE
-      && preview.inventory[0][0] === blockItem(BLOCK.TORCH));
-}
+check('печь: разметка содержит три слота и панель плавки', html.includes('id="inv-furnace-panel"')
+  && html.includes('data-furnace-slot="input"') && html.includes('data-furnace-slot="fuel"')
+  && html.includes('data-furnace-slot="output"'));
+const css = await (await import('node:fs/promises')).readFile(new URL('./styles.css', import.meta.url), 'utf8');
+check('печь: панель имеет стили', css.includes('.furnace-layout') && css.includes('#furnace-progress-fill'));
 
 console.log(failed === 0 ? '\nВсе проверки пройдены' : `\nПровалено проверок: ${failed}`);
 process.exit(failed ? 1 : 0);

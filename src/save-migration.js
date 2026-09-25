@@ -14,7 +14,7 @@ const PREVIEW_BLOCKS = {
   36: BLOCK.PLANK_SLAB_TOP, 37: BLOCK.COBBLE_SLAB,
   38: BLOCK.COBBLE_SLAB_TOP, 39: BLOCK.TORCH, 40: BLOCK.FURNACE,
 };
-const MAIN_ITEMS = { raw_iron: 'ore', raw_gold: 'gold_ore', iron_ingot: 'ingot' };
+const MAIN_ITEMS = { ore: 'raw_iron', gold_ore: 'raw_gold', ingot: 'iron_ingot' };
 
 export function migrateSave(data) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) return data;

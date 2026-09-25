@@ -1,12 +1,13 @@
 // VoxelCraft — точка входа: игровой цикл, чанки, строительство, сохранения
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
-import { BLOCK, BLOCKS, STARTER_PALETTE, BUILDER_PALETTE, breakKind, blockBounds, isSlab, isSolid, isDecor } from './blocks.js';
+import { BLOCK, BLOCKS, STARTER_PALETTE, BUILDER_PALETTE, breakKind, isSolid, isDecor } from './blocks.js';
 import { ITEM, blockItem, blockIdOf, blockDropItem, breakTime, itemDamage, itemName, placeBlockId, isBlockItem, itemDef, foodValue } from './items.js';
 import { Inventory, HOTBAR_SIZE } from './inventory.js';
-import { craft, needsTable, FURNACE_RECIPES, furnaceFuel, smelt } from './crafts.js';
+import { craft, needsTable } from './crafts.js';
+import { Furnace, serializeFurnaces, deserializeFurnaces } from './furnace.js';
 import { InventoryUI, setFullToast } from './inventory-ui.js';
-import { itemIconCanvas, itemIconEl } from './icons.js';
+import { itemIconCanvas } from './icons.js';
 import { buildAtlas, tileColor, tileTexture, CRACK_TILES } from './textures.js';
 import { World } from './world.js';
 import { migrateSave } from './save-migration.js';
@@ -16,7 +17,7 @@ import { Player } from './physics.js';
 import { raycastVoxel } from './raycast.js';
 import { Particles } from './particles.js';
 import { Weather } from './weather.js';
-import { ItemDrops } from './items.js';
+import { ItemDrops, XpOrbs } from './items.js';
 import { Arrows, buildArrowModel, arrowMaterials } from './projectiles.js';
 import { Eating } from './eating.js';
 import { Sky } from './sky.js';
@@ -25,6 +26,8 @@ import { Input } from './input.js';
 import { UI } from './ui.js';
 import { I18n } from './i18n.js';
 import { Ysdk } from './ysdk.js';
+import { updateRunShake } from './camera-effects.js';
+import { createWorldRecord, emptyWorldProfile, normalizeWorldProfile, serializeWorldProfile } from './world-store.js';
 
 // ---------------------------------------------------------------- Инициализация
 const i18n = new I18n('ru');
@@ -46,16 +49,17 @@ const settings = {
 let state = 'loading';           // loading | menu | game | pause | inventory
 let world = null;
 let player = null;
-let mode = 'survival';           // 'survival' | 'creative'
-let menuMode = 'survival';
+let mode = 'creative';           // 'survival' | 'creative'
+let difficulty = 'normal';       // 'peaceful' | 'easy' | 'normal' | 'hard'
 let inventory = new Inventory(CONFIG.INV_SIZE);
-let activeFurnace = null;
+let furnaceStates = new Map(); // координаты печи -> сохранённая плавильная камера
 let hotbarIndex = 0;
 let saveData = null;
+let worldProfile = emptyWorldProfile();
+let activeWorldRecord = null;
 let sessionStart = 0;
 let interstitialShown = 0;
 let debugVisible = false;
-let pickToastT = 0;              // чтобы не спамить тостами о подобранных блоках
 let tableClosedT = 0;            // когда закрыли верстак (защита от повторного открытия)
 
 function isCreative() { return mode === 'creative'; }
@@ -68,6 +72,39 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 400);
 camera.rotation.order = 'YXZ';
+
+// Объёмный факел: деревянная рукоять, два слоя пламени, мягкий ореол и локальная лампа.
+const torchStemGeo = new THREE.CylinderGeometry(0.055, 0.075, 0.64, 6);
+const torchOuterFlameGeo = new THREE.ConeGeometry(0.135, 0.3, 6);
+const torchInnerFlameGeo = new THREE.ConeGeometry(0.075, 0.2, 5);
+const torchStemMat = new THREE.MeshBasicMaterial({ color: 0x744925 });
+const torchOuterFlameMat = new THREE.MeshBasicMaterial({ color: 0xff701b });
+const torchInnerFlameMat = new THREE.MeshBasicMaterial({ color: 0xffe17a });
+const torchGlowCanvas = document.createElement('canvas');
+torchGlowCanvas.width = torchGlowCanvas.height = 64;
+const glowCtx = torchGlowCanvas.getContext('2d');
+const glowGradient = glowCtx.createRadialGradient(32, 32, 2, 32, 32, 32);
+glowGradient.addColorStop(0, 'rgba(255, 239, 170, 0.95)');
+glowGradient.addColorStop(0.22, 'rgba(255, 151, 45, 0.6)');
+glowGradient.addColorStop(1, 'rgba(255, 110, 20, 0)');
+glowCtx.fillStyle = glowGradient;
+glowCtx.fillRect(0, 0, 64, 64);
+const torchGlowTexture = new THREE.CanvasTexture(torchGlowCanvas);
+torchGlowTexture.colorSpace = THREE.SRGBColorSpace;
+const torchGlowMat = new THREE.SpriteMaterial({
+  map: torchGlowTexture, color: 0xffa542, transparent: true, opacity: 0.62,
+  depthWrite: false, blending: THREE.AdditiveBlending,
+});
+const heldTorchStemMat = new THREE.MeshBasicMaterial({ color: 0x744925, transparent: true, depthTest: false, depthWrite: false });
+const heldTorchOuterMat = new THREE.MeshBasicMaterial({ color: 0xff701b, transparent: true, depthTest: false, depthWrite: false });
+const heldTorchInnerMat = new THREE.MeshBasicMaterial({ color: 0xffe17a, transparent: true, depthTest: false, depthWrite: false });
+const heldTorchGlowMat = torchGlowMat.clone();
+heldTorchGlowMat.depthTest = false;
+heldTorchGlowMat.depthWrite = false;
+for (const material of [heldTorchStemMat, heldTorchOuterMat, heldTorchInnerMat, heldTorchGlowMat]) {
+  material.userData.emissive = true;
+}
+const torchChunkGroups = new Map();
 
 const atlasCanvas = buildAtlas();
 const atlasTex = new THREE.CanvasTexture(atlasCanvas);
@@ -82,69 +119,14 @@ const waterMat = new THREE.MeshBasicMaterial({
   depthWrite: false, side: THREE.DoubleSide,
 });
 
-const torchMat = new THREE.MeshBasicMaterial({ map: atlasTex, vertexColors: true, alphaTest: 0.5, side: THREE.DoubleSide });
-
-// Недорогой локальный свет на вершинах: до шести ближайших факелов.
-// Днём влияние выключено, ночью блоки вокруг реально освещаются, но
-// количество источников и сложность шейдера не зависят от размера мира.
-const TORCH_LIGHTS = 6;
-const torchPositions = Array.from({ length: TORCH_LIGHTS }, () => new THREE.Vector3(0, -1000, 0));
-terrainMat.onBeforeCompile = (shader) => {
-  shader.uniforms.torchPositions = { value: torchPositions };
-  shader.uniforms.torchNight = { value: 0 };
-  shader.uniforms.torchActive = { value: 0 };
-  shader.vertexShader = shader.vertexShader
-    .replace('#include <common>', '#include <common>\nuniform vec3 torchPositions[6];\nuniform float torchActive;\nvarying float vTorchLight;')
-    .replace('#include <begin_vertex>', `#include <begin_vertex>
-      vTorchLight = 0.0;
-      if (torchActive > 0.5) {
-        // Вершины меша локальны для чанка, а позиции факелов — мировые.
-        vec3 worldPos = (modelMatrix * vec4(position, 1.0)).xyz;
-        for (int i = 0; i < 6; i++) {
-          vec3 delta = worldPos - torchPositions[i];
-          float falloff = max(0.0, 1.0 - dot(delta, delta) / 36.0);
-          vTorchLight = max(vTorchLight, falloff * falloff);
-        }
-      }`);
-  shader.fragmentShader = shader.fragmentShader
-    .replace('#include <common>', '#include <common>\nuniform float torchNight;\nvarying float vTorchLight;')
-    .replace('#include <color_fragment>', `#include <color_fragment>
-      diffuseColor.rgb *= vec3(1.0) + vec3(2.9, 1.9, 0.8) * (vTorchLight * torchNight);`);
-  terrainMat.userData.torchShader = shader;
-};
-let torchRefreshT = 0;
-let nearbyTorchCount = 0;
-function updateTorchLights(dt, level) {
-  const shader = terrainMat.userData.torchShader;
-  if (shader) {
-    shader.uniforms.torchNight.value = Math.max(0, 1 - level);
-    shader.uniforms.torchActive.value = nearbyTorchCount > 0 && level < 0.98 ? 1 : 0;
-  }
-  if (!world || !player) return;
-  torchRefreshT -= dt;
-  if (torchRefreshT > 0) return;
-  torchRefreshT = 0.35;
-  const nearby = [];
-  for (const key of world.torches) {
-    const [x, y, z] = key.split(',').map(Number);
-    const d2 = (x + 0.5 - player.pos.x) ** 2 + (y - player.pos.y) ** 2 + (z + 0.5 - player.pos.z) ** 2;
-    if (d2 < 12 * 12) nearby.push({ x, y, z, d2 });
-  }
-  nearby.sort((a, b) => a.d2 - b.d2);
-  nearbyTorchCount = Math.min(TORCH_LIGHTS, nearby.length);
-  if (shader) shader.uniforms.torchActive.value = nearbyTorchCount > 0 && level < 0.98 ? 1 : 0;
-  for (let i = 0; i < TORCH_LIGHTS; i++) {
-    const t = nearby[i];
-    torchPositions[i].set(t ? t.x + 0.5 : 0, t ? t.y + 0.65 : -1000, t ? t.z + 0.5 : 0);
-  }
-}
-
 const sky = new Sky(THREE, scene);
 sky.viewDistance = settings.viewDistance;
 const particles = new Particles(THREE, scene);
 const mobManager = new MobManager(scene, null);
 const weather = new Weather(THREE, scene);
 const items = new ItemDrops(scene);
+const xpOrbs = new XpOrbs(scene);
+let totalXp = 0;
 const projectiles = new Arrows(scene);
 let bowCharge = 0;               // 0..1 — натяжение тетивы
 let bowCharging = false;
@@ -159,17 +141,17 @@ let eatFullT = 0;                // пауза между подсказками
 let attackCd = 0;
 let shakeT = 0;                  // встряска камеры при уроне
 let decorBreakCd = 0;            // пауза между мгновенными срывами растений
-let gloomT = 20;
-let gloomWarned = false;
+let zombieT = 6;
+let zombieWarned = false;
 // Звуки мобов с затуханием по расстоянию
 mobManager.onSound = (kind, dist, type) => {
   const vol = 1 / (1 + dist * 0.35);
   if (kind === 'hurt') sfx.mobHurt(type);
-  else if (kind === 'growl') sfx.gloomGrowl(vol);
+  else if (kind === 'growl') sfx.zombieGroan(vol);
   else if (kind === 'hop') sfx.mobHop(vol);
   else if (kind === 'bleat') sfx.bleat(vol);
   else if (kind === 'chirp') sfx.chirp(vol);
-  else if (kind === 'gloom') sfx.gloom(vol);
+  else if (kind === 'zombie') sfx.zombieAmbient(vol);
   else if (kind === 'die') sfx.mobDie();
   else if (kind === 'burn') sfx.burn();
   else if (kind === 'hiss') sfx.hiss();
@@ -195,7 +177,7 @@ scene.add(highlight);
 scene.add(camera);
 const hand = new THREE.Mesh(
   new THREE.BoxGeometry(0.16, 0.16, 0.55),
-  new THREE.MeshBasicMaterial({ color: 0xd9a27a, depthTest: false, depthWrite: false }),
+  new THREE.MeshBasicMaterial({ color: 0xd9a27a, transparent: true, opacity: 1, depthTest: false, depthWrite: false }),
 );
 hand.renderOrder = 999;
 const handPivot = new THREE.Group();
@@ -217,6 +199,7 @@ function swingHand(power = 1) {
 // В руке показывается выбранный предмет: блок — объёмным кубиком с текстурой атласа,
 // инструменты/палка/яблоко — плоской пиксель-арт иконкой.
 const heldGroup = new THREE.Group();
+heldGroup.renderOrder = 2000;
 handPivot.add(heldGroup);
 let heldKey = null;          // какой предмет сейчас в руке
 let _tileMats = null;
@@ -228,7 +211,10 @@ function tileMaterial(idx) {
       map: tileTexture(THREE, idx),
       depthTest: false,
       depthWrite: false,
+      // Оставляем в прозрачном render-pass: высокий renderOrder рисует блок поверх воды,
+      // а alphaTest сохраняет непрозрачные пиксели текстуры без цветного наложения.
       transparent: true,
+      opacity: 1,
       alphaTest: 0.5,
     }));
   }
@@ -245,7 +231,7 @@ function spriteMaterial(key) {
     tex.generateMipmaps = false;
     tex.colorSpace = THREE.SRGBColorSpace;
     SPRITE_MATS.set(key, new THREE.MeshBasicMaterial({
-      map: tex, transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide,
+      map: tex, transparent: true, opacity: 1, depthTest: false, depthWrite: false, side: THREE.DoubleSide,
     }));
   }
   return SPRITE_MATS.get(key);
@@ -257,12 +243,12 @@ const heldGeo = {
 };
 
 // Материалы объёмных моделей предметов (инструменты, палка, яблоко).
-// depthTest выключен — предмет в руке всегда рисуется поверх мира.
+// Прозрачный render-pass с большим renderOrder рисует их после воды и мира.
 const ITEM_MATS = new Map();
 function itemMat(color) {
   const key = color >>> 0;
   if (!ITEM_MATS.has(key)) {
-    const m = new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false });
+    const m = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1, depthTest: false, depthWrite: false });
     m.userData.baseColor = color;
     ITEM_MATS.set(key, m);
   }
@@ -335,11 +321,35 @@ function buildAppleModel() {
   return g;
 }
 
+function buildHeldTorchModel() {
+  const group = new THREE.Group();
+  const stem = new THREE.Mesh(torchStemGeo, heldTorchStemMat);
+  stem.position.y = 0.32;
+  stem.rotation.z = -0.08;
+  const flame = new THREE.Group();
+  flame.position.y = 0.62;
+  const outer = new THREE.Mesh(torchOuterFlameGeo, heldTorchOuterMat);
+  const inner = new THREE.Mesh(torchInnerFlameGeo, heldTorchInnerMat);
+  outer.position.y = inner.position.y = 0.15;
+  flame.add(outer, inner);
+  const glow = new THREE.Sprite(heldTorchGlowMat);
+  glow.position.y = 0.79;
+  glow.scale.set(1.2, 1.2, 1);
+  group.add(stem, flame, glow);
+  group.scale.setScalar(0.62);
+  group.rotation.set(-0.2, -0.55, 0.72);
+  group.position.set(0.05, -0.08, -0.32);
+  group.traverse((object) => { if (object.isMesh || object.isSprite) object.renderOrder = 2000; });
+  return group;
+}
+
 function buildHeldMesh(key) {
   const def = itemDef(key);
   if (!def) return null;
   let mesh;
-  if (def.kind === 'block') {
+  if (def.kind === 'block' && def.block === BLOCK.TORCH) {
+    mesh = buildHeldTorchModel();
+  } else if (def.kind === 'block') {
     const b = BLOCKS[def.block];
     const [top, bottom, side] = b.tiles;
     const mats = [
@@ -374,7 +384,7 @@ function buildHeldMesh(key) {
     mesh.position.set(0.04, -0.02, -0.3);
     mesh.userData.isSprite = true;
   }
-  mesh.renderOrder = 1000;
+  mesh.renderOrder = 2000;
   return mesh;
 }
 
@@ -389,70 +399,83 @@ function updateHeldItem() {
   if (mesh) heldGroup.add(mesh);
 }
 
-// ---------------------------------------------------------------- Лук в руке (вид от первого лица)
-// Дуга собрана из сегментов окружности, тетива тянется при натяжении,
-// на тетиве лежит готовая стрела
-const BOW_TIP = 0.2539;
-const BOW_ANG = 1.0;
+// ---------------------------------------------------------------- Лук в руке (вид от первого лица) — детальный и крупный
+// Дуга из 10 сегментов, утолщённая рукоять, обмотка, выемки под тетиву, рука обхватывает лук
+const BOW_TIP = 0.32;
+const BOW_ANG = 1.12;
 const bowPivot = new THREE.Group();
 const bowMats = {
   wood: bowMaterial(0x8b5a2b),
-  woodDark: bowMaterial(0x633f1a),
-  edge: bowMaterial(0xbb884d),
-  brass: bowMaterial(0xdac47e),
-  string: bowMaterial(0xe8e8ee),
+  woodDark: bowMaterial(0x5a3816),
+  woodLight: bowMaterial(0xa67c3a),
+  string: bowMaterial(0xeef0f5),
   hand: bowMaterial(0xc98f63),
+  wrap: bowMaterial(0x3a2a12),
 };
-bowPivot.scale.setScalar(1.5); // лук крупнее исходной модели, с читаемой тетивой
 function bowMaterial(color) {
-  const m = new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false });
+  const m = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1, depthTest: false, depthWrite: false });
   m.userData.baseColor = color;
   return m;
 }
 let bowStringUpper, bowStringLower;
 {
-  const R = 0.3, D = 0.16, SEG = 6;
+  const R = 0.38, D = 0.20, SEG = 10;
   for (let i = 0; i < SEG; i++) {
     const a0 = -BOW_ANG + 2 * BOW_ANG * (i / SEG);
     const a1 = -BOW_ANG + 2 * BOW_ANG * ((i + 1) / SEG);
     const y0 = R * Math.sin(a0), z0 = D - R * Math.cos(a0);
     const y1 = R * Math.sin(a1), z1 = D - R * Math.cos(a1);
     const len = Math.hypot(y1 - y0, z1 - z0);
-    const grip = i === 2 || i === 3;
+    const isGrip = i >= 4 && i <= 5;
+    const isTip = i === 0 || i === SEG - 1;
+    const w = isTip ? 0.022 : isGrip ? 0.034 : 0.028;
+    const d = isGrip ? 0.042 : 0.038;
     const seg = new THREE.Mesh(
-      new THREE.BoxGeometry(0.026, len * 1.1, 0.036),
-      grip ? bowMats.woodDark : bowMats.wood,
+      new THREE.BoxGeometry(w, len * 1.08, d),
+      isGrip ? bowMats.wrap : (i % 2 === 0 ? bowMats.wood : bowMats.woodLight),
     );
     seg.position.set(0, (y0 + y1) / 2, (z0 + z1) / 2);
     seg.rotation.x = (a0 + a1) / 2;
     bowPivot.add(seg);
-    // Светлая накладка подчёркивает изгиб каждого плеча.
-    const edge = new THREE.Mesh(new THREE.BoxGeometry(0.012, len * 0.9, 0.015), bowMats.edge);
-    edge.position.set(0.018, (y0 + y1) / 2, (z0 + z1) / 2 + 0.02);
-    edge.rotation.x = seg.rotation.x;
-    bowPivot.add(edge);
+    if (isTip) {
+      const notch = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.025, 0.025), bowMats.wrap);
+      notch.position.set(0, y0 > 0 ? BOW_TIP : -BOW_TIP, D - R * Math.cos(i === 0 ? -BOW_ANG : BOW_ANG) + 0.01);
+      bowPivot.add(notch);
+    }
   }
-  for (const sign of [-1, 1]) {
-    const tip = new THREE.Mesh(new THREE.BoxGeometry(0.065, 0.055, 0.062), bowMats.brass);
-    tip.position.set(0, sign * BOW_TIP, D - R * Math.cos(BOW_ANG));
-    bowPivot.add(tip);
+  // обмотка рукояти — дополнительные кольца
+  for (let k = -1; k <= 1; k++) {
+    const wrapRing = new THREE.Mesh(new THREE.BoxGeometry(0.038, 0.022, 0.046), bowMats.wrap);
+    wrapRing.position.set(0, k * 0.045, D - R + 0.015);
+    bowPivot.add(wrapRing);
   }
-  const stringGeo = new THREE.BoxGeometry(0.011, 1, 0.011).translate(0, -0.5, 0);
+  const stringGeo = new THREE.BoxGeometry(0.013, 1, 0.013).translate(0, -0.5, 0);
   bowStringUpper = new THREE.Mesh(stringGeo, bowMats.string);
   bowStringUpper.position.set(0, BOW_TIP, 0);
   bowStringLower = new THREE.Mesh(stringGeo, bowMats.string);
   bowStringLower.position.set(0, -BOW_TIP, 0);
   bowStringLower.rotation.z = Math.PI;
   bowPivot.add(bowStringUpper, bowStringLower);
-  const fist = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.14, 0.13), bowMats.hand);
-  fist.position.set(0.005, -0.03, D - R + 0.035);
+  const fist = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.16, 0.14), bowMats.hand);
+  fist.position.set(0.008, -0.02, D - R + 0.04);
   bowPivot.add(fist);
+  const thumb = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.09, 0.08), bowMats.hand);
+  thumb.position.set(0.02, 0.06, D - R + 0.06);
+  thumb.rotation.z = 0.4;
+  bowPivot.add(thumb);
 }
-const nockedArrow = buildArrowModel(1, arrowMaterials());
+bowPivot.scale.setScalar(1.28);
+const nockedArrow = buildArrowModel(1.18, arrowMaterials());
 nockedArrow.rotation.y = Math.PI;
 nockedArrow.visible = false;
 nockedArrow.traverse((o) => {
-  if (o.isMesh) { o.material.depthTest = false; o.material.depthWrite = false; }
+  if (o.isMesh) {
+    o.material.transparent = true;
+    o.material.opacity = 1;
+    o.material.depthTest = false;
+    o.material.depthWrite = false;
+    o.material.needsUpdate = true;
+  }
 });
 bowPivot.add(nockedArrow);
 bowPivot.visible = false;
@@ -490,7 +513,7 @@ function poseBow(dt, light) {
   bowPivot.rotation.set(0.06 - 0.04 * k + 0.2 * kick, -0.34 + 0.26 * k, 0.12 - 0.1 * k);
 
   const lum = 0.35 + 0.65 * light;
-  for (const m of [bowMats.wood, bowMats.woodDark, bowMats.edge, bowMats.brass, bowMats.string, bowMats.hand]) {
+  for (const m of [bowMats.wood, bowMats.woodDark, bowMats.string, bowMats.hand]) {
     m.color.setHex(m.userData.baseColor).multiplyScalar(lum);
   }
   const nockedBase = [0x9c7548, 0xd8dde6, 0xe0574c, 0xe0574c];
@@ -513,7 +536,7 @@ function finishEat() {
   player.heal(heal);
   ui.setHealth(player.hp, player.maxHp);
   sfx.burp();
-  ui.toast(i18n.t(key === ITEM.BREAD ? 'bread_eaten' : 'eat_ok'), 1400);
+  ui.toast(i18n.t('eat_ok'), 1400);
 }
 
 function updateHand(dt, light) {
@@ -549,6 +572,7 @@ function updateHand(dt, light) {
   // Приглушаем предмет в руке по уровню освещения (и меши, и вложенные группы)
   const k = 0.5 + 0.5 * light;
   const shadeMat = (m) => {
+    if (m.userData.emissive) return;
     if (m.userData.baseColor == null) m.userData.baseColor = m.color.getHex();
     m.color.setHex(m.userData.baseColor).multiplyScalar(k);
   };
@@ -559,6 +583,8 @@ function updateHand(dt, light) {
   });
 }
 let handBob = 0;
+let runBob = 0;
+const runShake = { duration: 0, strength: 0 };
 
 // Трещины при ломании блока (5 стадий)
 const crackMats = CRACK_TILES.map((t) => new THREE.MeshBasicMaterial({
@@ -573,16 +599,9 @@ const crackMesh = new THREE.Mesh(new THREE.BoxGeometry(1.005, 1.005, 1.005), cra
 crackMesh.visible = false;
 scene.add(crackMesh);
 
-function fitBlockOutline(mesh, hit, padding = 0) {
-  const b = blockBounds(hit.id);
-  mesh.position.set(hit.x + (b.minX + b.maxX) / 2, hit.y + (b.minY + b.maxY) / 2,
-    hit.z + (b.minZ + b.maxZ) / 2);
-  mesh.scale.set(b.maxX - b.minX + padding, b.maxY - b.minY + padding, b.maxZ - b.minZ + padding);
-}
-
 function showCrack(hit, progress) {
   crackMesh.visible = true;
-  fitBlockOutline(crackMesh, hit, 0.012);
+  crackMesh.position.set(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
   crackMesh.material = crackMats[Math.max(0, Math.min(4, Math.floor(progress * 5)))];
 }
 
@@ -637,9 +656,75 @@ function processQueue(limit) {
   }
 }
 
+function appendTorchVisual(root, wx, y, wz) {
+  const group = new THREE.Group();
+  group.position.set(wx + 0.5, y, wz + 0.5);
+  const stem = new THREE.Mesh(torchStemGeo, torchStemMat);
+  stem.position.y = 0.32;
+  stem.rotation.z = -0.08;
+  group.add(stem);
+
+  const flame = new THREE.Group();
+  flame.position.y = 0.62;
+  const outer = new THREE.Mesh(torchOuterFlameGeo, torchOuterFlameMat);
+  outer.position.y = 0.15;
+  const inner = new THREE.Mesh(torchInnerFlameGeo, torchInnerFlameMat);
+  inner.position.y = 0.15;
+  flame.add(outer, inner);
+  group.add(flame);
+
+  const glow = new THREE.Sprite(torchGlowMat);
+  glow.position.y = 0.79;
+  glow.scale.set(1.2, 1.2, 1);
+  group.add(glow);
+  const light = new THREE.PointLight(0xffa347, 1.15, 8.5, 2);
+  light.position.y = 0.76;
+  group.add(light);
+  root.add(group);
+  root.userData.torches.push({ flame, glow, light, phase: Math.random() * Math.PI * 2 });
+}
+
+function buildTorchVisuals(cx, cz, chunk) {
+  const key = `${cx},${cz}`;
+  const previous = torchChunkGroups.get(key);
+  if (previous) scene.remove(previous);
+
+  const root = new THREE.Group();
+  root.userData.torches = [];
+  const S = CONFIG.CHUNK_SIZE;
+  const plane = S * S;
+  for (let i = 0; i < chunk.blocks.length; i++) {
+    if (chunk.blocks[i] !== BLOCK.TORCH) continue;
+    const x = i % S;
+    const z = Math.floor(i / S) % S;
+    const y = Math.floor(i / plane);
+    appendTorchVisual(root, cx * S + x, y, cz * S + z);
+  }
+  if (root.userData.torches.length) {
+    scene.add(root);
+    torchChunkGroups.set(key, root);
+  } else {
+    torchChunkGroups.delete(key);
+  }
+}
+
+function updateTorchVisuals(dt) {
+  for (const root of torchChunkGroups.values()) {
+    for (const torch of root.userData.torches) {
+      torch.phase += dt * 8;
+      const flicker = 0.5 + 0.5 * Math.sin(torch.phase) * Math.cos(torch.phase * 0.43);
+      torch.flame.rotation.z = Math.sin(torch.phase * 0.7) * 0.08;
+      torch.flame.scale.y = 0.92 + flicker * 0.16;
+      const glowScale = 1.05 + flicker * 0.28;
+      torch.glow.scale.set(glowScale, glowScale, 1);
+      torch.light.intensity = 0.85 + flicker * 0.55;
+    }
+  }
+}
+
 function buildChunkMesh(cx, cz) {
   const chunk = world.getChunk(cx, cz);
-  const { opaque, water, torch } = meshChunk(THREE, world, cx, cz);
+  const { opaque, water } = meshChunk(THREE, world, cx, cz);
 
   if (!chunk.meshOpaque) {
     chunk.meshOpaque = new THREE.Mesh(new THREE.BufferGeometry(), terrainMat);
@@ -648,10 +733,6 @@ function buildChunkMesh(cx, cz) {
   if (!chunk.meshWater) {
     chunk.meshWater = new THREE.Mesh(new THREE.BufferGeometry(), waterMat);
     scene.add(chunk.meshWater);
-  }
-  if (!chunk.meshTorch) {
-    chunk.meshTorch = new THREE.Mesh(new THREE.BufferGeometry(), torchMat);
-    scene.add(chunk.meshTorch);
   }
 
   chunk.meshOpaque.geometry.dispose();
@@ -667,32 +748,34 @@ function buildChunkMesh(cx, cz) {
     chunk.meshWater.geometry = water.toGeometry(THREE);
     chunk.meshWater.visible = true;
   }
-  chunk.meshTorch.geometry.dispose();
-  chunk.meshTorch.geometry = torch.isEmpty() ? new THREE.BufferGeometry() : torch.toGeometry(THREE);
-  chunk.meshTorch.visible = !torch.isEmpty();
+  buildTorchVisuals(cx, cz, chunk);
   chunk.dirty = false;
 }
 
 function disposeChunkMeshes(c) {
   if (c.meshOpaque) { scene.remove(c.meshOpaque); c.meshOpaque.geometry.dispose(); c.meshOpaque = null; }
   if (c.meshWater) { scene.remove(c.meshWater); c.meshWater.geometry.dispose(); c.meshWater = null; }
-  if (c.meshTorch) { scene.remove(c.meshTorch); c.meshTorch.geometry.dispose(); c.meshTorch = null; }
+  const key = `${c.cx},${c.cz}`;
+  const torchGroup = torchChunkGroups.get(key);
+  if (torchGroup) { scene.remove(torchGroup); torchChunkGroups.delete(key); }
 }
 
 // ---------------------------------------------------------------- Инвентарь и хотбар
 // Каталог креатива: все блоки (кроме воздуха и воды) и предметы
 const CATALOG_KEYS = [
   ...BLOCKS.filter((b) => b.id !== BLOCK.AIR && b.id !== BLOCK.WATER).map((b) => blockItem(b.id)),
-  ITEM.STICK, ITEM.APPLE, ITEM.BOW, ITEM.ARROW, ITEM.BREAD, ITEM.WHEAT,
-  ITEM.COAL, ITEM.ORE, ITEM.GOLD_ORE, ITEM.DIAMOND, ITEM.INGOT, ITEM.GOLD_INGOT,
-  ITEM.WOOD_PICKAXE, ITEM.WOOD_AXE, ITEM.WOOD_SWORD, ITEM.STONE_PICKAXE, ITEM.STONE_SWORD,
+  ITEM.STICK, ITEM.APPLE, ITEM.BOW, ITEM.ARROW,
+  ITEM.WOOD_PICKAXE, ITEM.WOOD_AXE, ITEM.WOOD_SWORD, ITEM.STONE_PICKAXE, ITEM.STONE_AXE, ITEM.STONE_SWORD,
+  ITEM.COAL, ITEM.RAW_IRON, ITEM.RAW_GOLD, ITEM.DIAMOND, ITEM.BREAD, ITEM.WHEAT, ITEM.IRON_INGOT, ITEM.GOLD_INGOT,
 ];
 
 function catalogEntries() {
-  const unlocked = settings.paletteUnlocked || isCreative();
+  const unlocked = settings.paletteUnlocked;
+  // новые блоки (полублок, факел, печка) доступны сразу, остальной строительный набор — за рекламу
+  const alwaysUnlocked = new Set([BLOCK.SLAB, BLOCK.TORCH, BLOCK.FURNACE]);
   return CATALOG_KEYS.map((key) => ({
     key,
-    locked: !unlocked && isBlockItem(key) && BUILDER_PALETTE.includes(blockIdOf(key)),
+    locked: !unlocked && isBlockItem(key) && BUILDER_PALETTE.includes(blockIdOf(key)) && !alwaysUnlocked.has(blockIdOf(key)),
   }));
 }
 
@@ -706,7 +789,6 @@ function refreshHotbar() {
   ui.setHotbarSelection(hotbarIndex);
   ui.setApples(inventory.count(ITEM.APPLE), mode);
   ui.setArrows(arrowAmmo(), mode);
-  if (player) ui.setXP(player.level, player.xp, player.xpNeeded(), mode);
   updateHeldItem();
 }
 
@@ -741,7 +823,7 @@ function pickTarget() {
   return raycastVoxel(world, eye.x, eye.y, eye.z, d.x, d.y, d.z, CONFIG.REACH);
 }
 
-// Ближайший моб под прицелом (птиц бить нельзя)
+// Ближайший моб под прицелом (включая птиц)
 function findMobTarget() {
   const eye = player.eyePos();
   const d = player.lookDir();
@@ -766,7 +848,6 @@ function findMobTarget() {
 function onArrowHitMob(mob, arrow, dir) {
   const dmg = arrow.dmg || 2;
   const killed = mob.hurt(dmg);
-  if (killed) mob.rewardXP = true;
   sfx.hitMob();
   particles.burst(mob.pos.x, mob.pos.y + mob.centerY(), mob.pos.z, 0xd03232, 12);
   mob.knockback(dir.x, dir.z, killed ? 4.4 : 3.4);
@@ -823,7 +904,6 @@ function hitMob(m) {
   const dmg = itemDamage(heldItem());
   swingHand(1);
   const killed = m.hurt(dmg);
-  if (killed) m.rewardXP = true;
   m.squeak();
   sfx.hitMob();
   particles.burst(m.pos.x, m.pos.y + m.centerY(), m.pos.z, 0xd03232, 12);
@@ -845,9 +925,6 @@ function breakDecor(hit) {
   world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
   particles.burst(hit.x + 0.15, hit.y + 0.1, hit.z + 0.15, tileColor(BLOCKS[id].tiles[0]), 10);
   sfx.grassRustle();
-  if (isSurvival() && (id === BLOCK.TALL_GRASS || id === BLOCK.FERN) && Math.random() < 0.38) {
-    items.spawn(hit.x + 0.5, hit.y + 0.55, hit.z + 0.5, ITEM.WHEAT);
-  }
   swingHand(0.45);
   decorBreakCd = 0.12;
   breakTarget = null;
@@ -855,13 +932,12 @@ function breakDecor(hit) {
   breakQuick = false;
   crackMesh.visible = false;
   ui.setBreakProgress(0);
-  // В выживании сорванное растение падает в инвентарь
+  // В выживании сорванное растение падает как физический предмет (пшеница, трава)
   if (isSurvival()) {
     const drop = blockDropItem(id);
     if (drop) {
-      const left = inventory.add(drop, 1);
-      refreshHotbar();
-      if (left > 0) ui.toast(i18n.t('inv_full'), 1600);
+      // руды/пшеница вылетают как предмет, остальное прямо в инвентарь? Для единообразия спавним физически
+      items.spawn(hit.x + 0.5, hit.y + 0.3, hit.z + 0.5, drop);
     }
   }
 }
@@ -872,32 +948,16 @@ function doBreak(hit) {
   if (!id || id === BLOCK.WATER) return;
   if (isDecor(id)) return breakDecor(hit);
   world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
-  // Факел над разрушенной опорой тоже падает (не оставляем свет в воздухе).
-  if (world.getBlock(hit.x, hit.y + 1, hit.z) === BLOCK.TORCH) {
-    world.setBlock(hit.x, hit.y + 1, hit.z, BLOCK.AIR);
-    if (isSurvival()) giveItem(blockItem(BLOCK.TORCH), 1);
-  }
   particles.burst(hit.x, hit.y, hit.z, tileColor(BLOCKS[id].tiles[0]), 16);
   sfx.breakBlock(breakKind(id));
   // С листвы иногда падает яблоко
   if (id === BLOCK.LEAVES && Math.random() < 0.14) {
     items.spawn(hit.x + 0.5, hit.y + 0.8, hit.z + 0.5, 'apple');
   }
-  // В выживании сломанный блок падает в инвентарь
+  // Любой выпавший блок/ресурс сначала лежит в мире: его нужно подобрать рядом.
   if (isSurvival()) {
     const drop = blockDropItem(id);
-    if (drop && [ITEM.ORE, ITEM.COAL, ITEM.GOLD_ORE, ITEM.DIAMOND].includes(drop)) {
-      items.spawn(hit.x + 0.5, hit.y + 0.72, hit.z + 0.5, drop);
-    } else if (drop) {
-      const left = inventory.add(drop, 1);
-      refreshHotbar();
-      if (left === 0 && performance.now() - pickToastT > 2500) {
-        pickToastT = performance.now();
-        ui.toast(`${i18n.t('block_drop')}: ${itemName(drop, i18n.lang)}`, 1200);
-      } else if (left > 0) {
-        ui.toast(i18n.t('inv_full'), 1600);
-      }
-    }
+    if (drop) items.spawn(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5, drop);
   }
   breakTarget = null;
   breakProgress = 0;
@@ -905,7 +965,7 @@ function doBreak(hit) {
   crackMesh.visible = false;
 }
 
-function handleDeath() {
+function handleDeath(cause = 'unknown') {
   bowCharge = 0;
   bowCharging = false;
   eat.reset();
@@ -920,80 +980,81 @@ function handleDeath() {
   player.hp = player.maxHp;
   player.hurtT = 2.5;
   ui.setHealth(player.hp, player.maxHp);
-  ui.toast(i18n.t('died'), 2200);
-  setTimeout(() => state === 'game' && ui.toast(i18n.t('respawned'), 2400), 2300);
+  const knownCause = ['fall', 'creeper', 'zombie', 'spider', 'wolf', 'slime'].includes(cause) ? cause : 'unknown';
+  ui.toast(`${i18n.t('died')} ${i18n.t(`death_cause_${knownCause}`)}`, 3400);
+  setTimeout(() => state === 'game' && ui.toast(i18n.t('respawned'), 2400), 3500);
 }
 
 function tryEat() {
-  if (!player || state !== 'game') return;
-  const key = heldItem() === ITEM.BREAD && inventory.has(ITEM.BREAD) ? ITEM.BREAD
-    : inventory.has(ITEM.APPLE) ? ITEM.APPLE
-      : inventory.has(ITEM.BREAD) ? ITEM.BREAD : null;
-  if (!key) { ui.toast(i18n.t('eat_none'), 1400); return; }
-  if (player.hp >= player.maxHp) return;
+  // F — съесть то что в руке, иначе первое доступное из инвентаря (яблоко/хлеб)
+  let key = heldFood();
+  if (!key) {
+    if (inventory.has(ITEM.APPLE)) key = ITEM.APPLE;
+    else if (inventory.has(ITEM.BREAD)) key = ITEM.BREAD;
+    else { ui.toast(i18n.t('eat_none'), 1400); return; }
+  }
+  if (player.hp >= player.maxHp) { ui.toast(i18n.t('eat_full'), 1400); return; }
   inventory.remove(key, 1);
   refreshHotbar();
   sfx.crunch();
   player.heal(foodValue(key));
   ui.setHealth(player.hp, player.maxHp);
-  ui.toast(i18n.t(key === ITEM.BREAD ? 'bread_eaten' : 'eat_ok'), 1600);
+  ui.toast(i18n.t('eat_ok'), 1600);
+}
+
+function openFurnace(hit) {
+  const key = `${hit.x},${hit.y},${hit.z}`;
+  let machine = furnaceStates.get(key);
+  if (!machine) {
+    machine = new Furnace();
+    furnaceStates.set(key, machine);
+  }
+  openInventory(2, { type: 'furnace', machine, key });
 }
 
 function doPlace(hit) {
-  if (!hit || state !== 'game') return;
-  // ПКМ по верстаку/печке открывает интерфейс; Shift позволяет строить рядом.
-  const sneaking = input.sneak || input.keys.has('ShiftLeft') || input.keys.has('ShiftRight');
-  if (hit.id === BLOCK.FURNACE && !sneaking) { openFurnace(hit); return; }
-  if (hit.id === BLOCK.TABLE && !sneaking) {
+  if (!hit) return;
+  swingHand(0.6);
+  // Верстак: использование открывает крафт 3×3 (с паузой, чтобы не открывался повторно)
+  if (hit.id === BLOCK.TABLE) {
     if (performance.now() - tableClosedT > 400) openTable();
     return;
   }
-  const held = heldItem();
-  const selected = placeBlockId(held);
-  if (!selected) { swingHand(0.6); return; }
+  if (hit.id === BLOCK.FURNACE) {
+    openFurnace(hit);
+    return;
+  }
+  // Прицел на траве/цветке — ставим блок на её место
   const onDecor = isDecor(hit.id);
-  let x = onDecor ? hit.x : hit.x + hit.nx;
-  let y = onDecor ? hit.y : hit.y + hit.ny;
-  let z = onDecor ? hit.z : hit.z + hit.nz;
-  let id = selected;
-  if (isSlab(selected)) {
-    const wooden = selected === BLOCK.PLANK_SLAB || selected === BLOCK.PLANK_SLAB_TOP;
-    const bottom = wooden ? BLOCK.PLANK_SLAB : BLOCK.COBBLE_SLAB;
-    const top = wooden ? BLOCK.PLANK_SLAB_TOP : BLOCK.COBBLE_SLAB_TOP;
-    if ((hit.id === bottom && hit.ny === 1) || (hit.id === top && hit.ny === -1)) {
-      // Второй такой же полублок превращает пару в целый блок.
-      x = hit.x; y = hit.y; z = hit.z;
-      id = wooden ? BLOCK.PLANKS : BLOCK.COBBLE;
-    } else {
-      id = hit.ny < 0 || (hit.ny === 0 && hit.py - hit.y > 0.5) ? top : bottom;
-    }
-  }
+  const x = onDecor ? hit.x : hit.x + hit.nx;
+  const y = onDecor ? hit.y : hit.y + hit.ny;
+  const z = onDecor ? hit.z : hit.z + hit.nz;
   const cur = world.getBlock(x, y, z);
-  const stacking = isSlab(cur) && (id === BLOCK.PLANKS || id === BLOCK.COBBLE) &&
-    ((cur === BLOCK.PLANK_SLAB || cur === BLOCK.PLANK_SLAB_TOP) ? id === BLOCK.PLANKS : id === BLOCK.COBBLE);
-  if (!stacking && cur !== BLOCK.AIR && cur !== BLOCK.WATER && !isDecor(cur)) return;
-  if (id === BLOCK.TORCH) {
-    const below = world.getBlock(x, y - 1, z);
-    if ((hit.ny !== 1 && !onDecor) || cur === BLOCK.WATER || !isSolid(below) || blockBounds(below).maxY !== 1) {
-      ui.toast(i18n.t('torch_floor'), 1400);
-      return;
-    }
-  }
-  const b = blockBounds(id), hw = CONFIG.PLAYER_WIDTH / 2 + 0.01;
-  const overlap = x + b.maxX > player.pos.x - hw && x + b.minX < player.pos.x + hw &&
-    y + b.maxY > player.pos.y && y + b.minY < player.pos.y + CONFIG.PLAYER_HEIGHT &&
-    z + b.maxZ > player.pos.z - hw && z + b.minZ < player.pos.z + hw;
+  if (cur !== BLOCK.AIR && cur !== BLOCK.WATER && !isDecor(cur)) return;
+  // Не ставим блок внутрь игрока
+  const px = player.pos.x, py = player.pos.y, pz = player.pos.z;
+  const HW = CONFIG.PLAYER_WIDTH / 2 + 0.01;
+  const overlap = x + 1 > px - HW && x < px + HW &&
+    y + 1 > py && y < py + CONFIG.PLAYER_HEIGHT &&
+    z + 1 > pz - HW && z < pz + HW;
+  const held = heldItem();
+  const id = placeBlockId(held);
+  if (!id) { swingHand(0.6); return; }   // в руке не блок — ставить нечего
   if (overlap && isSolid(id)) return;
   if (isDecor(cur)) {
+    // Трава автоматически ломается при установке блока
     if (isDecor(id) && cur === id) return;
     particles.burst(x, y, z, tileColor(BLOCKS[cur].tiles[0]), 8);
     sfx.breakBlock(breakKind(cur));
   }
   if (world.setBlock(x, y, z, id)) {
-    swingHand(0.6);
     sfx.place();
     particles.burst(x, y, z, tileColor(BLOCKS[id].tiles[0]), 5);
-    if (isSurvival()) { inventory.remove(held, 1); refreshHotbar(); }
+    // В выживании поставленный блок расходуется
+    if (isSurvival()) {
+      inventory.remove(held, 1);
+      refreshHotbar();
+    }
     blocksBuilt++;
     ui.setBlocksBuilt(blocksBuilt);
     ysdk.setStats({ blocksBuilt });
@@ -1004,12 +1065,14 @@ function doPlace(hit) {
 function buildSave() {
   return {
     v: 3,
+    worldName: activeWorldRecord?.name || i18n.t('new_world'),
     mode,
+    difficulty,
     inventory: inventory.serialize(),
-    drops: items.serialize(),
     hotbarIndex,
     seed: world.seed,
     edits: world.serializeEdits(),
+    furnaces: serializeFurnaces(furnaceStates),
     player: player.serialize(),
     time: sky.serialize(),
     blocksBuilt,
@@ -1024,20 +1087,62 @@ function buildSave() {
   };
 }
 
+function currentSettingsSave() {
+  return {
+    volume: settings.volume,
+    sound: settings.sound,
+    lang: settings.lang,
+    viewDistance: settings.viewDistance,
+    fullscreen: settings.fullscreen !== false,
+  };
+}
+
+function refreshWorldMenu() {
+  ui.setHasSave(worldProfile.worlds.length > 0);
+  ui.setWorlds(worldProfile.worlds, worldProfile.activeWorldId);
+}
+
+async function persistWorldProfile() {
+  const payload = serializeWorldProfile(worldProfile, null, currentSettingsSave(), settings.paletteUnlocked);
+  worldProfile = normalizeWorldProfile(payload);
+  activeWorldRecord = worldProfile.worlds.find((entry) => entry.id === worldProfile.activeWorldId) || null;
+  saveData = activeWorldRecord?.save || null;
+  refreshWorldMenu();
+  return ysdk.save(payload);
+}
+
 async function saveGame(showToast = false) {
-  if (!world || !player) return;
-  const data = buildSave();
-  const ok = await ysdk.save(data);
-  if (ok) saveData = data;
+  if (!world || !player || state === 'menu' || state === 'loading') return false;
+  saveData = buildSave();
+  if (!activeWorldRecord) {
+    activeWorldRecord = createWorldRecord({
+      name: saveData.worldName,
+      seed: world.seed,
+      mode,
+      difficulty,
+    });
+    worldProfile.worlds.unshift(activeWorldRecord);
+  }
+  worldProfile.activeWorldId = activeWorldRecord.id;
+  const payload = serializeWorldProfile(worldProfile, saveData, currentSettingsSave(), settings.paletteUnlocked);
+  worldProfile = normalizeWorldProfile(payload);
+  activeWorldRecord = worldProfile.worlds.find((entry) => entry.id === worldProfile.activeWorldId) || null;
+  saveData = activeWorldRecord?.save || saveData;
+  refreshWorldMenu();
+  const ok = await ysdk.save(payload);
   if (showToast) ui.toast(i18n.t(ok ? 'saved' : 'save_fail'));
+  return ok;
 }
 
 function attachPlayerEvents() {
   mobManager.onAttack = (mob) => {
     if (!isSurvival()) return;             // в креативе игрок бессмертен
+    const damageScale = difficulty === 'peaceful' ? 0 : difficulty === 'easy' ? 0.5 : difficulty === 'hard' ? 1.5 : 1;
+    if (damageScale <= 0) return;
+    const damage = Math.max(1, Math.round(2 * damageScale));
     const dx = player.pos.x - mob.pos.x, dz = player.pos.z - mob.pos.z;
     const dl = Math.hypot(dx, dz) || 1;
-    if (player.hurt(mob.type === 'gloom' ? 3 : 2)) {
+    if (player.hurt(damage, mob.type)) {
       player.vel.x = (dx / dl) * 5;
       player.vel.z = (dz / dl) * 5;
       player.vel.y = 3;
@@ -1057,9 +1162,11 @@ function attachPlayerEvents() {
       const dx = player.pos.x - ex, dy = player.pos.y + 1 - ey, dz = player.pos.z - ez;
       const d = Math.hypot(dx, dy, dz);
       if (d < 4.5) {
-        const dmg = Math.max(2, Math.round(7 - d));
+        const baseDamage = Math.max(2, Math.round(7 - d));
+        const damageScale = difficulty === 'peaceful' ? 0 : difficulty === 'easy' ? 0.5 : difficulty === 'hard' ? 1.5 : 1;
+        const dmg = Math.round(baseDamage * damageScale);
         const dl = Math.hypot(dx, dz) || 1;
-        if (player.hurt(dmg)) {
+        if (dmg > 0 && player.hurt(dmg, 'creeper')) {
           player.vel.x = (dx / dl) * 8;
           player.vel.z = (dz / dl) * 8;
           player.vel.y = 5;
@@ -1086,38 +1193,40 @@ function attachPlayerEvents() {
 
   mobManager.onDeath = (mob) => {
     sfx.mobDie();
-    const color = mob.type === 'gloom' ? 0x2a2140
+    const color = mob.type === 'zombie' ? 0x4f9b43
       : mob.type === 'creeper' ? 0x6cc24a
-        : mob.type === 'spider' ? 0x12141d
+        : mob.type === 'spider' ? 0x111111
           : mob.type === 'wolf' ? 0xd6d2ca
             : mob.type === 'fish' ? 0xb8ccd8 : 0xd03232;
     particles.burst(mob.pos.x, mob.pos.y + mob.centerY(), mob.pos.z, color, 16);
-    // Только убийство игроком даёт опыт: рассветное сгорание не награждает.
-    if (mob.rewardXP && (mob.hostile || mob.type === 'slime' || mob.type === 'wolf')) {
-      const count = mob.type === 'slime' ? 1 : 2;
-      for (let i = 0; i < count; i++) {
-        items.spawn(mob.pos.x + (Math.random() - 0.5) * 0.4,
-          mob.pos.y + 0.7, mob.pos.z + (Math.random() - 0.5) * 0.4, 'xp', 2);
-      }
-    }
+    // Опыт с монстра: вылетают светящиеся шарики
+    const xpMap = { zombie: 5, spider: 5, creeper: 6, wolf: 4, fish: 1, bunny: 2, sheep: 2, slime: 3, bird: 1 };
+    const xp = xpMap[mob.type] || 3;
+    xpOrbs.spawn(mob.pos.x, mob.pos.y + 0.6, mob.pos.z, xp);
+    sfx.pickup();
   };
-  items.onPickup = (kind, amount = 1) => {
-    if (kind === 'xp') {
-      const levels = player.addXP(amount);
-      sfx.xp();
-      ui.setXP(player.level, player.xp, player.xpNeeded(), mode);
-      if (levels) ui.toast(i18n.t('xp_level') + ' ' + player.level);
-      return true;
-    }
-    if (inventory.spaceFor(kind) < amount) return false;
-    const first = inventory.count(kind) === 0;
-    inventory.add(kind, amount);
+  items.onPickup = (kind) => {
+    // универсальный подбор: любой предмет (руда, блок, хлеб, пшеница, яблоко)
+    const normalized = kind === 'apple' ? ITEM.APPLE : kind;
+    const left = inventory.add(normalized, 1);
     refreshHotbar();
     sfx.pickup();
-    if (first && kind === ITEM.APPLE) ui.toast(i18n.t('apple_get'), 2800);
-    if (first && [ITEM.ORE, ITEM.GOLD_ORE, ITEM.DIAMOND].includes(kind))
-      ui.toast(i18n.t('ore_get'), 2800);
-    return true;
+    if (left > 0) ui.toast(i18n.t('inv_full'), 1600);
+    else {
+      if (normalized === ITEM.APPLE && inventory.count(ITEM.APPLE) === 1) ui.toast(i18n.t('apple_get'), 3200);
+      else if ([ITEM.COAL, ITEM.RAW_IRON, ITEM.RAW_GOLD, ITEM.DIAMOND].includes(normalized)) {
+        ui.toast(`${i18n.t('block_drop')}: ${itemName(normalized, i18n.lang)}`, 1400);
+      } else if (normalized === ITEM.WHEAT) ui.toast(i18n.t('wheat_get') || 'Пшеница подобрана', 1400);
+      else if (normalized === ITEM.BREAD) ui.toast(i18n.t('bread_get') || 'Хлеб подобран', 1400);
+    }
+  };
+  xpOrbs.onPickup = (amount) => {
+    totalXp += amount;
+    // в креативе просто тост, в выживании можно показать уровень
+    ui.toast(`+${amount} XP  (всего ${totalXp})`, 1600);
+    sfx.pickup();
+    // мигание если много XP
+    if (totalXp % 10 === 0) ui.blinkHearts();
   };
   player.events.onStep = (inWater) => sfx.step(inWater);
   player.events.onJump = () => sfx.jump();
@@ -1130,7 +1239,7 @@ function attachPlayerEvents() {
     shakeT = 0.45;
     ui.setHealth(player.hp, player.maxHp);
   };
-  player.events.onDeath = () => handleDeath();
+  player.events.onDeath = (cause) => handleDeath(cause);
   player.events.onSplash = () => sfx.splash();
 }
 
@@ -1140,14 +1249,27 @@ function applyMode() {
   player.invulnerable = creative;
   player.canFly = creative;
   if (!creative) player.stopFly();
-  ui.setModeSelectors(mode);
   ui.setHealthVisible(!creative);
   ui.setFlyButton(creative);
   ui.setApples(inventory.count(ITEM.APPLE), mode);
   ui.setArrows(arrowAmmo(), mode);
-  ui.setXP(player.level, player.xp, player.xpNeeded(), mode);
-  ui.setRewardButton(settings.paletteUnlocked);
+  // обновляем метки в паузе и инвентаре
+  ui.showModeLabel(mode);
+  if (invUI.isOpen()) {
+    const label = document.getElementById('inv-mode-label');
+    if (label) label.textContent = i18n.t(isCreative() ? 'mode_creative' : 'mode_survival');
+  }
   if (creative) player.hp = player.maxHp;
+}
+
+function toggleMode() {
+  mode = isCreative() ? 'survival' : 'creative';
+  applyMode();
+  refreshHotbar();
+  if (invUI.isOpen()) invUI.render();
+  ui.toast(i18n.t(isCreative() ? 'mode_switched_creative' : 'mode_switched_survival'), 2200);
+  sfx.uiOk();
+  saveGame();
 }
 
 // ---------------------------------------------------------------- Стейты
@@ -1168,6 +1290,9 @@ function pauseGame() {
   state = 'pause';
   input.enabled = false;
   input.keys.clear();
+  runShake.duration = 0;
+  runShake.strength = 0;
+  runBob = 0;
   ysdk.gameplayStop();
   saveGame();
   ui.showModeLabel(mode);
@@ -1190,9 +1315,6 @@ async function saveAndQuit() {
   state = 'menu';
   input.enabled = false;
   ui.setHasSave(true);
-  menuMode = mode;
-  ui.setModeSelectors(menuMode);
-  ui.setRewardButton(settings.paletteUnlocked);
   ui.showScreen('menu-screen');
   ui.setTouchVisible(false);
   ysdk.gameplayStop();
@@ -1231,7 +1353,8 @@ async function requestReward() {
     ui.setRewardButton(true);
     ui.toast(i18n.t('reward_got') + (ok ? '' : ' (demo)'), 3200);
     sfx.reward();
-    saveGame();
+    if (world && player && state !== 'menu') saveGame();
+    else persistWorldProfile();
   } else {
     ui.toast(i18n.t('reward_fail'), 3200);
   }
@@ -1242,26 +1365,41 @@ async function startWorld(opts = {}) {
   ui.showScreen('loading-screen');
   ui.setLoading(0.05, i18n.t('loading'));
 
-  const data = opts.fresh ? null : saveData;
-  const seed = (data?.seed != null) ? data.seed : ((Math.random() * 0x7fffffff) | 0);
-  // Выбор в меню переопределяет сохранённый режим; старые сейвы без режима — креатив.
-  mode = opts.mode === 'survival' || opts.mode === 'creative' ? opts.mode
-    : data ? (data.mode === 'survival' ? 'survival' : 'creative') : 'survival';
-  menuMode = mode;
-  ui.setModeSelectors(mode);
-  if (world) {
-    for (const chunk of world.chunks.values()) disposeChunkMeshes(chunk);
-    world.chunks.clear();
+  if (world) for (const chunk of world.chunks.values()) disposeChunkMeshes(chunk);
+  weather.reset();
+  const record = opts.record || activeWorldRecord;
+  if (record) {
+    activeWorldRecord = record;
+    worldProfile.activeWorldId = record.id;
   }
+  const data = opts.fresh ? null : (opts.data ?? record?.save ?? saveData);
+  const seed = (data?.seed != null) ? data.seed
+    : (opts.seed != null ? Number(opts.seed) | 0 : (record?.seed ?? ((Math.random() * 0x7fffffff) | 0)));
+  // Старые сохранения без режима по-прежнему открываются в креативе.
+  mode = data ? (data.mode === 'survival' ? 'survival' : 'creative')
+    : ((opts.mode || record?.mode) === 'survival' ? 'survival' : 'creative');
+  const requestedDifficulty = data?.difficulty || opts.difficulty || record?.difficulty || 'normal';
+  difficulty = ['peaceful', 'easy', 'normal', 'hard'].includes(requestedDifficulty) ? requestedDifficulty : 'normal';
+  mobManager.setDifficulty(difficulty);
+  runShake.duration = 0;
+  runShake.strength = 0;
+  runBob = 0;
+
   world = new World(seed);
+  world.onUnsupportedDecor = (x, y, z, id) => {
+    particles.burst(x + 0.5, y + 0.15, z + 0.5, tileColor(BLOCKS[id].tiles[0]), 8);
+    sfx.grassRustle();
+    if (isSurvival()) {
+      const drop = blockDropItem(id);
+      if (drop) items.spawn(x + 0.5, y + 0.3, z + 0.5, drop);
+    }
+  };
+  furnaceStates = data ? deserializeFurnaces(data.furnaces) : new Map();
   player = new Player(world);
   mobManager.clear();
   items.clear();
-  activeFurnace = null;
-  gloomT = 20 + Math.random() * 15;
-  torchRefreshT = 0;
-  nearbyTorchCount = 0;
-  for (const p of torchPositions) p.set(0, -1000, 0);
+  xpOrbs.clear();
+  totalXp = 0;
   inventory = new Inventory(CONFIG.INV_SIZE);
   invUI.hide();
   hotbarIndex = 0;
@@ -1277,35 +1415,31 @@ async function startWorld(opts = {}) {
     // Небольшой стартовый набор: с луком и стрелами в выживании интереснее начинать
     inventory.add(ITEM.BOW, 1);
     inventory.add(ITEM.ARROW, 16);
-    inventory.add(blockItem(BLOCK.TORCH), 4);
-    inventory.add(blockItem(BLOCK.FURNACE), 1);
-    inventory.add(ITEM.BREAD, 2);
   }
   attachPlayerEvents();
 
   if (data) {
     world.loadEdits(data.edits || []);
-    items.load(data.drops);
     if (Array.isArray(data.inventory)) inventory.deserialize(data.inventory);
     hotbarIndex = Math.max(0, Math.min(HOTBAR_SIZE - 1, data.hotbarIndex || 0));
-    settings.paletteUnlocked = !!data.paletteUnlocked;
+    settings.paletteUnlocked = !!worldProfile.paletteUnlocked || !!data.paletteUnlocked;
     blocksBuilt = data.blocksBuilt || 0;
     ui.setBlocksBuilt(blocksBuilt);
-    if (data.settings) {
-      settings.volume = data.settings.volume ?? settings.volume;
-      settings.sound = data.settings.sound !== false;
-      settings.lang = data.settings.lang || settings.lang;
-      settings.viewDistance = data.settings.viewDistance || settings.viewDistance;
-    settings.fullscreen = data.settings.fullscreen !== false;
-    input.allowFullscreen = settings.fullscreen;
+    const dataSettings = Object.keys(worldProfile.settings).length ? worldProfile.settings : data.settings;
+    if (dataSettings) {
+      settings.volume = dataSettings.volume ?? settings.volume;
+      settings.sound = dataSettings.sound !== false;
+      settings.lang = dataSettings.lang || settings.lang;
+      settings.viewDistance = dataSettings.viewDistance || settings.viewDistance;
+      settings.fullscreen = dataSettings.fullscreen !== false;
+      input.allowFullscreen = settings.fullscreen;
     }
     if (data.time != null) sky.setTime(data.time);
     i18n.setLang(settings.lang);
     sfx.setVolume(settings.volume);
     sfx.setEnabled(settings.sound);
   } else {
-    settings.paletteUnlocked = false;
-    sky.setTime(0.3);
+    settings.paletteUnlocked = !!worldProfile.paletteUnlocked;
   }
   ui.applySettings(settings);
   ui.applyI18n();
@@ -1320,7 +1454,9 @@ async function startWorld(opts = {}) {
   if (data?.player) {
     player.deserialize(data.player);
     // Защита от сохранения «внутри блоков»
-    if (player.collides(player.pos.x, player.pos.y, player.pos.z)) player.pos.y += 2;
+    if (isSolid(world.getBlock(Math.floor(player.pos.x), Math.floor(player.pos.y), Math.floor(player.pos.z)))) {
+      player.pos.y += 2;
+    }
   }
 
   // Предгенерация вокруг спавна
@@ -1338,100 +1474,34 @@ async function startWorld(opts = {}) {
   ui.setLoading(1, i18n.t('ready'));
   ui.setRewardButton(settings.paletteUnlocked);
 
-  // Появляются позади игрока, не перед камерой и не в дневной свет ночью.
-  sky.update(0, player.pos);
-  mobManager.setNight(sky.lightLevel < 0.32);
-  for (let i = 0; i < 3; i++) mobManager.trySpawn(player.pos, player.yaw);
+  // Несколько мобов сразу, чтобы мир был живым (спавним вне видимости)
+  for (let i = 0; i < 5; i++) mobManager.trySpawn(player);
   ui.setHealth(player.hp, player.maxHp);
   applyMode();
   refreshHotbar();
 
   ysdk.gameplayReady();
-  saveData = buildSave(); // «Продолжить» имеет смысл и до первого сохранения
+  saveData = buildSave(); // «Продолжить» доступно сразу, а не только после автосохранения.
 
   enterGame();
-}
-
-// ---------------------------------------------------------------- Печка: обжиг руды и выпечка хлеба
-function renderFurnace() {
-  const stock = document.getElementById('furnace-stock');
-  const list = document.getElementById('furnace-recipes');
-  if (!stock || !list) return;
-  const plank = blockItem(BLOCK.PLANKS);
-  stock.textContent = `${i18n.t('furnace_fuel')}: ${itemName(ITEM.COAL, i18n.lang)} ×${inventory.count(ITEM.COAL)} · `
-    + `${itemName(plank, i18n.lang)} ×${inventory.count(plank)}`;
-  list.replaceChildren();
-  for (const recipe of FURNACE_RECIPES) {
-    const button = document.createElement('button');
-    button.className = 'furnace-recipe';
-    button.disabled = isSurvival() && (!furnaceFuel(inventory) ||
-      Object.entries(recipe.in).some(([key, need]) => !inventory.has(key, need)) ||
-      inventory.spaceFor(recipe.out.key) < recipe.out.count);
-    const icon = itemIconEl(recipe.out.key, 40);
-    if (icon) button.appendChild(icon);
-    const info = document.createElement('div');
-    info.className = 'recipe-info';
-    const title = document.createElement('div');
-    title.className = 'recipe-name';
-    title.textContent = `${itemName(recipe.out.key, i18n.lang)} ×${recipe.out.count}`;
-    const ing = document.createElement('div');
-    ing.className = 'recipe-ing';
-    ing.textContent = Object.entries(recipe.in)
-      .map(([key, need]) => `${itemName(key, i18n.lang)} ${inventory.count(key)}/${need}`).join(' · ');
-    info.append(title, ing);
-    button.appendChild(info);
-    button.addEventListener('click', () => {
-      if (state !== 'furnace' || !activeFurnace) return;
-      if (world.getBlock(activeFurnace.x, activeFurnace.y, activeFurnace.z) !== BLOCK.FURNACE) {
-        closeFurnace(); return;
-      }
-      const result = isCreative() ? (inventory.add(recipe.out.key, recipe.out.count) === 0 ? 'ok' : 'full')
-        : smelt(inventory, recipe);
-      if (result === 'ok') {
-        sfx.craft();
-        ui.toast(`${i18n.t('craft_ok')}: ${itemName(recipe.out.key, i18n.lang)}`, 1600);
-        refreshHotbar();
-      } else ui.toast(i18n.t(result === 'full' ? 'craft_no_room' : 'furnace_missing'), 1700);
-      renderFurnace();
-    });
-    list.appendChild(button);
-  }
-}
-
-function openFurnace(hit) {
-  if (state !== 'game') return;
-  activeFurnace = { x: hit.x, y: hit.y, z: hit.z };
-  state = 'furnace';
-  input.enabled = false;
-  input.keys.clear();
-  input.mouse.left = input.mouse.right = false;
-  ysdk.gameplayStop();
-  if (document.pointerLockElement) document.exitPointerLock?.();
-  renderFurnace();
-  ui.showScreen('furnace-screen');
-  ui.setTouchVisible(false);
-  sfx.uiClick();
-}
-
-function closeFurnace() {
-  if (state !== 'furnace') return;
-  activeFurnace = null;
-  resumeGame();
-  refreshHotbar();
+  void saveGame();
 }
 
 // ---------------------------------------------------------------- Инвентарь: окно
-function openInventory(gridSize = 2) {
+function openInventory(gridSize = 2, station = null) {
   if (state !== 'game' || !world) return;
   if (gridSize !== invUI.gridSize) invUI.setGridSize(gridSize);
   state = 'inventory';
   input.enabled = false;
   input.keys.clear();
+  runShake.duration = 0;
+  runShake.strength = 0;
+  runBob = 0;
   input.mouse.left = false;
   input.mouse.right = false;
   ysdk.gameplayStop();
   if (document.pointerLockElement) document.exitPointerLock?.();
-  invUI.show({ inv: inventory, mode, hotbarIndex, catalog: catalogEntries(), gridSize });
+  invUI.show({ inv: inventory, mode, hotbarIndex, catalog: catalogEntries(), gridSize, station });
   ui.showScreen('inventory-screen');
   ui.setTouchVisible(false);
   sfx.uiClick();
@@ -1454,6 +1524,7 @@ function closeInventory() {
   refreshHotbar();
   ysdk.gameplayStart();
   sfx.uiClick();
+  saveGame();
 }
 
 function toggleInventory() {
@@ -1470,6 +1541,7 @@ function refreshCatalog() {
 }
 
 invUI.handlers.onChange = () => refreshHotbar();
+invUI.handlers.onStationChange = () => saveGame();
 invUI.handlers.onClose = () => closeInventory();
 invUI.handlers.onSelect = (i) => {
   selectHotbar(i);
@@ -1509,43 +1581,84 @@ invUI.handlers.onQuickCraft = (recipe) => {
 setFullToast(() => ui.toast(i18n.t('craft_no_room'), 1600));
 
 // ---------------------------------------------------------------- Обработчики UI
+function seedFromInput(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return (Math.random() * 0x7fffffff) | 0;
+  if (/^[+-]?\d+$/.test(text)) return Number(text) | 0;
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash | 0;
+}
+
+function createWorldFromForm(form = {}) {
+  const nextNumber = worldProfile.worlds.length + 1;
+  const name = String(form.name || '').trim() || `${i18n.t('new_world')} ${nextNumber}`;
+  const seed = seedFromInput(form.seed);
+  const record = createWorldRecord({
+    name,
+    seed,
+    difficulty: form.difficulty || 'normal',
+    mode: form.mode || 'survival',
+  });
+  worldProfile.worlds.unshift(record);
+  worldProfile.activeWorldId = record.id;
+  activeWorldRecord = record;
+  saveData = null;
+  refreshWorldMenu();
+  return startWorld({ fresh: true, record, seed, mode: record.mode, difficulty: record.difficulty });
+}
+
 ui.handlers.onPlay = () => {
   input.enterFullscreen(); sfx.resume(); sfx.uiOk();
-  startWorld({ fresh: !saveData, mode: menuMode });
+  if (activeWorldRecord) {
+    startWorld({ fresh: !activeWorldRecord.save, record: activeWorldRecord });
+  } else {
+    ui.showWorldCreator('menu-screen');
+  }
 };
 ui.handlers.onNewWorld = () => {
   input.enterFullscreen(); sfx.resume(); sfx.uiOk();
-  showModeScreen();      // сейв затрётся только после выбора режима
+  ui.showWorldCreator('menu-screen');
+};
+ui.handlers.onWorlds = () => {
+  sfx.uiClick();
+  ui.showWorlds(worldProfile.worlds, worldProfile.activeWorldId);
+};
+ui.handlers.onCreateWorld = (form) => {
+  input.enterFullscreen(); sfx.resume(); sfx.uiOk();
+  createWorldFromForm(form);
+};
+ui.handlers.onLoadWorld = (id) => {
+  const record = worldProfile.worlds.find((entry) => entry.id === id);
+  if (!record) return;
+  input.enterFullscreen(); sfx.resume(); sfx.uiOk();
+  activeWorldRecord = record;
+  worldProfile.activeWorldId = record.id;
+  saveData = record.save;
+  startWorld({ fresh: !record.save, record });
+};
+ui.handlers.onDeleteWorld = async (id) => {
+  const record = worldProfile.worlds.find((entry) => entry.id === id);
+  if (!record || !window.confirm(`${i18n.t('delete_world')} «${record.name}»? ${i18n.t('delete_world_confirm')}`)) return;
+  worldProfile.worlds = worldProfile.worlds.filter((entry) => entry.id !== id);
+  if (worldProfile.activeWorldId === id) worldProfile.activeWorldId = worldProfile.worlds[0]?.id ?? null;
+  activeWorldRecord = worldProfile.worlds.find((entry) => entry.id === worldProfile.activeWorldId) || null;
+  saveData = activeWorldRecord?.save || null;
+  await persistWorldProfile();
+  ui.showWorlds(worldProfile.worlds, worldProfile.activeWorldId);
 };
 ui.handlers.onMode = (m) => {
   input.enterFullscreen(); sfx.resume(); sfx.uiOk();
-  menuMode = m;
-  ui.setModeSelectors(m);
-  saveData = null;
-  startWorld({ fresh: true, mode: m });
-};
-ui.handlers.onModeChange = (m, source) => {
-  if (source === 'mode-menu') {
-    menuMode = m;
-    ui.setRewardButton(settings.paletteUnlocked);
-    return;
-  }
-  if (source !== 'mode-pause' || !player) return;
-  mode = m;
-  menuMode = m;
-  applyMode();
-  refreshHotbar();
-  refreshCatalog();
-  ui.toast(`${i18n.t('mode_now')}: ${i18n.t(m === 'survival' ? 'mode_survival' : 'mode_creative')}`, 1800);
-  saveGame();
+  createWorldFromForm({ mode: m, difficulty: 'normal' });
 };
 ui.handlers.onModeBack = () => {
   sfx.uiClick();
   ui.showScreen('menu-screen');
 };
 ui.handlers.onBag = () => toggleInventory();
-ui.handlers.onCloseFurnace = () => closeFurnace();
-ui.handlers.onEat = () => tryEat();
 ui.handlers.onResume = () => { input.enterFullscreen(); sfx.uiClick(); resumeGame(); };
 ui.handlers.onSaveQuit = async () => { sfx.uiOk(); await saveAndQuit(); };
 ui.handlers.onReward = () => requestReward();
@@ -1554,6 +1667,11 @@ ui.handlers.onSlot = (i) => {
   sfx.uiClick();
 };
 ui.handlers.onPauseBtn = () => pauseGame();
+document.getElementById('btn-toggle-mode')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (state !== 'pause' && state !== 'game') return;
+  toggleMode();
+});
 ui.handlers.onToSpawn = () => {
   if (!world || !player) return;
   const spawn = world.findSpawn();
@@ -1571,6 +1689,7 @@ ui.handlers.onSettingsChange = (delta) => {
     ui.applyI18n();
     if (world) refreshHotbar();
     ui.setRewardButton(settings.paletteUnlocked);
+    ui.setWorlds(worldProfile.worlds, worldProfile.activeWorldId);
     if (invUI.isOpen()) invUI.render();
   }
   if (delta.viewDistance) {
@@ -1583,7 +1702,8 @@ ui.handlers.onSettingsChange = (delta) => {
     if (settings.fullscreen) input.enterFullscreen();
     else { input.exitFullscreen(); ui.toast(i18n.t('fullscreen_off')); }
   }
-  saveGame();
+  if (world && player && state !== 'menu') saveGame();
+  else persistWorldProfile();
 };
 
 function showModeScreen() {
@@ -1592,7 +1712,6 @@ function showModeScreen() {
 
 input.handlers.onPause = () => {
   if (state === 'inventory') { closeInventory(); return; }
-  if (state === 'furnace') { closeFurnace(); return; }
   if (state === 'game') pauseGame();
   else if (state === 'pause') resumeGame();
 };
@@ -1636,20 +1755,9 @@ input.handlers.onActionBreak = () => {
   sfx.dig(breakKind(hit.id));
 };
 input.handlers.onActionPlace = () => {
-  if (state !== 'game' || isBowSelected()) return;
+  if (state !== 'game') return;
   doPlace(pickTarget());
-  placeCooldown = 0.25; // правый клик не повторяет постановку в следующем кадре
 };
-// Короткий клик между кадрами тоже должен открыть печку, поставить блок или ударить.
-window.addEventListener('mousedown', (e) => {
-  if (state !== 'game' || input.isTouch || !input.locked) return;
-  if (e.button === 2) input.handlers.onActionPlace();
-  if (e.button === 0 && !heldFood()) {
-    const mob = findMobTarget();
-    if (mob && attackCd <= 0) { attackCd = 0.36; hitMob(mob); }
-    else if (!mob) input.handlers.onActionBreak();
-  }
-});
 
 // Клик по игре (после закрытия инвентаря) снова захватывает мышь
 canvas.addEventListener('mousedown', () => {
@@ -1687,13 +1795,20 @@ window.addEventListener('orientationchange', checkOrientation);
 window.addEventListener('resize', checkOrientation);
 
 // Автосохранение
-setInterval(() => { if (state === 'game') saveGame(); }, CONFIG.AUTO_SAVE_SEC * 1000);
+setInterval(() => { if (state === 'game' || state === 'inventory') saveGame(); }, CONFIG.AUTO_SAVE_SEC * 1000);
 
 // ---------------------------------------------------------------- Главный цикл
 let lastT = performance.now();
 let fpsEma = 60;
-let sprintPhase = 0;
-let sprintStrength = 0;
+
+function updateFurnaceMachines(dt) {
+  const openMachine = state === 'inventory' && invUI.station?.type === 'furnace'
+    ? invUI.station.machine : null;
+  for (const machine of furnaceStates.values()) {
+    if (machine !== openMachine) machine.update(dt);
+  }
+  invUI.updateStation(dt);
+}
 
 function frame() {
   requestAnimationFrame(frame);
@@ -1702,6 +1817,8 @@ function frame() {
   lastT = now;
   dt = Math.min(dt, 0.05);
   fpsEma = fpsEma * 0.95 + (1 / Math.max(dt, 0.001)) * 0.05;
+
+  if (world && player && (state === 'game' || state === 'inventory')) updateFurnaceMachines(dt);
 
   if (world && player && (state === 'game')) {
     input.update();
@@ -1732,26 +1849,27 @@ function frame() {
     }
     processQueue(CONFIG.MAX_MESH_PER_FRAME);
 
-    // --- Выживание: предметы, еда, ночные Хмари ---
+    // --- Выживание: предметы, опыт, еда, ночные зомби ---
     items.update(dt, world, player.pos);
+    xpOrbs.update(dt, world, player.pos);
     if (input.consumePress('KeyF')) tryEat();
 
     mobManager.setNight(sky.lightLevel < 0.32);
     if (sky.lightLevel < 0.32) {
-      gloomT -= dt;
-      if (gloomT <= 0) {
-        gloomT = 20 + Math.random() * 15;
-        const spawned = mobManager.trySpawnGloom(player.pos, player.yaw);
-        if (spawned && !gloomWarned) {
-          gloomWarned = true;
-          ui.toast(i18n.t('gloom_warn'), 3200);
+      zombieT -= dt;
+      if (zombieT <= 0) {
+        zombieT = 8 + Math.random() * 9;
+        const spawned = mobManager.trySpawnZombie(player);
+        if (spawned && !zombieWarned) {
+          zombieWarned = true;
+          ui.toast(i18n.t('zombie_warn'), 3200);
         }
       }
     } else {
-      gloomWarned = false;
+      zombieWarned = false;
     }
 
-    // Удар по мобу (ЛКМ): можно бить всех, кроме птиц
+    // Удар по любому мобу под прицелом, включая птиц
     let mobTarget = null;
     if (input.breakHeld) {
       mobTarget = findMobTarget();
@@ -1768,7 +1886,7 @@ function frame() {
     const hit = pickTarget();
     if (hit) {
       highlight.visible = true;
-      fitBlockOutline(highlight, hit, 0.008);
+      highlight.position.set(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
     } else {
       highlight.visible = false;
     }
@@ -1852,8 +1970,10 @@ function frame() {
       crackMesh.visible = false;
     }
 
+    // ПКМ по интерактивному блоку важнее лука: даже с луком можно открыть верстак/печь.
+    const interactiveTarget = hit && (hit.id === BLOCK.TABLE || hit.id === BLOCK.FURNACE);
     // Лук: удержание ПКМ (или кнопки на тач-экране) натягивает тетиву, отпускание — выстрел
-    const bowSel = isBowSelected();
+    const bowSel = isBowSelected() && !interactiveTarget;
     if (bowSel && input.placeHeld) {
       if (!bowCharging) {
         bowCharging = true;
@@ -1863,7 +1983,7 @@ function frame() {
       bowCharge = Math.min(1, bowCharge + dt / BOW_CHARGE_TIME);
     } else if (bowCharging) {
       bowCharging = false;
-      fireBow(bowCharge);
+      if (bowSel) fireBow(bowCharge);
       bowCharge = 0;
     }
 
@@ -1876,20 +1996,30 @@ function frame() {
     // Стрелы: полёт с гравитацией, попадания в блоки и мобов, подбор воткнутых
     projectiles.update(dt, world, mobManager.mobs, player.pos);
 
-    // Камера (+ встряска при уроне)
+    // Камера (+ встряска при уроне и тряска при беге)
     const eye = player.eyePos();
     camera.position.set(eye.x, eye.y, eye.z);
     camera.rotation.y = player.yaw;
     camera.rotation.x = player.pitch;
-    const runTarget = player.sprinting && player.onGround
-      ? Math.min(1, Math.hypot(player.vel.x, player.vel.z) / CONFIG.SPRINT_SPEED) : 0;
-    sprintStrength += (runTarget - sprintStrength) * Math.min(1, dt * 10);
-    if (sprintStrength > 0.001) sprintPhase += dt * 15;
-    const sway = Math.sin(sprintPhase) * sprintStrength;
-    camera.position.x += Math.cos(player.yaw) * sway * 0.024;
-    camera.position.y += (Math.abs(Math.sin(sprintPhase)) - 0.55) * sprintStrength * 0.07;
-    camera.position.z -= Math.sin(player.yaw) * sway * 0.024;
-    camera.rotation.z = sway * 0.016;
+    camera.rotation.z = 0;
+    // Беговая тряска начинается после двух секунд и мягко усиливается до предела.
+    const isRunning = input.sprint && player.onGround && !player.flying && !player.inWater
+      && (Math.abs(input.move.forward) + Math.abs(input.move.right) > 0.2);
+    const runStrength = updateRunShake(runShake, isRunning, dt);
+    if (isRunning) runBob += dt * 14;
+    else {
+      runBob += dt * 4 * Math.sin(runBob) * -0.5;
+      if (Math.abs(Math.sin(runBob)) < 0.01) runBob = 0;
+    }
+    if (runStrength > 0.001) {
+      const vbob = Math.sin(runBob) * 0.075 * runStrength;
+      const hbob = Math.sin(runBob * 0.5) * 0.04 * runStrength;
+      camera.position.y += Math.abs(vbob) * 0.9;
+      camera.position.x += hbob * Math.cos(player.yaw);
+      camera.position.z += hbob * Math.sin(player.yaw);
+      camera.rotation.z += Math.sin(runBob) * 0.022 * runStrength;
+      camera.rotation.x += vbob * 0.1;
+    }
     if (shakeT > 0) {
       shakeT = Math.max(0, shakeT - dt);
       const k = shakeT / 0.45;
@@ -1897,7 +2027,7 @@ function frame() {
       camera.position.x += (Math.random() - 0.5) * amp;
       camera.position.y += (Math.random() - 0.5) * amp;
       camera.position.z += (Math.random() - 0.5) * amp;
-      camera.rotation.z = (Math.random() - 0.5) * 0.09 * k;
+      camera.rotation.z = (Math.random() - 0.5) * 0.09 * k + camera.rotation.z;
       camera.rotation.x += (Math.random() - 0.5) * 0.05 * k;
     } else {
       shakeT = 0;
@@ -1905,8 +2035,10 @@ function frame() {
 
     // Небо, свет, вода, погода
     sky.update(dt, player.pos);
-    const flash = weather.update(dt, player.pos, world, sky.lightLevel, {
-      onFlash: () => ui.flashLightning(),
+    weather.update(dt, player.pos, world, sky.lightLevel, {
+      onFlash: (strike) => {
+        particles.burst(strike.x, strike.y, strike.z, 0xb8dcff, 12);
+      },
       onThunder: () => sfx.thunder(),
       onChange: (st) => {
         ui.toast(i18n.t(st === 'rain' ? 'rain_start' : 'rain_stop'));
@@ -1914,12 +2046,11 @@ function frame() {
       },
     });
     sfx.setRainLevel(weather.wetness);
-    const L = Math.min(1, sky.lightLevel + flash * 0.7);
+    const L = sky.lightLevel;
     terrainMat.color.setScalar(0.28 + 0.72 * L);
     waterMat.color.setScalar(0.3 + 0.7 * L);
     mobManager.setLight(L);
-    updateTorchLights(dt, L);
-    mobManager.update(dt, player.pos, true, player.yaw);
+    mobManager.update(dt, player, true);
 
     // Сверчки по ночам в ясную погоду
     cricketsT -= dt;
@@ -1943,7 +2074,7 @@ function frame() {
     input.clearPresses();
     const eye = player.eyePos();
     camera.position.set(eye.x, eye.y, eye.z);
-    if (state !== 'inventory' && state !== 'furnace') player.yaw += dt * 0.05;
+    if (state !== 'inventory') player.yaw += dt * 0.05;
     camera.rotation.y = player.yaw;
     camera.rotation.x = player.pitch;
     sky.update(dt * 0.3, player.pos);
@@ -1951,13 +2082,13 @@ function frame() {
     terrainMat.color.setScalar(0.28 + 0.72 * L);
     waterMat.color.setScalar(0.3 + 0.7 * L);
     mobManager.setLight(L);
-    updateTorchLights(dt * 0.5, L);
-    mobManager.update(dt * 0.5, player.pos, false, player.yaw);
+    mobManager.update(dt * 0.5, player.pos, false);
     if (world) weather.update(dt * 0.5, player.pos, world, L, {});
     sfx.setRainLevel(weather.wetness);
   }
 
   if (state !== 'game') eat.reset();
+  updateTorchVisuals(dt);
   updateHand(dt, sky.lightLevel ?? 1);
   renderer.render(scene, camera);
 }
@@ -1977,19 +2108,21 @@ window.addEventListener('keydown', (e) => {
     onResume: () => ui.showAdOverlay(false),
   });
 
-  saveData = migrateSave(await ysdk.load());
-  const hasSave = !!saveData;
-
   await ysdkPromise;
-  if (saveData?.settings) applyLoadedSettings(saveData.settings);
-  if (!saveData?.settings?.lang && ysdk.lang === 'en') {
+  worldProfile = normalizeWorldProfile(await ysdk.load());
+  for (const record of worldProfile.worlds) {
+    if (record.save) record.save = migrateSave(record.save);
+  }
+  activeWorldRecord = worldProfile.worlds.find((entry) => entry.id === worldProfile.activeWorldId) || null;
+  saveData = activeWorldRecord?.save || null;
+  const loadedSettings = Object.keys(worldProfile.settings).length ? worldProfile.settings : saveData?.settings;
+  if (loadedSettings) applyLoadedSettings(loadedSettings);
+  if (!loadedSettings?.lang && ysdk.lang === 'en') {
     settings.lang = 'en';
     i18n.setLang('en');
   }
-  settings.paletteUnlocked = !!saveData?.paletteUnlocked;
-  menuMode = saveData ? (saveData.mode === 'survival' ? 'survival' : 'creative') : 'survival';
+  settings.paletteUnlocked = !!worldProfile.paletteUnlocked || !!saveData?.paletteUnlocked;
   ui.applySettings(settings);
-  ui.setModeSelectors(menuMode);
   ui.applyI18n();
   ui.setRewardButton(settings.paletteUnlocked);
 
@@ -1997,7 +2130,7 @@ window.addEventListener('keydown', (e) => {
   state = 'menu';
   ui.showScreen('menu-screen');
 
-  ui.setHasSave(hasSave);
+  refreshWorldMenu();
 
   frame();
 })();

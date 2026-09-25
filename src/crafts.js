@@ -45,6 +45,10 @@ export const RECIPES = [
     patterns: [['AAA', ' B ', ' B ']], keys: { A: COBBLE, B: ITEM.STICK },
   },
   {
+    id: 'stone_axe', in: { [COBBLE]: 3, [ITEM.STICK]: 2 }, out: { key: ITEM.STONE_AXE, count: 1 },
+    patterns: [['AA', 'AB', ' B']], keys: { A: COBBLE, B: ITEM.STICK },
+  },
+  {
     id: 'stone_sword', in: { [COBBLE]: 2, [ITEM.STICK]: 1 }, out: { key: ITEM.STONE_SWORD, count: 1 },
     patterns: [['A', 'A', 'B']], keys: { A: COBBLE, B: ITEM.STICK },
   },
@@ -99,17 +103,17 @@ export const RECIPES = [
   // Рецепты основной ветки остаются доступными и после добавления экрана печки.
   { id: 'bread', in: { [ITEM.WHEAT]: 3 }, out: { key: ITEM.BREAD, count: 1 },
     patterns: [['AAA']], keys: { A: ITEM.WHEAT } },
-  { id: 'iron_ingot', in: { [ITEM.ORE]: 1, [ITEM.COAL]: 1 }, out: { key: ITEM.INGOT, count: 1 },
-    shapeless: { [ITEM.ORE]: 1, [ITEM.COAL]: 1 } },
-  { id: 'gold_ingot', in: { [ITEM.GOLD_ORE]: 1, [ITEM.COAL]: 1 }, out: { key: ITEM.GOLD_INGOT, count: 1 },
-    shapeless: { [ITEM.GOLD_ORE]: 1, [ITEM.COAL]: 1 } },
+  { id: 'iron_ingot', in: { [ITEM.RAW_IRON]: 1, [ITEM.COAL]: 1 }, out: { key: ITEM.IRON_INGOT, count: 1 },
+    shapeless: { [ITEM.RAW_IRON]: 1, [ITEM.COAL]: 1 } },
+  { id: 'gold_ingot', in: { [ITEM.RAW_GOLD]: 1, [ITEM.COAL]: 1 }, out: { key: ITEM.GOLD_INGOT, count: 1 },
+    shapeless: { [ITEM.RAW_GOLD]: 1, [ITEM.COAL]: 1 } },
 ];
 
 // Печка расходует ровно одну единицу топлива за один обжиг; ингредиенты и
 // топливо снимаются атомарно и только если помещается результат.
 export const FURNACE_RECIPES = [
-  { id: 'smelt_iron', in: { [ITEM.ORE]: 1 }, out: { key: ITEM.INGOT, count: 1 } },
-  { id: 'smelt_gold', in: { [ITEM.GOLD_ORE]: 1 }, out: { key: ITEM.GOLD_INGOT, count: 1 } },
+  { id: 'smelt_iron', in: { [ITEM.RAW_IRON]: 1 }, out: { key: ITEM.IRON_INGOT, count: 1 } },
+  { id: 'smelt_gold', in: { [ITEM.RAW_GOLD]: 1 }, out: { key: ITEM.GOLD_INGOT, count: 1 } },
   { id: 'bake_bread', in: { [ITEM.WHEAT]: 3 }, out: { key: ITEM.BREAD, count: 1 } },
 ];
 

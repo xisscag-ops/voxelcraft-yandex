@@ -1,4 +1,4 @@
-// Мобы: зайчик, барашек и слизень из коробок, с ходьбой, прыжками и настроениями
+// Мобы: процедурные модели животных и монстров с движением, атаками и анимациями.
 import * as THREE from 'three';
 import { isSolid, isLiquid, BLOCK } from './blocks.js';
 
@@ -41,11 +41,11 @@ function fixedPart(mat, geoCache, key, w, h, d, color) {
 // Материал «полностью красного» моба на время вспышки урона
 const HURT_MAT = new THREE.MeshBasicMaterial({ color: 0xff3a2e });
 
-// Враждебные мобы: сами нападают на игрока (паук, крипер и ночная Хмарь).
+// Враждебные мобы: сами нападают на игрока (паук, крипер и зомби).
 // Волк — только если его ударить.
-export const HOSTILE = new Set(['gloom', 'spider', 'creeper']);
+export const HOSTILE = new Set(['zombie', 'spider', 'creeper']);
 // Сколько мобов каждого вида держим одновременно
-export const MOB_CAPS = { spider: 3, creeper: 2, wolf: 3, fish: 4, gloom: 4 };
+export const MOB_CAPS = { spider: 3, creeper: 2, wolf: 3, fish: 4, zombie: 4 };
 
 // ---------------------------------------------------------------- Лица: глаза, зрачки, рты, зубы
 const EYE_WHITE = [0.98, 0.98, 0.99];
@@ -156,10 +156,10 @@ function blinkEyes(v, dt) {
 }
 
 // ---------------------------------------------------------------- Новые мобы
-// Паук: восемь ног, два сегмента тела, красные глаза и жвала (выходит ночью)
+// Паук: восемь ног, два сегмента тела, красные глаза и жвала (выходит ночью) — теперь чёрный
 function buildSpider(mat, geoCache, eyeMat) {
-  const body = [0.075, 0.078, 0.09];
-  const dark = [0.035, 0.038, 0.05];
+  const body = [0.07, 0.07, 0.08];
+  const dark = [0.04, 0.04, 0.05];
   const g = new THREE.Group();
   const legs = [];
   for (const side of [-1, 1]) {
@@ -182,10 +182,10 @@ function buildSpider(mat, geoCache, eyeMat) {
   abdomen.position.set(0, 0.38, -0.22);
   const spots = fixedPart(mat, geoCache, 'sp-spots', 0.3, 0.24, 0.06, dark);
   spots.position.set(0, 0.44, 0.03);
-  const head = fixedPart(mat, geoCache, 'sp-head', 0.36, 0.3, 0.32, [0.085, 0.086, 0.1]);
+  const head = fixedPart(mat, geoCache, 'sp-head', 0.36, 0.3, 0.32, [0.09, 0.09, 0.10]);
   head.position.set(0, 0.36, 0.26);
   g.add(abdomen, spots, head);
-  // Горящие красные глаза (материал свечения, как у Хмари)
+  // Горящие красные глаза (материал свечения, как у зомби)
   const eyes = addEyes(g, eyeMat, geoCache, 'sp', {
     y: 0.42, z: 0.43, dx: 0.1, size: 0.09,
     sclera: [1, 0.3, 0.22], pupil: null,
@@ -193,7 +193,7 @@ function buildSpider(mat, geoCache, eyeMat) {
   });
   const fangs = [];
   for (const sx of [-1, 1]) {
-    const fang = fixedPart(mat, geoCache, 'sp-fang', 0.06, 0.07, 0.12, [0.06, 0.06, 0.075]);
+    const fang = fixedPart(mat, geoCache, 'sp-fang', 0.06, 0.07, 0.12, [0.12, 0.08, 0.07]);
     fang.position.set(sx * 0.09, 0.28, 0.42);
     fang.rotation.x = 0.3;
     fangs.push(fang);
@@ -482,88 +482,66 @@ function buildBird(mat, geoCache, ci) {
   };
 }
 
-// Хмарь — большой ночной охотник: балахон с капюшоном, светящиеся глаза,
-// оскал с зубами, когтистые лапы и рваный хвост из теней
-function buildGloom(mat, geoCache, eyeMat) {
+// Зомби: привычный зеленокожий гуманоид в бирюзовой рубашке и с вытянутыми руками.
+function buildZombie(mat, geoCache) {
   const g = new THREE.Group();
-  const cloth = [0.105, 0.075, 0.155];     // тёмно-фиолетовая ткань — видно даже днём
-  const clothDark = [0.055, 0.04, 0.09];
-  const glow = { mat: eyeMat, color: [1, 1, 1] };
-
-  // Тело-балахон (расширяется книзу) + горб сверху
-  const body = fixedPart(mat, geoCache, 'gl-body', 0.66, 0.72, 0.5, cloth);
-  body.position.set(0, 0.5, 0);
-  const hem = fixedPart(mat, geoCache, 'gl-hem', 0.86, 0.2, 0.66, clothDark);
-  hem.position.set(0, 0.14, 0);
-  const hunch = fixedPart(mat, geoCache, 'gl-hunch', 0.54, 0.28, 0.44, clothDark);
-  hunch.position.set(0, 1.02, -0.06);
-
-  // Голова под капюшоном
-  const head = fixedPart(mat, geoCache, 'gl-head', 0.5, 0.4, 0.44, cloth);
-  head.position.set(0, 1.16, 0.02);
-  const hood = fixedPart(mat, geoCache, 'gl-hood', 0.62, 0.2, 0.56, clothDark);
-  hood.position.set(0, 1.34, -0.04);
-  const hoodTip = fixedPart(mat, geoCache, 'gl-hoodtip', 0.18, 0.24, 0.18, clothDark);
-  hoodTip.position.set(0, 1.44, -0.22);
-  hoodTip.rotation.x = 0.5;
-
-  // Тёмная маска делает четыре светящихся глаза и оскал читаемыми даже ночью.
-  const mask = fixedPart(mat, geoCache, 'gl-mask', 0.44, 0.33, 0.035, [0.016, 0.014, 0.025]);
-  mask.position.set(0, 1.14, 0.255);
-  g.add(mask);
-  // Светящиеся глаза (по два с каждой стороны — жутко), под ними оскал с зубами
-  const eyes = [];
-  for (const s of [-1, 1]) {
-    const big = fixedPart(eyeMat, geoCache, 'gl-eye-big', 0.19, 0.14, 0.06, [1, 1, 1]);
-    big.position.set(s * 0.15, 1.22, 0.28);
-    const small = fixedPart(eyeMat, geoCache, 'gl-eye-small', 0.11, 0.08, 0.05, [1, 1, 1]);
-    small.position.set(s * 0.16, 1.06, 0.28);
-    const pupil = fixedPart(mat, geoCache, 'gl-pupil', 0.06, 0.09, 0.04, [0.02, 0.02, 0.03]);
-    pupil.position.set(s * 0.15, 1.22, 0.315);
-    g.add(big, small, pupil);
-    eyes.push(big, small, pupil);
-  }
-  const mouth = addMouth(g, mat, geoCache, 'gl', { y: 0.9, z: 0.29, w: 0.42, h: 0.1, teeth: 5, grin: true });
-
-  // Когтистые руки (качаются при полёте)
+  const skin = [0.32, 0.64, 0.29];
+  const skinDark = [0.21, 0.44, 0.2];
+  const shirt = [0.12, 0.43, 0.58];
+  const shirtDark = [0.08, 0.31, 0.43];
+  const pants = [0.19, 0.23, 0.48];
+  const legs = [];
   const arms = [];
-  for (const s of [-1, 1]) {
-    const arm = pendulumPart(mat, geoCache, 'gl-arm', 0.14, 0.5, 0.14, cloth);
-    arm.position.set(s * 0.36, 0.86, 0.04);
-    arm.rotation.z = s * 0.25;
-    for (let i = -1; i <= 1; i++) {
-      const claw = fixedPart(mat, geoCache, 'gl-claw', 0.035, 0.16, 0.035, [0.62, 0.6, 0.68]);
-      claw.position.set(i * 0.06, -0.56, 0.03);
-      claw.rotation.z = i * 0.25;
-      arm.add(claw);
-    }
+
+  // Прямоугольные ноги и потёртые штаны.
+  for (const sx of [-1, 1]) {
+    const leg = pendulumPart(mat, geoCache, 'zombie-leg', 0.17, 0.58, 0.22, pants);
+    leg.position.set(sx * 0.13, 0.58, 0);
+    const boot = fixedPart(mat, geoCache, 'zombie-boot', 0.18, 0.13, 0.24, [0.11, 0.15, 0.3]);
+    boot.position.set(0, -0.5, 0.015);
+    leg.add(boot);
+    legs.push(leg);
+    g.add(leg);
+  }
+
+  const torso = fixedPart(mat, geoCache, 'zombie-torso', 0.52, 0.68, 0.3, shirt);
+  torso.position.set(0, 0.92, 0);
+  const collar = fixedPart(mat, geoCache, 'zombie-collar', 0.2, 0.11, 0.035, shirtDark);
+  collar.position.set(0, 1.23, 0.16);
+  const tornPatch = fixedPart(mat, geoCache, 'zombie-patch', 0.12, 0.09, 0.025, [0.22, 0.56, 0.55]);
+  tornPatch.position.set(-0.13, 0.87, 0.16);
+
+  // Голова с потемневшими щеками, глазами и простой угрюмой пастью.
+  const head = fixedPart(mat, geoCache, 'zombie-head', 0.48, 0.48, 0.45, skin);
+  head.position.set(0, 1.48, 0.015);
+  const cheek = fixedPart(mat, geoCache, 'zombie-cheek', 0.11, 0.09, 0.025, skinDark);
+  cheek.position.set(0.15, 1.36, 0.245);
+  const face = addEyes(g, mat, geoCache, 'zombie', {
+    y: 1.53, z: 0.247, dx: 0.115, size: 0.085,
+    sclera: [0.86, 0.9, 0.72], pupil: [0.035, 0.045, 0.025], pupilScale: 0.42,
+  });
+  const mouth = addMouth(g, mat, geoCache, 'zombie', {
+    y: 1.35, z: 0.25, w: 0.22, h: 0.055, color: [0.12, 0.18, 0.1], teeth: 2,
+  });
+
+  // Руки вытянуты перед собой; анимация шагает в противофазе с ногами.
+  for (const sx of [-1, 1]) {
+    const arm = pendulumPart(mat, geoCache, 'zombie-arm', 0.16, 0.62, 0.18, shirt);
+    arm.position.set(sx * 0.34, 1.2, 0.03);
+    arm.rotation.z = sx * 0.08;
+    arm.rotation.x = -0.92;
+    const hand = fixedPart(mat, geoCache, 'zombie-hand', 0.17, 0.16, 0.17, skin);
+    hand.position.set(0, -0.61, 0.015);
+    arm.add(hand);
     arms.push(arm);
     g.add(arm);
   }
 
-  // Шипы на спине
-  const spikes = [];
-  for (let i = 0; i < 4; i++) {
-    const sp = fixedPart(mat, geoCache, 'gl-spike', 0.09, 0.22 - i * 0.03, 0.09, clothDark);
-    sp.position.set(0, 1.02 + i * 0.02, -0.3 - i * 0.02);
-    sp.rotation.x = -0.4 - i * 0.1;
-    spikes.push(sp);
-    g.add(sp);
-  }
-
-  // Рваный хвост-дымка из трёх сегментов
-  const wisps = [];
-  for (let i = 0; i < 3; i++) {
-    const seg = fixedPart(mat, geoCache, `gl-wisp${i}`, 0.3 - i * 0.07, 0.34, 0.3 - i * 0.07, clothDark);
-    seg.position.set(Math.sin(i) * 0.08, -0.02 - i * 0.28, 0);
-    wisps.push(seg);
-    g.add(seg);
-  }
-
-  g.add(body, hem, hunch, head, hood, hoodTip);
+  g.add(torso, collar, tornPatch, head, cheek);
   return {
-    group: g, legs: [], head: null, ears: [], hop: false, gloom: true,
-    face: eyes, mouth, arms, spikes, wisps, hem, hood, scale: 1.02, blink: eyes,
+    group: g, legs, head, ears: [], hop: false,
+    face, mouth, arms, look: [head, cheek, ...face, ...mouth],
+    lookZ: 0.015, blink: face, scale: 1.12,
   };
 }
 
@@ -571,7 +549,7 @@ export class Mob {
   constructor(world, visuals, type, x, y, z) {
     this.world = world;
     this.v = visuals;
-    this.type = type;            // 'bunny' | 'sheep' | 'slime' | 'bird'
+    this.type = type;            // 'bunny' | 'sheep' | 'slime' | 'zombie' | 'bird' | 'spider' | 'creeper' | 'wolf' | 'fish'
     this.pos = { x, y, z };
     this.home = { x, y, z };
     this.heading = Math.random() * Math.PI * 2;
@@ -582,17 +560,18 @@ export class Mob {
     this.soundT = 1 + Math.random() * 3;
     this.onSound = null;         // (kind, dist) => void
     this.onAttack = null;        // (mob, playerPos) => void
-    const SPEEDS = { bunny: 2.2, slime: 1.6, gloom: 2.0, bird: 3.0, spider: 3.1, creeper: 2.3, wolf: 2.7, fish: 1.5 };
+    const SPEEDS = { bunny: 2.2, slime: 1.6, zombie: 2.0, bird: 3.0, spider: 3.1, creeper: 2.3, wolf: 2.7, fish: 1.5 };
     this.speed = SPEEDS[type] ?? 1.1;
     // Зайцы и овцы выдерживают 2–3 удара рукой, хищники — покрепче
     this.hp = type === 'sheep' ? 3 : type === 'bunny' ? 2 : type === 'slime' ? 2
-      : type === 'gloom' ? 3 : type === 'spider' ? 4 : type === 'creeper' ? 6
+      : type === 'zombie' ? 3 : type === 'spider' ? 4 : type === 'creeper' ? 6
         : type === 'wolf' ? 5 : type === 'fish' ? 1 : 1;
     this.maxHp = this.hp;
     this.attackT = 0;
     this.flashT = 0;
     this.burnT = 0;
     this.fleeT = 0;
+    this.zombieAvoidT = 0;
     this.kbX = 0; this.kbZ = 0; this.kbT = 0;
     this.gaitT = 0;              // фаза походки (копится по пройденному пути)
     this.lookAngle = 0;          // на сколько повёрнута голова к игроку
@@ -612,83 +591,92 @@ export class Mob {
     this.yBase = y;
   }
 
-  // Хмарь: подкрадывается к игроку, висит над землёй, бьёт с дистанции 1.6
-  updateGloom(dt, playerPos) {
+  // Зомби идёт по земле за игроком, вытянув руки, и наносит урон при сближении.
+  updateZombie(dt, playerPos) {
     const v = this.v;
     this.animT += dt;
     this.tickFlash(dt);
+    this.attackT = Math.max(0, this.attackT - dt);
+    this.zombieAvoidT = Math.max(0, this.zombieAvoidT - dt);
+    this.applyKnockback(dt);
+
     const dx = playerPos.x - this.pos.x;
     const dz = playerPos.z - this.pos.z;
     const dist = Math.hypot(dx, dz) || 0.001;
-    this.heading = Math.atan2(dx, dz);
-    if (dist > 1.15 && dist < 24) {
-      this.pos.x += (dx / dist) * this.speed * dt;
-      this.pos.z += (dz / dist) * this.speed * dt;
-    }
-    const g = this.groundAt(this.pos.x, this.pos.z, this.pos.y + 1.5);
-    this.yBase = (g ?? this.pos.y) + 0.3;
-    this.pos.y += (this.yBase - this.pos.y) * Math.min(1, dt * 4);
+    const hunting = dist < 22;
+    if (hunting && this.zombieAvoidT <= 0) this.heading = Math.atan2(dx, dz);
 
-    const hover = Math.sin(this.animT * 2.6) * 0.09;
-    v.group.position.set(this.pos.x, this.pos.y + hover, this.pos.z);
+    let moveSpeed = hunting && dist > 1.25 ? this.speed * (dist > 5 ? 1.12 : 0.82) : 0;
+    if (moveSpeed > 0) {
+      const nx = this.pos.x + Math.sin(this.heading) * moveSpeed * dt;
+      const nz = this.pos.z + Math.cos(this.heading) * moveSpeed * dt;
+      const ground = this.groundAt(nx, nz, this.pos.y + 1.2);
+      const water = ground !== null && isLiquid(this.world.getBlock(
+        Math.floor(nx), Math.floor(ground - 0.1), Math.floor(nz),
+      ));
+      if (ground !== null && !water && Math.abs(ground - this.pos.y) <= 1.15 && !this.blockedAt(nx, nz)) {
+        this.pos.x = nx;
+        this.pos.z = nz;
+        this.yBase = ground;
+      } else {
+        // Не проходит сквозь стену и не идёт в воду/с обрыва; пробует обойти препятствие.
+        this.zombieAvoidT = 0.65 + Math.random() * 0.55;
+        this.heading += (Math.random() < 0.5 ? -1 : 1) * (0.9 + Math.random() * 0.6);
+        moveSpeed = 0;
+      }
+    }
+    const groundHere = this.groundAt(this.pos.x, this.pos.z, this.pos.y + 1.2);
+    if (groundHere !== null && Math.abs(groundHere - this.yBase) < 1.5) this.yBase = groundHere;
+    this.pos.y += (this.yBase - this.pos.y) * Math.min(1, dt * 10);
+
+    const walking = moveSpeed > 0;
+    this.gaitT += moveSpeed * dt;
+    const phase = this.gaitT * 3.2;
+    const lunge = this.lungeT > 0 ? Math.sin(this.lungeT * Math.PI) : 0;
+    this.lungeT = Math.max(0, this.lungeT - dt / 0.32);
+    v.group.position.set(
+      this.pos.x + Math.sin(this.heading) * 0.16 * lunge,
+      this.pos.y + (walking ? Math.abs(Math.sin(phase * 2)) * 0.025 : 0) - 0.04 * lunge,
+      this.pos.z + Math.cos(this.heading) * 0.16 * lunge,
+    );
     v.group.rotation.y = this.heading;
-    v.group.rotation.z = Math.sin(this.animT * 2) * 0.05;
-    // Анимация получения удара: отдача назад, сплющивание и дрожь
+    v.group.rotation.z = walking ? Math.sin(phase) * 0.035 : Math.sin(this.animT * 1.2) * 0.012;
+
     if (this.flashT > 0) {
-      this.flashT -= dt;
-      const k = Math.max(0, this.flashT) / 0.35;      // 1 -> 0
-      const pulse = Math.sin((1 - k) * Math.PI);        // 0 -> 1 -> 0
-      v.group.rotation.x = -0.55 * pulse;               // отклоняется назад
-      v.group.rotation.z += Math.sin(this.animT * 60) * 0.12 * k;
-      const sc = this.baseScale;
-      v.group.scale.set(sc * (1 + 0.25 * pulse), sc * (1 - 0.22 * pulse), sc * (1 + 0.25 * pulse));
-      v.group.position.y += 0.12 * pulse;
+      const k = this.flashT / 0.3;
+      const pulse = Math.sin((1 - k) * Math.PI);
+      const scale = this.baseScale;
+      v.group.rotation.x = -0.48 * pulse;
+      v.group.scale.set(scale * (1 + 0.16 * pulse), scale * (1 - 0.12 * pulse), scale * (1 + 0.16 * pulse));
+      v.group.position.y += 0.08 * pulse;
     } else {
-      v.group.rotation.x = 0;
-      v.group.scale.setScalar(this.baseScale);
+      v.group.rotation.x = -0.14 * lunge;
+      v.group.scale.setScalar(this.baseScale * (1 + Math.sin(this.animT * 1.7) * 0.008));
     }
-    // Плавный отброс после удара (не сквозь блоки)
-    this.applyKnockback(dt);
 
-    // Лапы тянутся к игроку, шипы и хвост шевелятся
-    if (v.arms) {
-      for (let i = 0; i < v.arms.length; i++) {
-        const s = i === 0 ? -1 : 1;
-        const reach = dist < 6 ? 0.7 : 0.25;
-        v.arms[i].rotation.x = -reach * 0.6 + Math.sin(this.animT * 2.2 + i) * 0.18;
-        v.arms[i].rotation.z = s * (0.25 + Math.sin(this.animT * 1.7 + i) * 0.08);
-      }
+    for (let i = 0; i < v.legs.length; i++) {
+      v.legs[i].rotation.x = walking ? Math.sin(phase + i * Math.PI) * 0.58 : Math.sin(this.animT * 1.4 + i) * 0.018;
     }
-    if (v.wisps) {
-      for (let i = 0; i < v.wisps.length; i++) {
-        v.wisps[i].position.x = Math.sin(this.animT * 2 + i * 0.9) * (0.08 + i * 0.05);
-        v.wisps[i].rotation.z = Math.sin(this.animT * 1.6 + i) * 0.25;
-      }
+    for (let i = 0; i < v.arms.length; i++) {
+      const side = i === 0 ? -1 : 1;
+      const swing = walking ? Math.sin(phase + i * Math.PI) * 0.2 : Math.sin(this.animT * 1.4 + i) * 0.035;
+      const attackReach = dist < 2.4 ? 0.18 : 0;
+      v.arms[i].rotation.x = -0.92 + swing - attackReach + lunge * 0.22;
+      v.arms[i].rotation.z = side * (0.08 + Math.sin(this.animT * 1.5 + i) * 0.025);
     }
-    // Балахон развевается, шипы топорщатся при приближении к игроку
-    if (v.hem) v.hem.rotation.x = Math.sin(this.animT * 1.4) * 0.06 - 0.04;
-    if (v.spikes) {
-      for (let i = 0; i < v.spikes.length; i++) {
-        const rage = dist < 6 ? 0.12 : 0;
-        v.spikes[i].rotation.x = -0.4 - i * 0.1 + Math.sin(this.animT * 2.2 + i * 0.6) * 0.08 - rage;
-      }
-    }
-    this.animateHead(dt, playerPos, 0.5);
+    this.animateHead(dt, playerPos, 0.3);
 
-    // Атака с рычанием
-    this.attackT -= dt;
-    if (dist < 1.9 && this.attackT <= 0) {
-      this.attackT = 1.1;
-      if (this.onSound) this.onSound('growl', dist);
+    if (dist < 1.7 && this.attackT <= 0 && Math.abs(playerPos.y - this.pos.y) < 2.2) {
+      this.attackT = 1.25;
+      this.lungeT = 1;
+      if (this.onSound) this.onSound('growl', dist, this.type);
       if (this.onAttack) this.onAttack(this, playerPos);
     }
 
-    // Шёпот и рык при приближении
     this.soundT -= dt;
     if (this.soundT <= 0) {
-      const near = dist < 10;
-      this.soundT = near ? 2.4 + Math.random() * 2.6 : 3.5 + Math.random() * 4;
-      if (this.onSound && dist < 20) this.onSound(near && Math.random() < 0.45 ? 'growl' : 'gloom', dist);
+      this.soundT = dist < 10 ? 2.7 + Math.random() * 2.5 : 4 + Math.random() * 4;
+      if (this.onSound && dist < 20) this.onSound('zombie', dist, this.type);
     }
   }
 
@@ -721,7 +709,7 @@ export class Mob {
   /** Радиус попадания по мобу (для удара игрока) */
   hitRadius() {
     const base = this.type === 'sheep' ? 0.8 : this.type === 'slime' ? 0.62
-      : this.type === 'gloom' ? 0.62 : this.type === 'bunny' ? 0.58
+      : this.type === 'zombie' ? 0.62 : this.type === 'bunny' ? 0.58
         : this.type === 'spider' ? 0.7 : this.type === 'creeper' ? 0.62
           : this.type === 'wolf' ? 0.62 : this.type === 'fish' ? 0.35 : 0.4;
     return base * this.baseScale;
@@ -729,15 +717,15 @@ export class Mob {
 
   /** Высота центра модели — по ней целимся и бьём частицами */
   centerY() {
-    const base = this.type === 'sheep' ? 0.6 : this.type === 'gloom' ? 0.95
+    const base = this.type === 'sheep' ? 0.6 : this.type === 'zombie' ? 0.95
       : this.type === 'bird' ? 0.1 : this.type === 'creeper' ? 0.8
         : this.type === 'wolf' ? 0.6 : this.type === 'spider' ? 0.32 : 0.4;
     return base * this.baseScale;
   }
 
-  /** Можно ли бить этого моба (птиц — нельзя, умирающих — тоже) */
+  /** Птиц тоже можно поразить; уже умирающие мобы не получают повторных попаданий. */
   hittable() {
-    return this.type !== 'bird' && this.dying < 0;
+    return this.dying < 0;
   }
 
   /** Полностью красный моб на время вспышки */
@@ -775,8 +763,8 @@ export class Mob {
     else this.kbX = 0;
     if (!this.blockedAt(this.pos.x, nz)) this.pos.z = nz;
     else this.kbZ = 0;
-    if (!this.v.gloom) {
-      // наземные мобы не залетают в воздух — только скользят по земле
+    if (this.type !== 'fish') {
+      // Наземные мобы не залетают в воздух — только скользят по земле.
       const g = this.groundAt(this.pos.x, this.pos.z, this.pos.y + 1);
       if (g !== null && Math.abs(g - this.pos.y) <= 1.5) this.yBase = g;
     }
@@ -912,7 +900,7 @@ export class Mob {
   update(dt, playerPos) {
     // Птицы и рыба двигаются по своим правилам
     if (this.type === 'bird') return this.updateBird(dt, playerPos);
-    if (this.type === 'gloom') return this.updateGloom(dt, playerPos);
+    if (this.type === 'zombie') return this.updateZombie(dt, playerPos);
     if (this.type === 'fish') return this.updateFish(dt, playerPos);
 
     // Крипер: подбежал — шипит, раздувается, потом взрывается
@@ -1203,6 +1191,8 @@ export class Mob {
 
   updateBird(dt, playerPos) {
     this.animT += dt;
+    this.tickFlash(dt);
+    this.applyKnockback(dt);
     const v = this.v;
     // Кружим вокруг точки спавна, плавно меняя курс
     this.heading += Math.sin(this.animT * 0.7 + this.pos.x) * dt * 0.9;
@@ -1256,7 +1246,7 @@ export function buildVisualsFor(type, mat, geoCache, eyeMat, slimeMat = mat) {
   const ci = (Math.random() * 3) | 0;
   if (type === 'bunny') return buildBunny(mat, geoCache, ci);
   if (type === 'sheep') return buildSheep(mat, geoCache, ci);
-  if (type === 'gloom') return buildGloom(mat, geoCache, eyeMat);
+  if (type === 'zombie') return buildZombie(mat, geoCache);
   if (type === 'bird') return buildBird(mat, geoCache, ci);
   if (type === 'spider') return buildSpider(mat, geoCache, eyeMat);
   if (type === 'creeper') return buildCreeper(mat, geoCache);
@@ -1271,15 +1261,6 @@ export function makeMobVisuals(type) {
   return buildVisualsFor(type, mat, new Map(), new THREE.MeshBasicMaterial({ color: 0x8ef6ff }));
 }
 
-// yaw=0 означает взгляд по -Z; новых мобов создаём только позади игрока.
-export function isHiddenSpawn(playerPos, yaw, x, z, minDist = 18) {
-  const dx = x - playerPos.x, dz = z - playerPos.z;
-  const dist = Math.hypot(dx, dz);
-  if (dist < minDist) return false;
-  const forwardDot = (-Math.sin(yaw) * dx - Math.cos(yaw) * dz) / dist;
-  return forwardDot < -0.16;
-}
-
 export class MobManager {
   constructor(scene, world) {
     this.scene = scene;
@@ -1288,26 +1269,22 @@ export class MobManager {
     this.geoCache = new Map();
     this.mat = new THREE.MeshBasicMaterial({ vertexColors: true });
     this.slimeMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.8 });
-    this.spawnT = 8;
-    this.max = 10;                     // редкий спавн, без толпы вокруг игрока
-    this.maxPassive = 7;               // оставляем место ночным монстрам
-    this.maxHostile = 3;
+    this.spawnT = 0;
+    this.max = 14;                     // в мире стало больше видов мобов
     this.onHop = null; // (dist) => void — звук
     this.onSound = null; // (kind, dist, type) => void — звуки мобов
-    this.onAttack = null; // (mob, playerPos) => void — укус паука/волка, атака Хмари
+    this.onAttack = null; // (mob, playerPos) => void — укус паука/волка, атака зомби
     this.onDeath = null;  // (mob) => void
     this.onExplode = null; // (mob) => void — взрыв крипера
     this.night = true;
+    this.difficulty = 'normal';
     this.eyeMat = new THREE.MeshBasicMaterial({ color: 0x8ef6ff });
-    this.spiderEyeMat = new THREE.MeshBasicMaterial({ color: 0xff4545 });
-    this.gloomMat = new THREE.MeshBasicMaterial({ vertexColors: true });
   }
 
   setLight(level) {
     const s = 0.32 + 0.68 * level;
     this.mat.color.setScalar(s);
     this.slimeMat.color.setScalar(s);
-    this.gloomMat.color.setScalar(0.55 + 0.45 * level);
   }
 
   _count(type) {
@@ -1316,17 +1293,16 @@ export class MobManager {
     return n;
   }
 
-  _countHostile() { return this.mobs.filter((m) => m.hostile).length; }
-
   _randomType() {
     const r = Math.random();
-    if (this.night) {
-      // Ночью выходят пауки и криперы
-      if (r < 0.26) return 'spider';
-      if (r < 0.44) return 'creeper';
-      if (r < 0.6) return 'bunny';
-      if (r < 0.74) return 'sheep';
-      if (r < 0.86) return 'slime';
+    if (this.night && this.difficulty !== 'peaceful') {
+      const hostileChance = this.difficulty === 'easy' ? 0.24 : this.difficulty === 'hard' ? 0.62 : 0.44;
+      if (r < hostileChance * 0.55) return 'spider';
+      if (r < hostileChance) return 'creeper';
+      const passiveRoll = (r - hostileChance) / (1 - hostileChance);
+      if (passiveRoll < 0.28) return 'bunny';
+      if (passiveRoll < 0.52) return 'sheep';
+      if (passiveRoll < 0.76) return 'slime';
       return 'wolf';
     }
     if (r < 0.28) return 'bunny';
@@ -1336,9 +1312,13 @@ export class MobManager {
     return 'bird';
   }
 
+  setDifficulty(difficulty = 'normal') {
+    this.difficulty = ['peaceful', 'easy', 'normal', 'hard'].includes(difficulty) ? difficulty : 'normal';
+    this.max = this.difficulty === 'hard' ? 18 : this.difficulty === 'easy' || this.difficulty === 'peaceful' ? 10 : 14;
+  }
+
   _buildVisuals(type) {
-    return buildVisualsFor(type, this.mat, this.geoCache,
-      type === 'spider' ? this.spiderEyeMat : this.eyeMat, this.slimeMat);
+    return buildVisualsFor(type, this.mat, this.geoCache, this.eyeMat, this.slimeMat);
   }
 
   /** Собрать моба со всеми хуками и поставить в мир */
@@ -1353,42 +1333,59 @@ export class MobManager {
     return mob;
   }
 
+  _isVisibleSpawn(x, z, player) {
+    // моб виден игроку — не спавним прямо перед носом
+    const px = player.pos ? player.pos.x : player.x;
+    const pz = player.pos ? player.pos.z : player.z;
+    const yaw = player.yaw ?? 0;
+    const dx = x - px, dz = z - pz;
+    const dist = Math.hypot(dx, dz);
+    if (dist > 36) return false;
+    if (dist < 8) return true; // слишком близко всегда считаем видимым
+    const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
+    const dnx = dx / dist, dnz = dz / dist;
+    const dot = fx * dnx + fz * dnz;
+    // < 75° в стороны от взгляда считаем видимым
+    return dot > 0.26 && dist < 32;
+  }
+
   /** Рыба: ищем воду рядом с игроком */
-  trySpawnFish(playerPos, yaw = 0) {
+  trySpawnFish(player) {
+    const playerPos = player.pos || player;
     if (this._count('fish') >= MOB_CAPS.fish) return null;
-    for (let attempt = 0; attempt < 16; attempt++) {
+    for (let attempt = 0; attempt < 6; attempt++) {
       const ang = Math.random() * Math.PI * 2;
-      const r = 22 + Math.random() * 16;
+      const r = 6 + Math.random() * 20;
       const x = Math.floor(playerPos.x + Math.sin(ang) * r);
       const z = Math.floor(playerPos.z + Math.cos(ang) * r);
-      if (!isHiddenSpawn(playerPos, yaw, x + 0.5, z + 0.5, 20)) continue;
       const h = this.world.heightAt(x, z);
       if (h >= this.world.seaLevel - 1) continue;      // нужно хотя бы 2 блока глубины
       const y = this.world.seaLevel - 1;
       if (this.world.getBlock(x, y, z) !== BLOCK.WATER) continue;
       if (this.world.getBlock(x, y + 1, z) !== BLOCK.WATER) continue;
+      if (this._isVisibleSpawn(x + 0.5, z + 0.5, player)) continue;
       return this._addMob('fish', x + 0.5, y + 0.5, z + 0.5);
     }
     return null;
   }
 
-  trySpawn(playerPos, yaw = 0) {
+  trySpawn(player) {
+    const playerPos = player.pos || player;
     if (this.mobs.length >= this.max) return;
-    // Даже рыба появляется только вне обзора.
-    if (!this.night && Math.random() < 0.4 && this.trySpawnFish(playerPos, yaw)) return;
-    for (let attempt = 0; attempt < 16; attempt++) {
+    // Днём подселяем рыбу в ближайшую воду — реже
+    if (!this.night && Math.random() < 0.25 && this.trySpawnFish(player)) return;
+    for (let attempt = 0; attempt < 8; attempt++) {
       const ang = Math.random() * Math.PI * 2;
-      const r = 22 + Math.random() * 16;
+      const r = 18 + Math.random() * 22;
       const x = playerPos.x + Math.sin(ang) * r;
       const z = playerPos.z + Math.cos(ang) * r;
-      if (!isHiddenSpawn(playerPos, yaw, x, z, 22)) continue;
+      // не спавним прямо перед глазами
+      if (this._isVisibleSpawn(x, z, player)) continue;
       const h = this.world.heightAt(Math.floor(x), Math.floor(z));
       let type = this._randomType();
       // Не превышаем лимит по каждому виду
       if (MOB_CAPS[type] && this._count(type) >= MOB_CAPS[type]) type = 'sheep';
       if (this.night && type === 'bird') type = 'slime';
-      if (HOSTILE.has(type) ? this._countHostile() >= this.maxHostile - 1
-        : this.mobs.length - this._countHostile() >= this.maxPassive) continue;
 
       // Птицы — в небе над любой поверхностью
       if (type === 'bird') {
@@ -1412,33 +1409,41 @@ export class MobManager {
     this.night = n;
   }
 
-  // Ночной спавн Хмари (и отдельный хук для тестов)
-  trySpawnGloom(playerPos, yaw = 0) {
-    if (this._count('gloom') >= 2 || this._countHostile() >= this.maxHostile || this.mobs.length >= this.max) return null;
-    for (let attempt = 0; attempt < 16; attempt++) {
+  // Ночной спавн зомби (и отдельный хук для тестов) — тоже только вне видимости
+  trySpawnZombie(player) {
+    const playerPos = player.pos || player;
+    if (this.difficulty === 'peaceful') return null;
+    if (this.mobs.filter((m) => m.type === 'zombie').length >= 4) return null;
+    for (let attempt = 0; attempt < 10; attempt++) {
       const ang = Math.random() * Math.PI * 2;
-      const r = 24 + Math.random() * 14;
+      const r = 12 + Math.random() * 14;
       const x = playerPos.x + Math.sin(ang) * r;
       const z = playerPos.z + Math.cos(ang) * r;
-      if (!isHiddenSpawn(playerPos, yaw, x, z, 24)) continue;
-      const h = this.world.heightAt(Math.floor(x), Math.floor(z));
+      if (this._isVisibleSpawn(x, z, player)) continue;
+      const bx = Math.floor(x), bz = Math.floor(z);
+      const h = this.world.heightAt(bx, bz);
       if (h <= this.world.seaLevel) continue;
-      if (this.world.getBlock(Math.floor(x), h + 1, Math.floor(z)) !== BLOCK.AIR) continue;
-      return this.spawnGloomAt(x + 0.5, h + 1, z + 0.5);
+      const top = this.world.getBlock(bx, h, bz);
+      const above = this.world.getBlock(bx, h + 1, bz);
+      const above2 = this.world.getBlock(bx, h + 2, bz);
+      if (![BLOCK.GRASS, BLOCK.SNOW, BLOCK.STONE, BLOCK.SAND].includes(top)
+          || above !== BLOCK.AIR || above2 !== BLOCK.AIR) continue;
+      return this.spawnZombieAt(x + 0.5, h + 1, z + 0.5);
     }
     return null;
   }
 
-  spawnGloomAt(x, y, z) {
-    return this._addMob('gloom', x, y, z);
+  spawnZombieAt(x, y, z) {
+    return this._addMob('zombie', x, y, z);
   }
 
-  update(dt, playerPos, active = true, yaw = 0) {
-    // Спавн/деспавн
-    if (active) this.spawnT -= dt;
-    if (active && this.spawnT <= 0) {
-      this.spawnT = 10 + Math.random() * 8;
-      this.trySpawn(playerPos, yaw);
+  update(dt, player, active = true) {
+    const playerPos = player.pos || player;
+    // Спавн реже и только вне поля зрения (раз в 5-8 сек)
+    this.spawnT -= dt;
+    if (this.spawnT <= 0) {
+      this.spawnT = 5 + Math.random() * 3.5;
+      if (active) this.trySpawn(player);
     }
     for (let i = this.mobs.length - 1; i >= 0; i--) {
       const m = this.mobs[i];
@@ -1453,8 +1458,8 @@ export class MobManager {
         m.updateDeath(dt);
         continue;
       }
-      // Рассвет сжигает ночную нечисть: Хмарь, пауков и криперов
-      if ((m.type === 'gloom' || m.type === 'spider' || m.type === 'creeper') && !this.night) {
+      // Рассвет сжигает ночную нечисть: зомби, пауков и криперов
+      if ((m.type === 'zombie' || m.type === 'spider' || m.type === 'creeper') && !this.night) {
         m.burnT += dt;
         if (m.burnT <= dt * 1.5 && this.onSound) this.onSound('burn', 3, m.type);
         if (m.burnT > 1.6) {

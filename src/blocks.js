@@ -42,6 +42,7 @@ export const BLOCK = {
   OBSIDIAN: 34,
   // Id 35–37 уже встречаются в сохранениях основной ветки: не переназначаем!
   PLANK_SLAB: 35,
+  SLAB: 35,        // совместимость со старыми сохранениями и рецептами
   TORCH: 36,
   FURNACE: 37,
   PLANK_SLAB_TOP: 38,
@@ -87,12 +88,12 @@ export const BLOCKS = [
   { id: 32, name: 'spruce_leaves', solid: true, tiles: [42, 42, 42], break: 'fast', foliage: true, tool: 'wood' },
   { id: 33, name: 'cactus', solid: true, tiles: [44, 44, 43], break: 'default', tool: 'wood' },
   { id: 34, name: 'obsidian', solid: true, tiles: [45, 45, 45], break: 'slow', tool: 'stone' },
-  { id: 35, name: 'plank_slab', solid: true, tiles: [8, 8, 8], break: 'default', tool: 'wood', shape: 'slab', half: 'bottom' },
-  { id: 36, name: 'torch', solid: false, tiles: [49, 49, 49], break: 'fast', shape: 'torch', transparent: true, emissive: true },
+  { id: 35, name: 'plank_slab', solid: true, tiles: [8, 8, 8], break: 'default', tool: 'wood', shape: 'slab', slab: true, half: 'bottom' },
+  { id: 36, name: 'torch', solid: false, tiles: [49, 49, 49], break: 'fast', shape: 'torch', torch: true, decor: true, transparent: true, emissive: true },
   { id: 37, name: 'furnace', solid: true, tiles: [46, 46, 47, 48], break: 'slow', tool: 'stone', interactive: 'furnace' },
-  { id: 38, name: 'plank_slab_top', solid: true, tiles: [8, 8, 8], break: 'default', tool: 'wood', shape: 'slab', half: 'top' },
-  { id: 39, name: 'cobble_slab', solid: true, tiles: [4, 4, 4], break: 'slow', tool: 'stone', shape: 'slab', half: 'bottom' },
-  { id: 40, name: 'cobble_slab_top', solid: true, tiles: [4, 4, 4], break: 'slow', tool: 'stone', shape: 'slab', half: 'top' },
+  { id: 38, name: 'plank_slab_top', solid: true, tiles: [8, 8, 8], break: 'default', tool: 'wood', shape: 'slab', slab: true, half: 'top' },
+  { id: 39, name: 'cobble_slab', solid: true, tiles: [4, 4, 4], break: 'slow', tool: 'stone', shape: 'slab', slab: true, half: 'bottom' },
+  { id: 40, name: 'cobble_slab_top', solid: true, tiles: [4, 4, 4], break: 'slow', tool: 'stone', shape: 'slab', slab: true, half: 'top' },
 ];
 
 // Названия для UI
