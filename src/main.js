@@ -1,10 +1,12 @@
 // VoxelCraft — точка входа: игровой цикл, чанки, строительство, сохранения
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
-import { BLOCK, BLOCKS, STARTER_PALETTE, BUILDER_PALETTE, breakKind, isSolid, isDecor, isTorch, isChest, isVariantBlock, wallTorchSide, WALL_TORCH_BY_SIDE, CHEST_BY_FRONT } from './blocks.js';
+import { BLOCK, BLOCKS, STARTER_PALETTE, BUILDER_PALETTE, breakKind, isSolid, isDecor, isTorch, isChest, isAnvil,
+  isSlab, isFence, slabPair, slabFullBlock, blockBounds, isVariantBlock, wallTorchSide,
+  WALL_TORCH_BY_SIDE, CHEST_BY_FRONT } from './blocks.js';
 import { ITEM, blockItem, blockIdOf, blockDropItem, breakTime, itemDamage, itemName, placeBlockId, isBlockItem, itemDef, foodValue } from './items.js';
 import { Inventory, HOTBAR_SIZE } from './inventory.js';
-import { craft, needsTable } from './crafts.js';
+import { craft, needsTable, recipesFor, stationInfo } from './crafts.js';
 import { Furnace, serializeFurnaces, deserializeFurnaces } from './furnace.js';
 import { createChest, serializeChests, deserializeChests } from './chest.js';
 import { InventoryUI, setFullToast } from './inventory-ui.js';
@@ -23,6 +25,7 @@ import { Arrows, buildArrowModel, arrowMaterials } from './projectiles.js';
 import { Eating } from './eating.js';
 import { Sky } from './sky.js';
 import { Sfx } from './audio.js';
+import { Music } from './music.js';
 import { Input } from './input.js';
 import { UI } from './ui.js';
 import { I18n } from './i18n.js';
@@ -37,10 +40,12 @@ const sfx = new Sfx();
 const input = new Input();
 const ysdk = new Ysdk();
 const invUI = new InventoryUI(i18n);
+const music = new Music();
 
 const settings = {
   volume: 0.8,
   sound: true,
+  music: true,
   lang: 'ru',
   viewDistance: CONFIG.VIEW_DISTANCE,
   fullscreen: true,               // просить полный экран и захватывать клавиши
@@ -62,6 +67,7 @@ let activeWorldRecord = null;
 let sessionStart = 0;
 let interstitialShown = 0;
 let debugVisible = false;
+let menuDefaultMode = 'survival';   // режим, выбранный в главном меню
 let tableClosedT = 0;            // когда закрыли верстак (защита от повторного открытия)
 
 function isCreative() { return mode === 'creative'; }
@@ -271,6 +277,16 @@ const highlight = new THREE.LineSegments(
 highlight.visible = false;
 scene.add(highlight);
 
+/** Контур выделения подгоняется под форму блока: у плиты и забора он не кубический */
+function fitBoxToBlock(object, id) {
+  const b = blockBounds(id);
+  const sx = Math.max(0.02, b.maxX - b.minX);
+  const sy = Math.max(0.02, b.maxY - b.minY);
+  const sz = Math.max(0.02, b.maxZ - b.minZ);
+  object.scale.set(sx, sy, sz);
+  object.position.set(0, 0, 0);
+}
+
 // ---------------------------------------------------------------- Рука (анимация удара)
 scene.add(camera);
 const hand = new THREE.Mesh(
@@ -368,7 +384,41 @@ function dropIconMaterial(key) {
 const heldGeo = {
   cube: new THREE.BoxGeometry(1, 1, 1),
   quad: new THREE.PlaneGeometry(1, 1),
+  // Плита и забор в руке — не целый куб, а своя форма
+  slab: new THREE.BoxGeometry(1, 0.5, 1),
+  fencePost: new THREE.BoxGeometry(0.25, 1.5, 0.25),
+  fenceRail: new THREE.BoxGeometry(1.1, 0.22, 0.22),
 };
+
+/**
+ * Геометрия блока в руке: обычные блоки — куб, плиты — полкуба (нижняя половина
+ * ниже центра, верхняя — выше), забор — столбик с перекладиной.
+ */
+function heldBlockMesh(def, mats) {
+  if (def.shape === 'slab') {
+    const mesh = new THREE.Mesh(heldGeo.slab, mats);
+    mesh.scale.setScalar(0.24);
+    mesh.rotation.set(0.25, -0.75, 0.12);
+    mesh.position.set(0.02, def.half === 'top' ? 0.04 : -0.08, -0.32);
+    return mesh;
+  }
+  if (def.fence) {
+    const g = new THREE.Group();
+    const post = new THREE.Mesh(heldGeo.fencePost, mats);
+    const rail = new THREE.Mesh(heldGeo.fenceRail, mats);
+    rail.position.y = 0.28;
+    g.add(post, rail);
+    g.scale.setScalar(0.2);
+    g.rotation.set(0.2, -0.7, 0.14);
+    g.position.set(0.02, -0.06, -0.32);
+    return g;
+  }
+  const mesh = new THREE.Mesh(heldGeo.cube, mats);
+  mesh.scale.setScalar(0.24);
+  mesh.rotation.set(0.25, -0.75, 0.12);
+  mesh.position.set(0.02, -0.02, -0.32);
+  return mesh;
+}
 
 // Материалы объёмных моделей предметов (инструменты, палка, яблоко).
 // Прозрачный render-pass с большим renderOrder рисует их после воды и мира.
@@ -545,10 +595,7 @@ function buildHeldMesh(key) {
       tileMaterial(top), tileMaterial(bottom),
       tileMaterial(front), tileMaterial(side),
     ];
-    mesh = new THREE.Mesh(heldGeo.cube, mats);
-    mesh.scale.setScalar(0.24);
-    mesh.rotation.set(0.25, -0.75, 0.12);
-    mesh.position.set(0.02, -0.02, -0.32);
+    mesh = heldBlockMesh(b, mats);
   } else if ((def.kind === 'tool' || def.icon === 'stick' || def.icon === 'arrow') && extrudedGeometry(def.icon)) {
     // Инструменты, палка и стрела — выдавленная иконка: в руке та же картинка, что в инвентаре
     mesh = buildExtrudedItem(def.icon);
@@ -665,7 +712,9 @@ nockedArrow.traverse((o) => {
 bowPivot.add(nockedArrow);
 bowPivot.visible = false;
 bowPivot.traverse((o) => { if (o.isMesh) o.renderOrder = 999; });
-camera.add(bowPivot);
+// Лук живёт в руке (handPivot), а не прибит к камере: он качается вместе с рукой
+// и взмахивается при копании — больше не «висит в воздухе» отдельной моделью.
+handPivot.add(bowPivot);
 const nockedMats = nockedArrow.children.map((c) => c.material);
 
 /** Выбран лук? В руке тогда показываем лук вместо предмета */
@@ -690,12 +739,13 @@ function poseBow(dt, light) {
 
   const k = bowCharge;
   const kick = bowKick * bowKick;
+  // координаты относительно руки (handPivot стоит в 0.42/-0.36/-0.55)
   bowPivot.position.set(
-    0.34 - 0.16 * k,
-    -0.34 + 0.15 * k - 0.03 * kick,
-    -0.6 + 0.05 * k + 0.1 * kick,
+    -0.08 - 0.16 * k,
+    0.02 + 0.15 * k - 0.03 * kick,
+    -0.05 + 0.05 * k + 0.1 * kick,
   );
-  bowPivot.rotation.set(0.06 - 0.04 * k + 0.2 * kick, -0.34 + 0.26 * k, 0.12 - 0.1 * k);
+  bowPivot.rotation.set(-0.04 - 0.04 * k + 0.2 * kick, -0.34 + 0.26 * k, 0.12 - 0.1 * k);
 
   const lum = 0.35 + 0.65 * light;
   for (const m of [bowMats.wood, bowMats.woodDark, bowMats.string, bowMats.hand]) {
@@ -726,7 +776,10 @@ function finishEat() {
 
 function updateHand(dt, light) {
   handPivot.visible = state === 'game';
-  heldGroup.visible = !!heldKey && !isBowSelected();
+  const bow = isBowSelected();
+  heldGroup.visible = !!heldKey && !bow;
+  // У лука в модели уже есть своя кисть: отдельная «рука-палка» больше не торчит
+  hand.visible = !bow;
   if (handSwing > 0) handSwing = Math.max(0, handSwing - dt / HAND_SWING_TIME);
   const p = Math.sin((1 - handSwing) * Math.PI) * handSwingPow; // 0 -> 1 -> 0
   const moving = Math.abs(input.move.forward) + Math.abs(input.move.right) > 0.1;
@@ -784,9 +837,20 @@ const crackMesh = new THREE.Mesh(new THREE.BoxGeometry(1.005, 1.005, 1.005), cra
 crackMesh.visible = false;
 scene.add(crackMesh);
 
+/**
+ * Трещины повторяют форму блока: у полублока они занимают только нижнюю
+ * (или верхнюю) половину, у забора — столбик. Иначе «прозрачная» часть плиты
+ * тоже оказывалась в анимации ломания.
+ */
 function showCrack(hit, progress) {
   crackMesh.visible = true;
-  crackMesh.position.set(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
+  fitBoxToBlock(crackMesh, hit.id);
+  const b = blockBounds(hit.id);
+  crackMesh.position.set(
+    hit.x + (b.minX + b.maxX) / 2,
+    hit.y + (b.minY + b.maxY) / 2,
+    hit.z + (b.minZ + b.maxZ) / 2,
+  );
   crackMesh.material = crackMats[Math.max(0, Math.min(4, Math.floor(progress * 5)))];
 }
 
@@ -961,7 +1025,11 @@ const CATALOG_KEYS = [
   ...BLOCKS.filter((b) => b.id !== BLOCK.AIR && b.id !== BLOCK.WATER && !b.variant).map((b) => blockItem(b.id)),
   ITEM.STICK, ITEM.APPLE, ITEM.BOW, ITEM.ARROW,
   ITEM.WOOD_PICKAXE, ITEM.WOOD_AXE, ITEM.WOOD_SWORD, ITEM.STONE_PICKAXE, ITEM.STONE_AXE, ITEM.STONE_SWORD,
+  ITEM.IRON_PICKAXE, ITEM.IRON_AXE, ITEM.IRON_SWORD,
+  ITEM.GOLD_PICKAXE, ITEM.GOLD_AXE, ITEM.GOLD_SWORD,
+  ITEM.DIAMOND_PICKAXE, ITEM.DIAMOND_AXE, ITEM.DIAMOND_SWORD,
   ITEM.COAL, ITEM.RAW_IRON, ITEM.RAW_GOLD, ITEM.DIAMOND, ITEM.BREAD, ITEM.WHEAT, ITEM.IRON_INGOT, ITEM.GOLD_INGOT,
+  ITEM.WOOL, ITEM.RAW_MEAT, ITEM.COOKED_MEAT, ITEM.FANG,
 ];
 
 function catalogEntries() {
@@ -1106,10 +1174,6 @@ function hitMob(m) {
   m.knockback(kx, kz, 4.2);
   // Зайцы и овцы убегают
   if (m.type === 'bunny' || m.type === 'sheep') m.fleeFrom(player.pos);
-  if (killed && (m.type === 'bunny' || m.type === 'sheep')) {
-    // С зайца/овцы падают яблоки — приятный бонус выживания
-    if (Math.random() < 0.5) items.spawn(m.pos.x, m.pos.y + 0.6, m.pos.z, 'apple');
-  }
 }
 
 // Трава, цветы, папоротник, клевер срываются мгновенно: сухой треск, горсть частиц,
@@ -1258,6 +1322,77 @@ function chestFacingPlayer(x, z) {
   return dz > 0 ? CHEST_BY_FRONT.pz : CHEST_BY_FRONT.nz;
 }
 
+/**
+ * Куда ставить полублок.
+ * @returns {{ x: number, y: number, z: number, id: number }|null} клетка и нужная
+ *   половина (или null, если ставить некуда).
+ *
+ * Логика как в классике: клик по верхней грани нижней плиты (или по нижней грани
+ * верхней) докладывает вторую половину в ту же клетку — из двух плит получается
+ * полный блок. Клик по боковой грани ставит плиту в соседнюю клетку, выбирая
+ * половину по тому, держим ли мы верхнюю или нижнюю плиту.
+ */
+function slabPlacement(id, hit) {
+  const pair = slabPair(id);
+  if (!pair) return null;
+  const [bottom, top] = pair;
+  const holdingTop = BLOCKS[id].half === 'top';
+  const wantTopHalf = holdingTop || hit.ny === -1;
+  const sameCell = { x: hit.x, y: hit.y, z: hit.z };
+  const nextCell = { x: hit.x + hit.nx, y: hit.y + hit.ny, z: hit.z + hit.nz };
+  const cur = world.getBlock(sameCell.x, sameCell.y, sameCell.z);
+  if (isSlab(cur)) {
+    const curTop = BLOCKS[cur].half === 'top';
+    // В клетке уже есть половина: кладём недостающую туда же (потом сольются)
+    if (curTop !== wantTopHalf || slabPair(cur)?.includes(id)) {
+      return { ...sameCell, id: curTop ? bottom : top };
+    }
+    return null;
+  }
+  const target = isDecor(cur) || hit.ny === 0 ? sameCell : nextCell;
+  const cell = world.getBlock(target.x, target.y, target.z);
+  if (isSlab(cell)) {
+    const cellTop = BLOCKS[cell].half === 'top';
+    if (cellTop === wantTopHalf) return null;   // такая половина уже есть
+    return { ...target, id: wantTopHalf ? top : bottom };
+  }
+  if (cell !== BLOCK.AIR && cell !== BLOCK.WATER && !isDecor(cell)) return null;
+  return { ...target, id: wantTopHalf ? top : bottom };
+}
+
+/**
+ * Второй полублок в ту же клетку: низ + верх превращаются в полный блок.
+ * @returns {boolean} true, если блок уже поставлен (полный блок собран)
+ */
+function slabMergeAt(hit, id, held) {
+  const pair = slabPair(id);
+  if (!pair) return false;
+  const [bottom, top] = pair;
+  const full = slabFullBlock(id);
+  const tryCell = (x, y, z) => {
+    const cur = world.getBlock(x, y, z);
+    const need = cur === bottom ? top : cur === top ? bottom : 0;
+    if (!need || need !== id) return false;
+    if (world.setBlock(x, y, z, full)) {
+      sfx.place();
+      particles.burst(x + 0.5, y + 0.5, z + 0.5, tileColor(BLOCKS[full].tiles[0]), 8);
+      if (isSurvival()) {
+        inventory.remove(held, 1);
+        refreshHotbar();
+      }
+      blocksBuilt++;
+      ui.setBlocksBuilt(blocksBuilt);
+      ysdk.setStats({ blocksBuilt });
+      return true;
+    }
+    return false;
+  };
+  // клик по самой плите — докладываем вторую половину в ту же клетку
+  if (tryCell(hit.x, hit.y, hit.z)) return true;
+  // клик по грани соседней клетки — если там уже стоит «не та» половина
+  return tryCell(hit.x + hit.nx, hit.y + hit.ny, hit.z + hit.nz);
+}
+
 function doPlace(hit) {
   if (!hit) return;
   swingHand(0.6);
@@ -1276,24 +1411,52 @@ function doPlace(hit) {
     openChest(hit);
     return;
   }
-  // Прицел на траве/цветке — ставим блок на её место
-  const onDecor = isDecor(hit.id);
-  const x = onDecor ? hit.x : hit.x + hit.nx;
-  const y = onDecor ? hit.y : hit.y + hit.ny;
-  const z = onDecor ? hit.z : hit.z + hit.nz;
-  const cur = world.getBlock(x, y, z);
-  if (cur !== BLOCK.AIR && cur !== BLOCK.WATER && !isDecor(cur)) return;
-  // Не ставим блок внутрь игрока
-  const px = player.pos.x, py = player.pos.y, pz = player.pos.z;
-  const HW = CONFIG.PLAYER_WIDTH / 2 + 0.01;
-  const overlap = x + 1 > px - HW && x < px + HW &&
-    y + 1 > py && y < py + CONFIG.PLAYER_HEIGHT &&
-    z + 1 > pz - HW && z < pz + HW;
+  // Наковальня: кузнечный верстак для инструментов выше каменных
+  if (useStation && isAnvil(hit.id)) {
+    if (performance.now() - tableClosedT > 400) openAnvil();
+    return;
+  }
   const held = heldItem();
   let id = placeBlockId(held);
   if (!id) { swingHand(0.6); return; }   // в руке не блок — ставить нечего
+  const onDecor = isDecor(hit.id);
+  // Полублок: второй в той же клетке превращает пару в полный блок
+  if (isSlab(id) && slabMergeAt(hit, id, held)) return;
+  let x = onDecor ? hit.x : hit.x + hit.nx;
+  let y = onDecor ? hit.y : hit.y + hit.ny;
+  let z = onDecor ? hit.z : hit.z + hit.nz;
+  // Полублок сам выбирает клетку и нужную половину (низ/верх)
+  if (isSlab(id)) {
+    const place = slabPlacement(id, hit);
+    if (!place) return;
+    x = place.x; y = place.y; z = place.z; id = place.id;
+    // Если в этой клетке уже лежит вторая половина — собираем полный блок
+    const mate = world.getBlock(x, y, z);
+    if (isSlab(mate) && slabPair(mate)?.includes(id)) {
+      const full = slabFullBlock(id);
+      if (world.setBlock(x, y, z, full)) {
+        sfx.place();
+        particles.burst(x + 0.5, y + 0.5, z + 0.5, tileColor(BLOCKS[full].tiles[0]), 8);
+        if (isSurvival()) { inventory.remove(held, 1); refreshHotbar(); }
+        blocksBuilt++;
+        ui.setBlocksBuilt(blocksBuilt);
+        ysdk.setStats({ blocksBuilt });
+      }
+      return;
+    }
+  }
+  const cur = world.getBlock(x, y, z);
+  if (cur !== BLOCK.AIR && cur !== BLOCK.WATER && !isDecor(cur)) return;
+  // Не ставим блок внутрь игрока (высота зависит от формы блока)
+  const px = player.pos.x, py = player.pos.y, pz = player.pos.z;
+  const HW = CONFIG.PLAYER_WIDTH / 2 + 0.01;
+  const bb = blockBounds(id);
+  const overlap = x + bb.maxX > px - HW && x + bb.minX < px + HW &&
+    y + bb.maxY > py && y + bb.minY < py + player.height() &&
+    z + bb.maxZ > pz - HW && z + bb.minZ < pz + HW;
   // Факел в стену вешается настенным вариантом — со своей моделью и наклоном
   if (isTorch(id) && !onDecor && (hit.nx || hit.nz)) id = wallTorchFor(hit);
+  if (isAnvil(id)) id = BLOCK.ANVIL;
   if (isChest(id)) id = chestFacingPlayer(x, z);
   if (overlap && isSolid(id)) return;
   if (isDecor(cur)) {
@@ -1336,6 +1499,7 @@ function buildSave() {
     settings: {
       volume: settings.volume,
       sound: settings.sound,
+      music: settings.music,
       lang: settings.lang,
       viewDistance: settings.viewDistance,
       fullscreen: settings.fullscreen !== false,
@@ -1347,6 +1511,7 @@ function currentSettingsSave() {
   return {
     volume: settings.volume,
     sound: settings.sound,
+    music: settings.music,
     lang: settings.lang,
     viewDistance: settings.viewDistance,
     fullscreen: settings.fullscreen !== false,
@@ -1407,6 +1572,74 @@ function mobSeesPlayer(mob) {
     if (isSolid(world.getBlock(bx, by, bz))) return false;
   }
   return true;
+}
+
+/**
+ * Что падает с моба: шерсть и мясо с овцы, мясо и клыки с волка,
+ * сырое мясо с зайца и птицы, уголь с крипера и т.д.
+ * Клык — задел под будущие крафты.
+ * @returns {Array<string>} ключи предметов
+ */
+function mobDrops(type) {
+  const out = [];
+  const roll = (chance, key, min = 1, max = min) => {
+    if (Math.random() > chance) return;
+    const n = min + ((Math.random() * (max - min + 1)) | 0);
+    for (let i = 0; i < n; i++) out.push(key);
+  };
+  switch (type) {
+    case 'sheep':
+      roll(1, ITEM.WOOL, 1, 2);
+      roll(1, ITEM.RAW_MEAT, 1, 2);
+      break;
+    case 'wolf':
+      roll(1, ITEM.RAW_MEAT, 1, 2);
+      roll(0.6, ITEM.FANG, 1, 2);
+      break;
+    case 'bunny':
+      roll(0.9, ITEM.RAW_MEAT, 1, 1);
+      roll(0.25, ITEM.WOOL, 1, 1);
+      break;
+    case 'fish':
+      roll(1, ITEM.RAW_MEAT, 1, 1);
+      break;
+    case 'bird':
+      roll(1, ITEM.RAW_MEAT, 1, 1);
+      roll(0.25, ITEM.FANG, 1, 1);
+      break;
+    case 'zombie':
+      roll(0.4, ITEM.RAW_MEAT, 1, 1);
+      roll(0.15, ITEM.IRON_INGOT, 1, 1);
+      break;
+    case 'spider':
+      roll(0.5, ITEM.STICK, 1, 2);
+      roll(0.2, ITEM.FANG, 1, 1);
+      break;
+    case 'creeper':
+      roll(0.7, ITEM.COAL, 1, 2);
+      break;
+    case 'slime':
+      roll(0.6, ITEM.STICK, 1, 1);
+      break;
+    default:
+      break;
+  }
+  return out;
+}
+
+/** Дроп высыпается рядом с телом моба (только в выживании) */
+function dropMobLoot(mob) {
+  if (!isSurvival()) return;
+  const drops = mobDrops(mob.type);
+  drops.forEach((key, i) => {
+    const a = (i / Math.max(1, drops.length)) * Math.PI * 2;
+    items.spawn(
+      mob.pos.x + Math.cos(a) * 0.24,
+      mob.pos.y + 0.45,
+      mob.pos.z + Math.sin(a) * 0.24,
+      key,
+    );
+  });
 }
 
 function attachPlayerEvents() {
@@ -1480,6 +1713,7 @@ function attachPlayerEvents() {
     const xp = xpMap[mob.type] || 3;
     xpOrbs.spawn(mob.pos.x, mob.pos.y + 0.6, mob.pos.z, xp);
     sfx.pickup();
+    dropMobLoot(mob);
   };
   items.onPickup = (kind) => {
     // универсальный подбор: любой предмет (руда, блок, хлеб, пшеница, яблоко)
@@ -1543,20 +1777,35 @@ function applyMode() {
   }
 }
 
-function toggleMode() {
-  mode = isCreative() ? 'survival' : 'creative';
+/**
+ * Переключить режим текущего мира (кнопка, селект в паузе или выбор в меню).
+ * @param {'survival'|'creative'} next
+ * @param {{ quiet?: boolean }} opts quiet — без тоста и звука (при входе в мир)
+ */
+function setMode(next, opts = {}) {
+  const wanted = next === 'creative' ? 'creative' : 'survival';
+  if (mode === wanted) { ui.showModeLabel(mode); return false; }
+  mode = wanted;
   applyMode();
   refreshHotbar();
   if (invUI.isOpen()) invUI.render();
-  ui.toast(i18n.t(isCreative() ? 'mode_switched_creative' : 'mode_switched_survival'), 2200);
-  sfx.uiOk();
+  if (!opts.quiet) {
+    ui.toast(i18n.t(isCreative() ? 'mode_switched_creative' : 'mode_switched_survival'), 2200);
+    sfx.uiOk();
+  }
   saveGame();
+  return true;
+}
+
+function toggleMode() {
+  setMode(isCreative() ? 'survival' : 'creative');
 }
 
 // ---------------------------------------------------------------- Стейты
 function enterGame() {
   state = 'game';
   input.enabled = true;
+  music.setPlaying(true);
   ui.showModeLabel(mode);
   sessionStart = sessionStart || performance.now();
   ui.showGame();
@@ -1571,6 +1820,9 @@ function pauseGame() {
   state = 'pause';
   input.enabled = false;
   input.keys.clear();
+  attackCd = 0;
+  ui.clearHurt();
+  music.setPlaying(false);
   runShake.duration = 0;
   runShake.strength = 0;
   runBob = 0;
@@ -1585,6 +1837,12 @@ function pauseGame() {
 function resumeGame() {
   state = 'game';
   input.enabled = true;
+  attackCd = 0;
+  // Выход из меню не должен выглядеть как удар: даём короткий «иммунитет»,
+  // чтобы моб, стоящий вплотную, не включил анимацию урона в ту же миллисекунду.
+  player?.grace?.(0.7);
+  ui.clearHurt();
+  music.setPlaying(true);
   ysdk.gameplayStart();
   ui.showGame();
   ui.setTouchVisible(input.isTouch);
@@ -1595,6 +1853,7 @@ async function saveAndQuit() {
   await saveGame(true);
   state = 'menu';
   input.enabled = false;
+  music.setPlaying(false);
   ui.setHasSave(true);
   ui.showScreen('menu-screen');
   ui.setTouchVisible(false);
@@ -1618,8 +1877,9 @@ function showHints() {
   setTimeout(() => state === 'game'
     && ui.toast(i18n.t(isCreative() ? 'hint_fly' : 'hint_table'), 3500), 11400);
   setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_bow'), 4200), 15000);
-  setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_eat'), 4200), 21000);
-  setTimeout(() => state === 'game' && ui.toast(i18n.t('esc_fullscreen'), 4500), 20500);
+  setTimeout(() => state === 'game' && ui.toast(i18n.t('sneak_hint'), 4000), 18600);
+  setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_eat'), 4200), 23000);
+  setTimeout(() => state === 'game' && ui.toast(i18n.t('esc_fullscreen'), 4500), 27500);
 }
 
 // ---------------------------------------------------------------- Награда за рекламу
@@ -1657,8 +1917,8 @@ async function startWorld(opts = {}) {
   const seed = (data?.seed != null) ? data.seed
     : (opts.seed != null ? Number(opts.seed) | 0 : (record?.seed ?? ((Math.random() * 0x7fffffff) | 0)));
   // Старые сохранения без режима по-прежнему открываются в креативе.
-  mode = data ? (data.mode === 'survival' ? 'survival' : 'creative')
-    : ((opts.mode || record?.mode) === 'survival' ? 'survival' : 'creative');
+  // Режим из сохранения, но явный выбор игрока (селект в меню) важнее
+  mode = (opts.mode || (data ? data.mode : record?.mode)) === 'survival' ? 'survival' : 'creative';
   const requestedDifficulty = data?.difficulty || opts.difficulty || record?.difficulty || 'normal';
   difficulty = ['peaceful', 'easy', 'normal', 'hard'].includes(requestedDifficulty) ? requestedDifficulty : 'normal';
   mobManager.setDifficulty(difficulty);
@@ -1716,6 +1976,7 @@ async function startWorld(opts = {}) {
     if (dataSettings) {
       settings.volume = dataSettings.volume ?? settings.volume;
       settings.sound = dataSettings.sound !== false;
+      settings.music = dataSettings.music !== false;
       settings.lang = dataSettings.lang || settings.lang;
       settings.viewDistance = dataSettings.viewDistance || settings.viewDistance;
       settings.fullscreen = dataSettings.fullscreen !== false;
@@ -1781,6 +2042,7 @@ function openInventory(gridSize = 2, station = null) {
   state = 'inventory';
   input.enabled = false;
   input.keys.clear();
+  music.setPlaying(false);
   runShake.duration = 0;
   runShake.strength = 0;
   runBob = 0;
@@ -1796,15 +2058,23 @@ function openInventory(gridSize = 2, station = null) {
 
 function openTable() {
   sfx.uiOk();
-  openInventory(3);
+  openInventory(3, { type: 'table', gridSize: 3 });
+}
+
+/** Наковальня: та же сетка 3×3, но на ней доступны рецепты металлических инструментов */
+function openAnvil() {
+  sfx.uiOk();
+  sfx.anvil?.();
+  openInventory(3, { type: 'anvil', gridSize: 3 });
 }
 
 function closeInventory() {
   if (state !== 'inventory') return;
-  if (invUI.gridSize === 3) tableClosedT = performance.now();
+  if (invUI.gridSize === 3 || invUI.station?.type === 'anvil') tableClosedT = performance.now();
   invUI.hide();
   state = 'game';
   input.enabled = true;
+  music.setPlaying(true);
   ui.showGame();
   if (!input.isTouch) input.requestLock(canvas);   // закрытие по E/✕ — это жест пользователя
   ui.setTouchVisible(input.isTouch);
@@ -1829,6 +2099,9 @@ function refreshCatalog() {
 
 invUI.handlers.onChange = () => refreshHotbar();
 invUI.handlers.onStationChange = () => saveGame();
+invUI.handlers.onNeedStation = (station) => {
+  ui.toast(i18n.t(station === 'anvil' ? 'need_anvil' : 'need_table'), 2800);
+};
 invUI.handlers.onClose = () => closeInventory();
 invUI.handlers.onSelect = (i) => {
   selectHotbar(i);
@@ -1838,6 +2111,7 @@ invUI.handlers.onSound = (kind) => {
   if (kind === 'pickup') sfx.pickup();
   else if (kind === 'place') sfx.place();
   else if (kind === 'craft') sfx.craft();
+  else if (kind === 'deny') { sfx.uiClick(); sfx.deny?.(); }
   else sfx.uiClick();
 };
 invUI.handlers.onPickCatalog = (key) => {
@@ -1852,10 +2126,13 @@ invUI.handlers.onLocked = () => {
   requestReward();
 };
 invUI.handlers.onQuickCraft = (recipe) => {
-  const res = craft(inventory, recipe);
+  const res = craft(inventory, recipe, invUI.craftStation());
   if (res === 'ok') {
     sfx.uiOk();
     ui.toast(`${i18n.t('craft_ok')}: ${itemName(recipe.out.key, i18n.lang)} ×${recipe.out.count}`, 1800);
+  } else if (res === 'station') {
+    sfx.uiClick();
+    ui.toast(i18n.t('need_anvil'), 2600);
   } else if (res === 'missing') {
     sfx.uiClick();
     ui.toast(i18n.t('craft_missing'), 1600);
@@ -1900,15 +2177,19 @@ function createWorldFromForm(form = {}) {
 
 ui.handlers.onPlay = () => {
   input.enterFullscreen(); sfx.resume(); sfx.uiOk();
+  const wanted = ui.getMenuMode();
   if (activeWorldRecord) {
-    startWorld({ fresh: !activeWorldRecord.save, record: activeWorldRecord });
-  } else {
-    ui.showWorldCreator('menu-screen');
+    // Селект режима в меню теперь действительно работает: продолжаем текущий мир
+    // и сразу переключаем его в выбранный режим (раньше выбор игнорировался).
+    void startWorld({ fresh: !activeWorldRecord.save, record: activeWorldRecord, mode: wanted });
+    return;
   }
+  menuDefaultMode = wanted;
+  ui.showWorldCreator('menu-screen', wanted);
 };
 ui.handlers.onNewWorld = () => {
   input.enterFullscreen(); sfx.resume(); sfx.uiOk();
-  ui.showWorldCreator('menu-screen');
+  ui.showWorldCreator('menu-screen', ui.getMenuMode());
 };
 ui.handlers.onWorlds = () => {
   sfx.uiClick();
@@ -1941,6 +2222,16 @@ ui.handlers.onMode = (m) => {
   input.enterFullscreen(); sfx.resume(); sfx.uiOk();
   createWorldFromForm({ mode: m, difficulty: 'normal' });
 };
+// Селект режима в паузе — быстрая смена режима текущего мира
+ui.handlers.onPauseMode = (m) => {
+  if (state !== 'pause' && state !== 'game') return;
+  setMode(m);
+};
+// Селект режима в главном меню — режим нового мира
+ui.handlers.onMenuMode = (m) => {
+  menuDefaultMode = m === 'creative' ? 'creative' : 'survival';
+  sfx.uiClick();
+};
 ui.handlers.onModeBack = () => {
   sfx.uiClick();
   ui.showScreen('menu-screen');
@@ -1969,8 +2260,18 @@ ui.handlers.onToSpawn = () => {
 };
 ui.handlers.onSettingsChange = (delta) => {
   Object.assign(settings, delta);
-  if (delta.volume != null) sfx.setVolume(settings.sound ? delta.volume : 0);
-  if (delta.sound != null) sfx.setEnabled(delta.sound && settings.volume > 0);
+  if (delta.volume != null) {
+    sfx.setVolume(settings.sound ? delta.volume : 0);
+    music.setVolume(0.5 * settings.volume);
+  }
+  if (delta.sound != null) {
+    sfx.setEnabled(delta.sound && settings.volume > 0);
+    music.setEnabled(settings.sound && settings.music !== false);
+  }
+  if (delta.music != null) {
+    settings.music = delta.music !== false;
+    music.setEnabled(settings.sound && settings.music);
+  }
   if (delta.lang) {
     i18n.setLang(delta.lang);
     ui.applyI18n();
@@ -2055,9 +2356,11 @@ canvas.addEventListener('mousedown', () => {
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     sfx.suspend();
+    music.pause();
     if (state === 'game') pauseGame();
   } else {
     sfx.resume();
+    music.resume();
   }
 });
 
@@ -2173,7 +2476,13 @@ function frame() {
     const hit = pickTarget();
     if (hit) {
       highlight.visible = true;
-      highlight.position.set(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
+      fitBoxToBlock(highlight, hit.id);
+      const hb = blockBounds(hit.id);
+      highlight.position.set(
+        hit.x + (hb.minX + hb.maxX) / 2,
+        hit.y + (hb.minY + hb.maxY) / 2,
+        hit.z + (hb.minZ + hb.maxZ) / 2,
+      );
     } else {
       highlight.visible = false;
     }
@@ -2258,7 +2567,8 @@ function frame() {
     }
 
     // ПКМ по интерактивному блоку важнее лука: даже с луком можно открыть верстак/печь.
-    const interactiveTarget = hit && (hit.id === BLOCK.TABLE || hit.id === BLOCK.FURNACE || isChest(hit.id));
+    const interactiveTarget = hit && (hit.id === BLOCK.TABLE || hit.id === BLOCK.FURNACE
+      || isChest(hit.id) || isAnvil(hit.id));
     // Лук: удержание ПКМ (или кнопки на тач-экране) натягивает тетиву, отпускание — выстрел
     const bowSel = isBowSelected() && !interactiveTarget;
     if (bowSel && input.placeHeld) {
@@ -2375,6 +2685,7 @@ function frame() {
   }
 
   if (state !== 'game') eat.reset();
+  music.update(dt);
   updateTorchVisuals(dt);
   updateHeldLight(now);
   updateHand(dt, sky.lightLevel ?? 1);
@@ -2420,6 +2731,9 @@ window.addEventListener('keydown', (e) => {
 
   refreshWorldMenu();
 
+  // Фоновая музыка: ищем треки в папке music/ (если их нет — просто тишина)
+  void music.discover();
+
   frame();
 })();
 
@@ -2427,6 +2741,7 @@ function applyLoadedSettings(s) {
   if (!s) return;
   settings.volume = s.volume ?? settings.volume;
   settings.sound = s.sound !== false;
+  settings.music = s.music !== false;
   settings.lang = s.lang || settings.lang;
   settings.viewDistance = s.viewDistance || settings.viewDistance;
   settings.fullscreen = s.fullscreen !== false;
@@ -2434,6 +2749,8 @@ function applyLoadedSettings(s) {
   i18n.setLang(settings.lang);
   sfx.setVolume(settings.sound ? settings.volume : 0);
   sfx.setEnabled(settings.sound);
+  music.setVolume(0.5 * settings.volume);
+  music.setEnabled(settings.sound && settings.music);
 }
 
 // Экспорт для отладки в консоли
@@ -2442,6 +2759,8 @@ window.VoxelCraft = {
   get mode() { return mode; },
   get inventory() { return inventory; },
   get invUI() { return invUI; },
+  get input() { return input; },
+  get music() { return music; },
   /** Что сейчас в руке (для тестов и отладки) */
   get hand() {
     const mesh = heldGroup.children[0];

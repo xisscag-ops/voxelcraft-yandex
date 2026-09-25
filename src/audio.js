@@ -132,6 +132,14 @@ export class Sfx {
   splash() { this._burst({ freq: 1100, dur: 0.25, gain: 0.3, type: 'bandpass', q: 1.5, pitchDrop: 0.3 }); }
   uiClick() { this._tone({ freq: 700, dur: 0.05, gain: 0.08, type: 'square' }); }
   uiOk() { this._tone({ freq: 520, dur: 0.08, gain: 0.08, type: 'square', slide: 200 }); }
+  /** «Нельзя» — низкий короткий сигнал (рецепт требует наковальню, инвентарь полон) */
+  deny() { this._tone({ freq: 200, dur: 0.12, gain: 0.09, type: 'square', slide: -60 }); }
+  /** Открытие наковальни: тяжёлый металлический звон */
+  anvil() {
+    this._burst({ freq: 420, dur: 0.12, gain: 0.22, pitchDrop: 0.5 });
+    setTimeout(() => this._tone({ freq: 880, dur: 0.22, gain: 0.07, type: 'triangle', slide: -120 }), 40);
+    setTimeout(() => this._tone({ freq: 1320, dur: 0.16, gain: 0.04, type: 'sine', slide: -80 }), 90);
+  }
   reward() {
     this._tone({ freq: 440, dur: 0.12, gain: 0.1, type: 'square', slide: 220 });
     setTimeout(() => this._tone({ freq: 660, dur: 0.15, gain: 0.1, type: 'square', slide: 220 }), 120);

@@ -9,13 +9,15 @@ import { updateRunShake } from './src/camera-effects.js';
 import { createWorldRecord, emptyWorldProfile, normalizeWorldProfile, serializeWorldProfile } from './src/world-store.js';
 import { migrateSave } from './src/save-migration.js';
 import { raycastVoxel } from './src/raycast.js';
-import { isSolid, isOpaque, isDecor, BLOCK, BLOCKS } from './src/blocks.js';
+import { isSolid, isOpaque, isDecor, BLOCK, BLOCKS, BLOCK_NAMES, isSlab, isFence, isAnvil,
+  blockBounds, slabFullBlock, slabPair, slabDropItem } from './src/blocks.js';
 import { Inventory } from './src/inventory.js';
 import {
   RECIPES, craft, canCraft, validateRecipes, emptyGrid, matchRecipe, gridResult,
-  craftFromGrid, needsTable, recipeGridSize,
+  craftFromGrid, needsTable, recipeGridSize, recipesFor, stationAllows, stationInfo,
 } from './src/crafts.js';
-import { ITEM, itemDef, itemDescription, foodValue, isFood, blockItem, blockDropItem, breakTime, itemDamage, maxStack, placeBlockId, toolKind } from './src/items.js';
+import { ITEM, itemDef, itemDescription, foodValue, isFood, blockItem, blockDropItem, breakTime, itemDamage, maxStack, placeBlockId, toolKind, itemName } from './src/items.js';
+import { spriteNames } from './src/icons.js';
 import { CONFIG } from './src/config.js';
 import { Furnace, serializeFurnaces, deserializeFurnaces, fuelDuration, smeltResult } from './src/furnace.js';
 import { STRINGS } from './src/i18n.js';
@@ -42,6 +44,14 @@ function check(name, cond, detail = '') {
   if (cond) console.log('OK  ', name);
   else { console.log('FAIL', name, detail ? `(${detail})` : ''); failed++; }
 }
+
+// Нормализация угла в [-PI, PI] — для проверок «моб не крутится на месте»
+function angNorm(a) {
+  while (a > Math.PI) a -= Math.PI * 2;
+  while (a < -Math.PI) a += Math.PI * 2;
+  return a;
+}
+function itemNameRu(key) { return itemName(key, 'ru'); }
 
 const runShakeTest = { duration: 0, strength: 0 };
 let runStrength = 0;
@@ -554,7 +564,8 @@ check('инвентарь полон → лишнее не влезает', (() 
 
 // ---- Крафт ----
 check('рецепты без ошибок', validateRecipes().length === 0, validateRecipes().join('; '));
-check('25 рецептов (включая два топора, плиты, верстак, сундук, лук, стрелы и блоки)', RECIPES.length === 25, 'их ' + RECIPES.length);
+check('39 рецептов (берёзовые доски, забор, наковальня, металлические инструменты)',
+  RECIPES.length === 39, 'их ' + RECIPES.length);
 function craftWith(input, id) {
   const i = new Inventory(CONFIG.INV_SIZE);
   for (const [k, n] of Object.entries(input)) i.add(k, n);
@@ -1054,6 +1065,344 @@ check('сундук: разметка и стили панели', html.includes
   const share = withCave / cols;
   check('пещеры: отдельные ходы, а не сплошной слой', share > 0.08 && share < 0.6, (share * 100).toFixed(1) + '% колонок');
   check('пещеры: ходы уходят в глубину и поднимаются выше', deep > 300 && high > 100, 'глубоко ' + deep + ', высоко ' + high);
+}
+
+// ---- Плиты, забор, наковальня, присед, дроп мобов, музыка, большие деревья ----
+{
+  // Плиты: форма, границы и «две плиты = полный блок»
+  check('плита — не полный куб: нижняя занимает низ клетки',
+    blockBounds(BLOCK.PLANK_SLAB).maxY === 0.5 && blockBounds(BLOCK.PLANK_SLAB).minY === 0);
+  check('верхняя плита занимает верх клетки',
+    blockBounds(BLOCK.PLANK_SLAB_TOP).minY === 0.5 && blockBounds(BLOCK.PLANK_SLAB_TOP).maxY === 1);
+  check('плиты одного материала складываются в пару',
+    slabPair(BLOCK.PLANK_SLAB)[1] === BLOCK.PLANK_SLAB_TOP && slabFullBlock(BLOCK.COBBLE_SLAB_TOP) === BLOCK.COBBLE);
+  check('верхняя плита выпадает обычной плитой', slabDropItem(BLOCK.PLANK_SLAB_TOP) === BLOCK.PLANK_SLAB);
+
+  // Боковая грань нижней плиты берёт свою половину тайла (текстура не тянется)
+  const mkSlabWorld = (id) => ({
+    chunkSize: 1, worldHeight: 3,
+    getBlock: (x, y, z) => (x === 0 && z === 0 && y === 1 ? id : BLOCK.AIR),
+  });
+  const slabMesh = meshChunk(THREE, mkSlabWorld(BLOCK.PLANK_SLAB), 0, 0).opaque;
+  const fullMesh = meshChunk(THREE, mkSlabWorld(BLOCK.PLANKS), 0, 0).opaque;
+  const slabYs = slabMesh.pos.filter((_, i) => i % 3 === 1);
+  check('нижняя плита занимает только нижнюю половину блока',
+    Math.min(...slabYs) === 1 && Math.max(...slabYs) === 1.5);
+  /** Все боковые грани +X отдельными четвёрками вершин */
+  const sideFacesX = (mesh) => {
+    const out = [];
+    for (let v = 0; v + 3 < mesh.pos.length / 3; v += 4) {
+      const xs = [0, 1, 2, 3].map((k) => mesh.pos[(v + k) * 3]);
+      if (Math.max(...xs) - Math.min(...xs) > 1e-6) continue;
+      const vs = [0, 1, 2, 3].map((k) => mesh.uv[(v + k) * 2 + 1]);
+      out.push({ x: xs[0], vMin: Math.min(...vs), vMax: Math.max(...vs) });
+    }
+    return out;
+  };
+  const slabSides = sideFacesX(slabMesh).filter((f) => f.x === 1);
+  const fullSides = sideFacesX(fullMesh).filter((f) => f.x === 1);
+  check('боковые грани плиты и блока на месте', slabSides.length > 0 && fullSides.length > 0);
+  check('UV боковой грани плиты — половина тайла (текстура не растянулась)',
+    slabSides.every((f) => Math.abs((f.vMax - f.vMin) * 2 - (fullSides[0].vMax - fullSides[0].vMin)) < 1e-9)
+    && slabSides.every((f) => f.vMin >= fullSides[0].vMin - 1e-9 && f.vMax <= fullSides[0].vMax + 1e-9),
+    'плита ' + JSON.stringify(slabSides[0]) + ' блок ' + JSON.stringify(fullSides[0]));
+  const topSlabSide = (() => {
+    const m = meshChunk(THREE, mkSlabWorld(BLOCK.PLANK_SLAB_TOP), 0, 0).opaque;
+    return sideFacesX(m).filter((f) => f.x === 1);
+  })();
+  check('верхняя плита показывает верхнюю половину тайла',
+    topSlabSide.length > 0 && topSlabSide.every((f) => f.vMin > slabSides[0].vMin + 1e-6));
+
+  // Две плиты (низ + верх) дают полных 6 граней, как обычный блок
+  const pairMesh = meshChunk(THREE, {
+    chunkSize: 1, worldHeight: 3,
+    getBlock: (x, y, z) => (x === 0 && z === 0 && y === 1 ? BLOCK.PLANKS : BLOCK.AIR),
+  }, 0, 0).opaque;
+  check('полный блок из двух плит: 24 вершины (6 граней)', pairMesh.pos.length / 3 === 24,
+    'вершин ' + pairMesh.pos.length / 3);
+
+  // Забор
+  check('забор — не полный куб, но выше блока (не перепрыгнуть)',
+    isFence(BLOCK.FENCE) && blockBounds(BLOCK.FENCE).maxY === 1.5 && blockBounds(BLOCK.FENCE).minX === 0.375);
+  check('забор твёрдый и непрозрачный для света частично', isSolid(BLOCK.FENCE) && !isOpaque(BLOCK.FENCE));
+  const fenceWorld = {
+    chunkSize: 3, worldHeight: 3,
+    getBlock: (x, y, z) => (y === 1 && z === 1 && x >= 0 && x <= 2 ? BLOCK.FENCE : BLOCK.AIR),
+  };
+  const fenceMesh = meshChunk(THREE, fenceWorld, 0, 0).opaque;
+  const fenceVerts = fenceMesh.pos.length / 3;
+  check('забор рисуется столбиком с перекладинами (граней больше, чем у куба)',
+    fenceVerts > 24 && fenceMesh.idx.length % 3 === 0, 'вершин ' + fenceVerts);
+  const fenceYs = fenceMesh.pos.filter((_, i) => i % 3 === 1);
+  check('забор выше блока — через него не перепрыгнуть',
+    Math.max(...fenceYs) === 2.5 && Math.min(...fenceYs) === 1);
+  check('одинокий забор — просто столбик (6 граней, как куб)', (() => {
+    const one = meshChunk(THREE, {
+      chunkSize: 3, worldHeight: 3,
+      getBlock: (x, y, z) => (y === 1 && x === 1 && z === 1 ? BLOCK.FENCE : BLOCK.AIR),
+    }, 0, 0).opaque;
+    return one.pos.length / 3 === 24;
+  })(), 'вершин ' + 0);
+  check('ряд заборов соединяется перекладинами', fenceVerts >= 96, 'вершин ' + fenceVerts);
+
+  // Наковальня: станок для инструментов выше каменных
+  check('наковальня — интерактивный блок-станок', isAnvil(BLOCK.ANVIL) && BLOCKS[BLOCK.ANVIL].interactive === 'anvil');
+  check('наковальня крафтится на верстаке из слитков, угля и досок', (() => {
+    const inv = new Inventory(CONFIG.INV_SIZE);
+    inv.add(ITEM.IRON_INGOT, 4); inv.add(ITEM.COAL, 2); inv.add(blockItem(BLOCK.PLANKS), 2);
+    return craft(inv, RECIPES.find((r) => r.id === 'anvil')) === 'ok'
+      && inv.count(blockItem(BLOCK.ANVIL)) === 1;
+  })());
+  const anvilStation = { type: 'anvil', gridSize: 3 };
+  const tableStation = { type: 'table', gridSize: 3 };
+  check('железная кирка недоступна без наковальни',
+    stationInfo(null).anvil === false && stationInfo(tableStation).anvil === false
+    && stationInfo(anvilStation).anvil === true);
+  const ironPick = RECIPES.find((r) => r.id === 'iron_pickaxe');
+  check('железная кирка куются только на наковальне',
+    !stationAllows(ironPick, stationInfo(null)) && !stationAllows(ironPick, stationInfo(tableStation))
+    && stationAllows(ironPick, stationInfo(anvilStation)));
+  check('крафт железной кирки без наковальни возвращает «station»', (() => {
+    const inv = new Inventory(CONFIG.INV_SIZE);
+    inv.add(ITEM.IRON_INGOT, 5); inv.add(ITEM.STICK, 4);
+    return craft(inv, ironPick) === 'station'
+      && craft(inv, ironPick, anvilStation) === 'ok' && inv.count(ITEM.IRON_PICKAXE) === 1;
+  })());
+  check('список рецептов наковальни длиннее обычного',
+    recipesFor(anvilStation).length > recipesFor(null).length
+    && recipesFor(null).length === recipesFor(tableStation).length);
+  const toolIds = ['iron_pickaxe', 'iron_axe', 'iron_sword',
+    'gold_pickaxe', 'gold_axe', 'gold_sword', 'diamond_pickaxe', 'diamond_axe', 'diamond_sword'];
+  check('все 9 металлических инструментов требуют наковальни', (() => {
+    const tools = toolIds.map((id) => RECIPES.find((r) => r.id === id));
+    return tools.every((r) => !!r && r.station === 'anvil' && needsTable(r));
+  })(), toolIds.filter((id) => !RECIPES.some((r) => r.id === id && r.station === 'anvil')).join(','));
+  check('слитки по-прежнему плавятся/крафтятся без наковальни', (() => {
+    const ingots = RECIPES.filter((r) => /^(iron|gold)_ingot$/.test(r.id));
+    return ingots.length === 2 && ingots.every((r) => !r.station);
+  })());
+  check('без наковальни доступен ровно 30 рецептов, с наковальней — 39',
+    recipesFor(null).length === 30 && recipesFor(anvilStation).length === 39,
+    recipesFor(null).length + '/' + recipesFor(anvilStation).length);
+  check('сетка 3×3 на наковальне собирает алмазный меч', (() => {
+    const g = emptyGrid(3);
+    g[0] = { key: ITEM.DIAMOND, count: 1 };
+    g[3] = { key: ITEM.DIAMOND, count: 1 };
+    g[6] = { key: ITEM.STICK, count: 1 };
+    if (gridResult(g, 3, null)) return false;                 // без наковальни — не выйдет
+    const res = gridResult(g, 3, anvilStation);
+    return !!res && res.out.key === ITEM.DIAMOND_SWORD;
+  })());
+  check('золото и алмазы теперь во что-то крафтятся', (() => {
+    const gold = RECIPES.filter((r) => Object.keys(r.in || {}).includes(ITEM.GOLD_INGOT));
+    const diam = RECIPES.filter((r) => Object.keys(r.in || {}).includes(ITEM.DIAMOND));
+    return gold.length >= 3 && diam.length >= 3;
+  })());
+
+  // Берёзовые доски и забор из них
+  check('берёзовое бревно → 4 берёзовые доски', (() => {
+    const inv = new Inventory(CONFIG.INV_SIZE);
+    inv.add(blockItem(BLOCK.BIRCH_LOG), 1);
+    return craft(inv, RECIPES.find((r) => r.id === 'birch_planks')) === 'ok'
+      && inv.count(blockItem(BLOCK.BIRCH_PLANKS)) === 4;
+  })());
+  check('забор крафтится из досок и палок (и из берёзовых досок)', (() => {
+    const a = new Inventory(CONFIG.INV_SIZE);
+    a.add(blockItem(BLOCK.PLANKS), 2); a.add(ITEM.STICK, 4);
+    const okA = craft(a, RECIPES.find((r) => r.id === 'fence')) === 'ok' && a.count(blockItem(BLOCK.FENCE)) === 3;
+    const b = new Inventory(CONFIG.INV_SIZE);
+    b.add(blockItem(BLOCK.BIRCH_PLANKS), 2); b.add(ITEM.STICK, 4);
+    const okB = craft(b, RECIPES.find((r) => r.id === 'fence_birch')) === 'ok' && b.count(blockItem(BLOCK.FENCE)) === 3;
+    return okA && okB;
+  })());
+
+  // Сырое мясо жарится в печи
+  check('сырое мясо → жареное в печи', smeltResult(ITEM.RAW_MEAT) === ITEM.COOKED_MEAT);
+  check('жареное мясо сытнее сырого', foodValue(ITEM.COOKED_MEAT) > foodValue(ITEM.RAW_MEAT));
+
+  // Дроп мобов: предметы существуют и описаны
+  check('предметы дропа мобов: шерсть, мясо, клык', [ITEM.WOOL, ITEM.RAW_MEAT, ITEM.COOKED_MEAT, ITEM.FANG]
+    .every((k) => !!itemDef(k) && itemNameRu(k).length > 0));
+  check('иконки металлических инструментов и дропа нарисованы', (() => {
+    const keys = ['iron_pickaxe', 'gold_sword', 'diamond_axe', 'wool', 'raw_meat', 'cooked_meat', 'fang'];
+    return keys.every((k) => spriteNames().includes(k));
+  })());
+  check('иконки руды, слитков и алмаза нарисованы', (() => {
+    const keys = ['raw_iron', 'raw_gold', 'diamond', 'iron_ingot', 'gold_ingot', 'coal'];
+    return keys.every((k) => spriteNames().includes(k));
+  })());
+
+  // Игрок: присед и «не получил урон, выйдя из меню»
+  const flat = (extra) => ({
+    getBlock: (x, y, z) => (y < 20 ? BLOCK.STONE : (extra ? extra(x, y, z) : BLOCK.AIR)),
+  });
+  const sp = new Player(flat());
+  sp.pos.x = 0.5; sp.pos.y = 20; sp.pos.z = 0.5;
+  for (let i = 0; i < 12; i++) sp.update({ forward: 0, right: 0, jump: false, sneak: false, sprint: false }, 1 / 60);
+  const standH = sp.height();
+  for (let i = 0; i < 40; i++) sp.update({ forward: 0, right: 0, jump: false, sneak: true, sprint: false }, 1 / 60);
+  check('присед: ниже рост и ниже глаза', sp.sneaking && sp.height() < standH && sp.eyeOffset > 0.2,
+    'рост ' + sp.height() + ' глаза -' + sp.eyeOffset.toFixed(2));
+  check('присед медленнее шага', CONFIG.SNEAK_SPEED < CONFIG.WALK_SPEED);
+  check('глаза при приседе опускаются',
+    Math.abs(sp.eyePos().y - (sp.pos.y + CONFIG.PLAYER_EYE - sp.eyeOffset)) < 1e-6
+    && sp.eyePos().y < sp.pos.y + CONFIG.PLAYER_EYE - 0.2);
+  for (let i = 0; i < 40; i++) sp.update({ forward: 0, right: 0, jump: false, sneak: false, sprint: false }, 1 / 60);
+  check('встал после приседа — рост прежний', !sp.sneaking && sp.height() === standH && sp.eyeOffset === 0);
+
+  // Крадущийся игрок не сходит с края платформы
+  const plat = (x, y, z) => (y < 20 && x >= -3 && x <= 3 && z >= -3 && z <= 3 ? BLOCK.STONE : BLOCK.AIR);
+  const sneakP = new Player({ getBlock: plat });
+  sneakP.pos.x = 2.5; sneakP.pos.y = 20; sneakP.pos.z = 0.5;
+  for (let i = 0; i < 20; i++) sneakP.update({ forward: 0, right: 0, jump: false, sneak: true, sprint: false }, 1 / 60);
+  sneakP.yaw = -Math.PI / 2;                        // смотрим на +X, за которым пустота
+  for (let i = 0; i < 180; i++) sneakP.update({ forward: 1, right: 0, jump: false, sneak: true, sprint: false }, 1 / 60);
+  check('присед не даёт сойти с края блока', sneakP.pos.x < 4.35 && sneakP.pos.x > 4.1
+    && sneakP.onGround && sneakP.pos.y === 20,
+    'x=' + sneakP.pos.x.toFixed(2) + ' y=' + sneakP.pos.y.toFixed(2));
+  // Присед не мешает подняться на ступеньку и зайти на плиту
+  const stairWorld = (x, y, z) => {
+    if (y < 20) return BLOCK.STONE;
+    if (y === 20 && x >= 2 && x <= 4 && Math.abs(z) <= 2) return BLOCK.STONE;
+    return BLOCK.AIR;
+  };
+  const stairP = new Player({ getBlock: stairWorld });
+  stairP.pos.x = 0.5; stairP.pos.y = 20; stairP.pos.z = 0.5; stairP.yaw = -Math.PI / 2;
+  for (let i = 0; i < 20; i++) stairP.update({ forward: 0, right: 0, jump: false, sneak: true, sprint: false }, 1 / 60);
+  for (let i = 0; i < 240; i++) stairP.update({ forward: 1, right: 0, jump: false, sneak: true, sprint: false }, 1 / 60);
+  check('крадущийся игрок поднимается на ступеньку без прыжка',
+    stairP.pos.x > 4 && Math.abs(stairP.pos.y - 21) < 0.01,
+    'x=' + stairP.pos.x.toFixed(2) + ' y=' + stairP.pos.y.toFixed(2));
+  const slabWorld = (x, y, z) => {
+    if (y < 20) return BLOCK.STONE;
+    if (y === 20 && x >= 2 && x <= 4 && Math.abs(z) <= 2) return BLOCK.PLANK_SLAB;
+    return BLOCK.AIR;
+  };
+  const slabP = new Player({ getBlock: slabWorld });
+  slabP.pos.x = 0.5; slabP.pos.y = 20; slabP.pos.z = 0.5; slabP.yaw = -Math.PI / 2;
+  for (let i = 0; i < 20; i++) slabP.update({ forward: 0, right: 0, jump: false, sneak: true, sprint: false }, 1 / 60);
+  for (let i = 0; i < 240; i++) slabP.update({ forward: 1, right: 0, jump: false, sneak: true, sprint: false }, 1 / 60);
+  check('крадущийся игрок заходит на плиту (поднимается на полклетки)',
+    slabP.pos.x > 4 && Math.abs(slabP.pos.y - 20.5) < 0.01, 'y=' + slabP.pos.y.toFixed(2));
+  const walkP = new Player({ getBlock: plat });
+  walkP.pos.x = 2.5; walkP.pos.y = 20; walkP.pos.z = 0.5;
+  walkP.yaw = -Math.PI / 2;
+  for (let i = 0; i < 20; i++) walkP.update({ forward: 0, right: 0, jump: false, sneak: false, sprint: false }, 1 / 60);
+  for (let i = 0; i < 180; i++) walkP.update({ forward: 1, right: 0, jump: false, sneak: false, sprint: false }, 1 / 60);
+  check('без приседа с края спокойно падаем', walkP.pos.x > 4.2 || !walkP.onGround,
+    'x=' + walkP.pos.x.toFixed(2));
+
+  // Выход из паузы не должен выглядеть как удар
+  const gp = new Player(flat());
+  gp.hp = 20;
+  gp.grace(0.6);
+  const blocked = gp.hurt(4, 'zombie');
+  const hpDuringGrace = gp.hp;
+  gp.graceT = 0;
+  const passed = gp.hurt(4, 'zombie');
+  check('короткая неуязвимость после меню гасит «урон из ниоткуда»',
+    blocked === false && hpDuringGrace === 20 && passed === true && gp.hp === 16,
+    `blocked=${blocked} hp=${hpDuringGrace} passed=${passed} now=${gp.hp}`);
+
+  // Мобы: застряв в щели, не крутятся на месте
+  const { Mob } = await import('./src/mobs.js');
+  const mobWorld = (blocks) => ({
+    getBlock: (x, y, z) => blocks.get(`${Math.floor(x)},${Math.floor(y)},${Math.floor(z)}`) ?? BLOCK.AIR,
+  });
+  const visuals = () => {
+    const group = {
+      position: { x: 0, y: 0, z: 0, set() {} },
+      rotation: { x: 0, y: 0, z: 0, order: 'XYZ' },
+      scale: { x: 1, y: 1, z: 1, set() {}, setScalar() {} },
+    };
+    return { group, legs: [], arms: [], ears: [], look: null };
+  };
+  const openBlocks = new Map();
+  for (let x = -6; x <= 6; x++) for (let z = -6; z <= 6; z++) openBlocks.set(`${x},19,${z}`, BLOCK.STONE);
+  const openMob = new Mob(mobWorld(openBlocks), visuals(), 'sheep', 0.5, 20, 0.5);
+  for (let i = 0; i < 120; i++) { openMob.state = 'walk'; openMob.update(1 / 60, { x: 40, y: 20, z: 40 }); }
+  check('на открытом месте моб идёт и не застревает', openMob.stuckT === 0 && openMob.detourT === 0
+    && Math.hypot(openMob.pos.x - 0.5, openMob.pos.z - 0.5) > 1,
+    'прошёл ' + Math.hypot(openMob.pos.x - 0.5, openMob.pos.z - 0.5).toFixed(2));
+
+  const box = new Map();
+  for (let x = -3; x <= 3; x++) for (let z = -3; z <= 3; z++) box.set(`${x},19,${z}`, BLOCK.STONE);
+  for (let y = 20; y <= 22; y++) {
+    for (let x = -1; x <= 1; x++) for (let z = -1; z <= 1; z++) {
+      if (Math.abs(x) === 1 || Math.abs(z) === 1) box.set(`${x},${y},${z}`, BLOCK.STONE);
+    }
+  }
+  box.set('0,23,0', BLOCK.STONE);                    // потолок — сверху тоже блок
+  const trapped = new Mob(mobWorld(box), visuals(), 'sheep', 0.5, 20, 0.5);
+  const spins = [];
+  let prev = trapped.heading;
+  for (let i = 0; i < 240; i++) {
+    trapped.state = 'walk';
+    trapped.update(1 / 60, { x: 60, y: 20, z: 60 });
+    spins.push(Math.abs(angNorm(trapped.heading - prev)));
+    prev = trapped.heading;
+  }
+  const avgSpin = spins.reduce((a, b) => a + b, 0) / spins.length;
+  check('застрявший моб не вращается каждый кадр', avgSpin < 0.05, 'средний поворот ' + avgSpin.toFixed(3));
+  check('застрявший моб понимает, что застрял, и держит один курс обхода',
+    trapped.stuckT > 0.2 || trapped.detourT > 0 || trapped.idleStandT > 0);
+
+  // Большие деревья
+  let bigTrees = 0, maxTrunk = 0, bigSpruce = 0, leafy = 0;
+  for (const treeSeed of [90210, 4242, 20260925]) {
+    const wt = new World(treeSeed);
+    for (let cx = 0; cx < 6; cx++) {
+      for (let cz = 0; cz < 6; cz++) {
+        const c = wt.getChunk(cx, cz);
+        for (let x = 0; x < CONFIG.CHUNK_SIZE; x++) {
+          for (let z = 0; z < CONFIG.CHUNK_SIZE; z++) {
+            let run = 0, best = 0, kind = 0, leaves = 0;
+            for (let y = 0; y < CONFIG.WORLD_HEIGHT; y++) {
+              const b = c.get(x, y, z);
+              if (b === BLOCK.LOG || b === BLOCK.SPRUCE_LOG) { run++; if (run > best) { best = run; kind = b; } } else run = 0;
+              if (b === BLOCK.LEAVES || b === BLOCK.SPRUCE_LEAVES) leaves++;
+            }
+            leafy += leaves;
+            if (best >= 9) { bigTrees++; if (kind === BLOCK.SPRUCE_LOG) bigSpruce++; }
+            maxTrunk = Math.max(maxTrunk, best);
+          }
+        }
+      }
+    }
+  }
+  check('в мире появляются большие деревья (ствол 9+ блоков)', bigTrees > 5 && maxTrunk >= 9,
+    'больших ' + bigTrees + ', макс. ствол ' + maxTrunk);
+  check('большие деревья бывают и хвойные', bigSpruce > 0, 'елей ' + bigSpruce);
+  check('ствол большого дерева не выше 16 блоков', maxTrunk <= 16 && maxTrunk >= 9);
+  check('у больших деревьев есть крона', leafy > 2000, 'листвы ' + leafy);
+
+  // Музыка: папка music/ и плейлист
+  const { Music, MUSIC_FILES, MUSIC_DIR } = await import('./src/music.js');
+  check('список музыкальных файлов не пуст и лежит в music/', MUSIC_DIR === 'music/' && MUSIC_FILES.length >= 4);
+  const m = new Music({ probe: async (p) => p.endsWith('music1.mp3') || p.endsWith('theme.ogg'), create: () => ({}) });
+  const list = await m.discover();
+  check('музыка: найденные треки складываются в плейлист', list.length === 2 && m.available);
+  check('музыка: повторный поиск не дублирует плейлист', (await m.discover()).length === 2);
+  const mEmpty = new Music({ probe: async () => false, create: () => ({}), assumeOnProbeFailure: false });
+  await mEmpty.discover();
+  check('музыка: без файлов просто тихо (не падает)', !mEmpty.available);
+  const mBlind = new Music({ probe: async () => { throw new Error('HEAD недоступен'); }, create: () => ({}) });
+  await mBlind.discover();
+  check('музыка: если проверка файлов не работает, плейлист всё равно собирается',
+    mBlind.playlist.length === MUSIC_FILES.length && mBlind.available);
+
+  // Тексты интерфейса
+  const both = ['ru', 'en'];
+  const newKeys = ['anvil_title', 'anvil_craft_title', 'anvil_hint', 'anvil_recipes', 'need_anvil',
+    'need_anvil_short', 'anvil_open', 'sneak_hint', 'music', 'music_hint', 'dropped'];
+  check('новые строки интерфейса есть в обоих языках',
+    newKeys.every((k) => both.every((l) => typeof STRINGS[l][k] === 'string' && STRINGS[l][k].length > 0)),
+    newKeys.filter((k) => !both.every((l) => STRINGS[l][k])).join(','));
+  check('в подсказке «как играть» рассказано про наковальню и перетаскивание',
+    both.every((l) => STRINGS[l].howto_text.includes('наковальн') || STRINGS[l].howto_text.toLowerCase().includes('anvil')));
+  check('наковальня, забор и берёзовые доски названы в обоих языках',
+    [BLOCK.ANVIL, BLOCK.FENCE, BLOCK.BIRCH_PLANKS, BLOCK.PLANK_SLAB]
+      .every((id) => both.every((l) => BLOCK_NAMES[l][id])));
 }
 
 console.log(failed === 0 ? '\nВсе проверки пройдены' : `\nПровалено проверок: ${failed}`);

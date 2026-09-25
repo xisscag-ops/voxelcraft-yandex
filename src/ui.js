@@ -9,6 +9,7 @@ export class UI {
       onPlay: null, onResume: null, onSaveQuit: null, onNewWorld: null,
       onSettingsChange: null, onReward: null, onSlot: null, onPauseBtn: null,
       onToSpawn: null, onMode: null, onModeBack: null, onBag: null,
+      onPauseMode: null, onMenuMode: null,
       onWorlds: null, onCreateWorld: null, onLoadWorld: null, onDeleteWorld: null,
     };
     this._screens = ['loading-screen', 'menu-screen', 'mode-screen', 'world-list-screen',
@@ -58,6 +59,17 @@ export class UI {
     click('btn-home', () => this.handlers.onToSpawn?.());
     click('btn-pause-hud', () => this.handlers.onPauseBtn?.());
     click('btn-bag', () => this.handlers.onBag?.());
+    // Быстрая смена режима: селект в паузе (текущий мир) и в главном меню (новый мир)
+    document.getElementById('mode-pause')?.addEventListener('change', (e) => {
+      this.handlers.onPauseMode?.(e.target.value);
+    });
+    document.getElementById('mode-menu')?.addEventListener('change', (e) => {
+      this.handlers.onMenuMode?.(e.target.value);
+    });
+    const musicBox = document.getElementById('set-music');
+    musicBox?.addEventListener('change', () => {
+      this.handlers.onSettingsChange?.({ music: musicBox.checked });
+    });
     click('btn-mode-survival', () => this.handlers.onMode?.('survival'));
     click('btn-mode-creative', () => this.handlers.onMode?.('creative'));
     click('btn-mode-back', () => this.handlers.onModeBack?.());
@@ -101,6 +113,8 @@ export class UI {
     if (vd) { vd.value = s.viewDistance ?? 5; if (vdLabel) vdLabel.textContent = vd.value; }
     const snd = document.getElementById('set-sound');
     if (snd) snd.checked = s.sound !== false;
+    const musicBox = document.getElementById('set-music');
+    if (musicBox) musicBox.checked = s.music !== false;
     const fsBox = document.getElementById('set-fullscreen');
     if (fsBox) fsBox.checked = s.fullscreen !== false;
   }
@@ -127,8 +141,20 @@ export class UI {
   /** Подпись режима («Выживание» / «Креатив») на экране паузы */
   showModeLabel(mode) {
     const el = document.getElementById('pause-mode');
-    if (!el) return;
-    el.textContent = this.i18n.t('mode_now') + ': ' + this.i18n.t(mode === 'survival' ? 'mode_survival' : 'mode_creative');
+    if (el) el.textContent = this.i18n.t('mode_now') + ': ' + this.i18n.t(mode === 'survival' ? 'mode_survival' : 'mode_creative');
+    const sel = document.getElementById('mode-pause');
+    if (sel) sel.value = mode === 'creative' ? 'creative' : 'survival';
+  }
+
+  /** Выбранный в главном меню режим нового мира */
+  getMenuMode() {
+    const sel = document.getElementById('mode-menu');
+    return sel && sel.value === 'creative' ? 'creative' : 'survival';
+  }
+
+  setMenuMode(mode) {
+    const sel = document.getElementById('mode-menu');
+    if (sel) sel.value = mode === 'creative' ? 'creative' : 'survival';
   }
 
   setHasSave(v) {
@@ -175,7 +201,7 @@ export class UI {
     }
   }
 
-  showWorldCreator(returnTo = 'world-list-screen') {
+  showWorldCreator(returnTo = 'world-list-screen', defaultMode = null) {
     this._worldCreatorReturn = returnTo;
     const name = document.getElementById('world-name');
     const seed = document.getElementById('world-seed');
@@ -183,7 +209,7 @@ export class UI {
     const difficulty = document.getElementById('world-difficulty');
     if (name) name.value = '';
     if (seed) seed.value = '';
-    if (mode) mode.value = 'survival';
+    if (mode) mode.value = defaultMode === 'creative' ? 'creative' : 'survival';
     if (difficulty) difficulty.value = 'normal';
     this.showScreen('world-create-screen');
   }
@@ -382,6 +408,13 @@ export class UI {
     el.classList.remove('on');
     void el.offsetWidth;
     el.classList.add('on');
+  }
+
+  /** Снять «вспышку урона» (нужно при возврате из меню, где урона не было) */
+  clearHurt() {
+    document.getElementById('hurt-flash')?.classList.remove('on');
+    const hud = document.getElementById('hud');
+    if (hud) { hud.classList.remove('shake'); }
   }
 
 }

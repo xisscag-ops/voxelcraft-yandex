@@ -5,24 +5,59 @@ import { BLOCK } from './blocks.js';
 import { ITEM, blockItem, itemDef, maxStack } from './items.js';
 
 const LOG = blockItem(BLOCK.LOG);
+const BIRCH_LOG = blockItem(BLOCK.BIRCH_LOG);
 const PLANKS = blockItem(BLOCK.PLANKS);
+const BIRCH_PLANKS = blockItem(BLOCK.BIRCH_PLANKS);
 const COBBLE = blockItem(BLOCK.COBBLE);
 const SAND = blockItem(BLOCK.SAND);
 const STONE = blockItem(BLOCK.STONE);
 const LEAVES = blockItem(BLOCK.LEAVES);
 const DIRT = blockItem(BLOCK.DIRT);
 
+/** Три инструмента одного металла: кирка, топор и меч (нужна наковальня) */
+function metalToolRecipes(material, tier) {
+  return [
+    {
+      id: `${tier}_pickaxe`, in: { [material]: 3, [ITEM.STICK]: 2 },
+      out: { key: ITEM[`${tier.toUpperCase()}_PICKAXE`], count: 1 },
+      patterns: [['AAA', ' B ', ' B ']], keys: { A: material, B: ITEM.STICK },
+      station: 'anvil',
+    },
+    {
+      id: `${tier}_axe`, in: { [material]: 3, [ITEM.STICK]: 2 },
+      out: { key: ITEM[`${tier.toUpperCase()}_AXE`], count: 1 },
+      patterns: [['AA', 'AB', ' B']], keys: { A: material, B: ITEM.STICK },
+      station: 'anvil',
+    },
+    {
+      id: `${tier}_sword`, in: { [material]: 2, [ITEM.STICK]: 1 },
+      out: { key: ITEM[`${tier.toUpperCase()}_SWORD`], count: 1 },
+      patterns: [['A', 'A', 'B']], keys: { A: material, B: ITEM.STICK },
+      station: 'anvil',
+    },
+  ];
+}
+
 // in — что тратится при крафте «кликом по рецепту»,
 // shapeless/patterns — как рецепт собирается в сетке крафта,
 // out — что получается.
+// station: 'anvil' — рецепт доступен только на наковальне.
 export const RECIPES = [
   {
     id: 'planks', in: { [LOG]: 1 }, out: { key: PLANKS, count: 4 },
     shapeless: { [LOG]: 1 },
   },
   {
+    id: 'birch_planks', in: { [BIRCH_LOG]: 1 }, out: { key: BIRCH_PLANKS, count: 4 },
+    shapeless: { [BIRCH_LOG]: 1 },
+  },
+  {
     id: 'sticks', in: { [PLANKS]: 2 }, out: { key: ITEM.STICK, count: 4 },
     patterns: [['A', 'A']], keys: { A: PLANKS },
+  },
+  {
+    id: 'sticks_birch', in: { [BIRCH_PLANKS]: 2 }, out: { key: ITEM.STICK, count: 4 },
+    patterns: [['A', 'A']], keys: { A: BIRCH_PLANKS },
   },
   {
     id: 'table', in: { [PLANKS]: 4 }, out: { key: blockItem(BLOCK.TABLE), count: 1 },
@@ -52,6 +87,23 @@ export const RECIPES = [
     id: 'stone_sword', in: { [COBBLE]: 2, [ITEM.STICK]: 1 }, out: { key: ITEM.STONE_SWORD, count: 1 },
     patterns: [['A', 'A', 'B']], keys: { A: COBBLE, B: ITEM.STICK },
   },
+  {
+    id: 'fence', in: { [PLANKS]: 2, [ITEM.STICK]: 4 }, out: { key: blockItem(BLOCK.FENCE), count: 3 },
+    patterns: [['ABA', 'ABA']], keys: { A: PLANKS, B: ITEM.STICK },
+  },
+  {
+    id: 'fence_birch', in: { [BIRCH_PLANKS]: 2, [ITEM.STICK]: 4 }, out: { key: blockItem(BLOCK.FENCE), count: 3 },
+    patterns: [['ABA', 'ABA']], keys: { A: BIRCH_PLANKS, B: ITEM.STICK },
+  },
+  {
+    id: 'anvil', in: { [ITEM.IRON_INGOT]: 4, [ITEM.COAL]: 2, [PLANKS]: 2 },
+    out: { key: blockItem(BLOCK.ANVIL), count: 1 },
+    patterns: [['ABA', 'CBC', 'AAA']], keys: { A: ITEM.IRON_INGOT, B: ITEM.COAL, C: PLANKS },
+  },
+  // Инструменты выше каменных куются только на наковальне (station: 'anvil')
+  ...metalToolRecipes(ITEM.IRON_INGOT, 'iron'),
+  ...metalToolRecipes(ITEM.GOLD_INGOT, 'gold'),
+  ...metalToolRecipes(ITEM.DIAMOND, 'diamond'),
   {
     id: 'bow', in: { [ITEM.STICK]: 3, [PLANKS]: 3 }, out: { key: ITEM.BOW, count: 1 },
     patterns: [['AB', 'AB', 'AB']], keys: { A: ITEM.STICK, B: PLANKS },
@@ -140,6 +192,31 @@ export function recipeById(id) {
   return RECIPES.find((r) => r.id === id) || null;
 }
 
+/**
+ * Какой станок открыт у игрока.
+ * @param {object|null} invStation station из окна инвентаря + размер сетки
+ * @returns {{ type: 'inv'|'table'|'furnace'|'chest'|'anvil', grid: number, anvil: boolean }}
+ */
+export function stationInfo(invStation) {
+  const type = invStation?.type || 'inv';
+  const grid = type === 'furnace' || type === 'chest' ? 0 : (invStation?.gridSize === 3 ? 3 : 2);
+  return { type, grid, anvil: type === 'anvil' };
+}
+
+/** Можно ли готовить этот рецепт на текущем станке */
+export function stationAllows(recipe, station) {
+  if (!recipe) return false;
+  const info = station && station.type ? station : stationInfo(station);
+  if (recipe.station === 'anvil') return !!info.anvil;
+  return true;
+}
+
+/** Рецепты, доступные на этом станке (для списка рецептов в окне) */
+export function recipesFor(station) {
+  const info = stationInfo(station);
+  return RECIPES.filter((r) => stationAllows(r, info));
+}
+
 /** Нужен ли для этого рецепта верстак (сетка 3×3) */
 export function needsTable(recipe) {
   if (!recipe) return false;
@@ -164,7 +241,8 @@ export function ingredients(inv, recipe) {
   });
 }
 
-export function canCraft(inv, recipe) {
+export function canCraft(inv, recipe, station = null) {
+  if (!stationAllows(recipe, stationInfo(station))) return false;
   return Object.entries(recipe.in).every(([key, need]) => inv.count(key) >= need);
 }
 
@@ -177,8 +255,9 @@ export function hasRoom(inv, recipe) {
  * Крафт «кликом по рецепту» из списка: тратит ингредиенты и выдаёт результат.
  * @returns {'ok'|'missing'|'full'}
  */
-export function craft(inv, recipe) {
-  if (!canCraft(inv, recipe)) return 'missing';
+export function craft(inv, recipe, station = null) {
+  if (!stationAllows(recipe, stationInfo(station))) return 'station';
+  if (!canCraft(inv, recipe, station)) return 'missing';
   const removed = [];
   for (const [key, need] of Object.entries(recipe.in)) {
     inv.remove(key, need);
@@ -265,10 +344,12 @@ function matchesAt(grid, size, pattern, keys, ox, oy) {
  * @param {number} size 2 или 3
  * @returns {null | object} рецепт
  */
-export function matchRecipe(grid, size = 2) {
+export function matchRecipe(grid, size = 2, station = null) {
   const cells = grid.slice(0, size * size);
   if (!cells.some(Boolean)) return null;
+  const info = stationInfo(station);
   for (const recipe of RECIPES) {
+    if (!stationAllows(recipe, info)) continue;
     if (recipe.shapeless && shapelessMatches(cells, recipe.shapeless)) return recipe;
     if (recipe.patterns) {
       for (const pattern of recipe.patterns) {
@@ -280,8 +361,8 @@ export function matchRecipe(grid, size = 2) {
 }
 
 /** Результат сетки: { recipe, out } или null */
-export function gridResult(grid, size = 2) {
-  const recipe = matchRecipe(grid, size);
+export function gridResult(grid, size = 2, station = null) {
+  const recipe = matchRecipe(grid, size, station);
   return recipe ? { recipe, out: { key: recipe.out.key, count: recipe.out.count } } : null;
 }
 
@@ -289,8 +370,8 @@ export function gridResult(grid, size = 2) {
  * Скрафтить из сетки: списывает по одному предмету из каждой занятой ячейки.
  * @returns {'ok'|'nothing'|'full'}
  */
-export function craftFromGrid(grid, size, inv, craftAll = false) {
-  const res = gridResult(grid, size);
+export function craftFromGrid(grid, size, inv, craftAll = false, station = null) {
+  const res = gridResult(grid, size, station);
   if (!res) return 'nothing';
   const { recipe } = res;
   const perCraft = recipe.out.count;
@@ -313,8 +394,8 @@ export function craftFromGrid(grid, size, inv, craftAll = false) {
 }
 
 /** Рецепты, которые сейчас доступны (для подсветки списка) */
-export function availableRecipes(inv) {
-  return RECIPES.map((r) => ({ recipe: r, ok: canCraft(inv, r) }));
+export function availableRecipes(inv, station = null) {
+  return recipesFor(station).map((r) => ({ recipe: r, ok: canCraft(inv, r, station) }));
 }
 
 /** Проверка целостности рецептов (используется тестами) */
@@ -333,6 +414,7 @@ export function validateRecipes() {
       if (!Number.isInteger(n) || n <= 0) problems.push(`${r.id}: плохое число ингредиента ${k}`);
     }
     if (!r.shapeless && !r.patterns) problems.push(`${r.id}: нет формы для сетки`);
+    if (r.station && r.station !== 'anvil') problems.push(`${r.id}: неизвестный станок ${r.station}`);
     for (const p of r.patterns || []) {
       if (p.length < 1 || p.length > 3) problems.push(`${r.id}: плохая высота формы`);
       for (const row of p) if (row.length > 3) problems.push(`${r.id}: форма шире 3 клеток`);

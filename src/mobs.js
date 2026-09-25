@@ -579,6 +579,13 @@ export class Mob {
     this.burnT = 0;
     this.fleeT = 0;
     this.zombieAvoidT = 0;
+    // Анти-«крутится на месте»: если моб упёрся, он выбирает один обходной курс
+    // и держится его, а не дёргает направление каждый кадр.
+    this.detourT = 0;            // сколько ещё идти выбранным обходным курсом
+    this.detourHeading = 0;      // сам курс
+    this.stuckT = 0;             // сколько уже не может сдвинуться
+    this.lastX = x; this.lastZ = z;
+    this.idleStandT = 0;         // постоять на месте, когда выхода нет вовсе
     this.kbX = 0; this.kbZ = 0; this.kbT = 0;
     this.gaitT = 0;              // фаза походки (копится по пройденному пути)
     this.lookAngle = 0;          // на сколько повёрнута голова к игроку
@@ -612,12 +619,17 @@ export class Mob {
     const dz = playerPos.z - this.pos.z;
     const dist = Math.hypot(dx, dz) || 0.001;
     const hunting = dist < 22;
-    if (hunting && this.zombieAvoidT <= 0) this.heading = Math.atan2(dx, dz);
+    const toPlayer = Math.atan2(dx, dz);
+    const detour = this.detourTick(dt);
+    if (hunting && this.zombieAvoidT <= 0 && detour === null) this.heading = toPlayer;
 
-    let moveSpeed = hunting && dist > 1.25 ? this.speed * (dist > 5 ? 1.12 : 0.82) : 0;
-    if (moveSpeed > 0) {
-      const nx = this.pos.x + Math.sin(this.heading) * moveSpeed * dt;
-      const nz = this.pos.z + Math.cos(this.heading) * moveSpeed * dt;
+    let wantSpeed = hunting && dist > 1.25 ? this.speed * (dist > 5 ? 1.12 : 0.82) : 0;
+    let moveSpeed = 0;
+    if (wantSpeed > 0 && this.idleStandT <= 0) {
+      // Пока выбираемся из ловушки — идём выбранным курсом, а не в стену
+      const course = detour !== null ? detour : this.heading;
+      const nx = this.pos.x + Math.sin(course) * wantSpeed * dt;
+      const nz = this.pos.z + Math.cos(course) * wantSpeed * dt;
       const ground = this.groundAt(nx, nz, this.pos.y + 1.2);
       const water = ground !== null && isLiquid(this.world.getBlock(
         Math.floor(nx), Math.floor(ground - 0.1), Math.floor(nz),
@@ -626,12 +638,23 @@ export class Mob {
         this.pos.x = nx;
         this.pos.z = nz;
         this.yBase = ground;
+        this.heading = course;
+        moveSpeed = wantSpeed;
       } else {
-        // Не проходит сквозь стену и не идёт в воду/с обрыва; пробует обойти препятствие.
+        // Не проходит сквозь стену и не идёт в воду/с обрыва.
         this.zombieAvoidT = 0.65 + Math.random() * 0.55;
-        this.heading += (Math.random() < 0.5 ? -1 : 1) * (0.9 + Math.random() * 0.6);
-        moveSpeed = 0;
+        if (detour === null && !this.startDetour(toPlayer)) moveSpeed = 0;
       }
+    }
+    const moved = moveSpeed > 0;
+    if (this.trackStuck(dt, moved, wantSpeed) && detour === null) {
+      // Застрял в щели между блоками: перестаём крутиться и идём прочь
+      this.zombieAvoidT = 0;
+      if (!this.startDetour(toPlayer)) wantSpeed = 0;
+    }
+    if (this.detourT > 0 && hunting) {
+      // Курс обхода плавно «уводит» зомби вокруг препятствия, потом снова к игроку
+      this.heading = this.detourHeading;
     }
     const groundHere = this.groundAt(this.pos.x, this.pos.z, this.pos.y + 1.2);
     if (groundHere !== null && Math.abs(groundHere - this.yBase) < 1.5) this.yBase = groundHere;
@@ -934,6 +957,73 @@ export class Mob {
     }
   }
 
+  /**
+   * Застревание: моб упёрся в блок/обрыв и раньше начинал бесконечно крутиться
+   * на месте (каждый кадр новый случайный разворот). Теперь он запоминает, что
+   * не двигается, выбирает один свободный курс и идёт по нему, пока не освободится.
+   * @param {number} dt
+   * @param {boolean} moved сдвинулся ли моб в этом кадре
+   * @param {number} speed желаемая скорость (0 — стоим)
+   * @returns {boolean} true, если моб действительно застрял и сейчас «выбирается»
+   */
+  trackStuck(dt, moved, speed) {
+    if (moved || speed <= 0) {
+      this.stuckT = 0;
+      return false;
+    }
+    this.stuckT += dt;
+    return this.stuckT > 0.3;
+  }
+
+  /** Проходимо ли в этом направлении (стена, вода, обрыв/ступенька выше пояса) */
+  headingFree(h, step = 0.85, waterCheck = true) {
+    const nx = this.pos.x + Math.sin(h) * step;
+    const nz = this.pos.z + Math.cos(h) * step;
+    if (this.blockedAt(nx, nz)) return false;
+    const g = this.groundAt(nx, nz, this.pos.y + 1.2);
+    if (g === null) return false;
+    if (Math.abs(g - this.pos.y) > 1.15) return false;
+    if (waterCheck && isLiquid(this.world.getBlock(Math.floor(nx), Math.floor(g - 0.1), Math.floor(nz)))) return false;
+    return true;
+  }
+
+  /**
+   * Подобрать обходной курс: сначала ближайшие отклонения от текущего направления,
+   * потом всё шире; если свободно только «назад» — идём назад.
+   * @returns {number|null} угол или null, когда выхода нет (моб просто стоит)
+   */
+  findDetourHeading(base = this.heading, preferBack = true) {
+    for (const off of [0.7, -0.7, 1.35, -1.35, 2.1, -2.1, 2.8, -2.8]) {
+      const h = base + off;
+      if (this.headingFree(h)) return h;
+    }
+    if (preferBack && this.headingFree(base + Math.PI, 0.7)) return base + Math.PI;
+    return null;
+  }
+
+  /** Моб застрял: выбираем (или держим) обходной курс, не крутясь на месте */
+  startDetour(base = this.heading, minT = 0.9, maxT = 2.2) {
+    if (this.detourT > 0) return true;      // уже выбираемся — курс не меняем
+    const h = this.findDetourHeading(base);
+    if (h === null) {
+      this.detourT = 0;
+      this.idleStandT = 0.6 + Math.random() * 0.9;
+      return false;                          // совсем некуда идти — стоим, а не крутимся
+    }
+    this.detourHeading = h;
+    this.detourT = minT + Math.random() * (maxT - minT);
+    return true;
+  }
+
+  /** Тик обходного курса: вернуть направление, которым сейчас надо идти (или null) */
+  detourTick(dt) {
+    if (this.idleStandT > 0) this.idleStandT -= dt;
+    if (this.detourT <= 0) return null;
+    this.detourT -= dt;
+    if (this.detourT <= 0) { this.stuckT = 0; return null; }
+    return this.detourHeading;
+  }
+
   // Высота поверхности под ногами; null — обрыв/вода (не идём)
   groundAt(x, z, fromY) {
     const y0 = Math.floor(fromY) + 1;
@@ -972,20 +1062,30 @@ export class Mob {
       this.heading = Math.atan2(playerPos.x - this.pos.x, playerPos.z - this.pos.z);
     }
 
+    const detour = this.detourTick(dt);
+    const wantSpeed = moveSpeed;
+    if (moveSpeed > 0 && this.idleStandT > 0) moveSpeed = 0;
+    let moved = false;
     if (moveSpeed > 0) {
-      const nx = this.pos.x + Math.sin(this.heading) * moveSpeed * dt;
-      const nz = this.pos.z + Math.cos(this.heading) * moveSpeed * dt;
+      // Охота/бегство смотрят на игрока, но если впереди стена или обрыв —
+      // идём заранее выбранным обходным курсом (иначе моб крутится на месте).
+      const course = detour !== null ? detour : this.heading;
+      const nx = this.pos.x + Math.sin(course) * moveSpeed * dt;
+      const nz = this.pos.z + Math.cos(course) * moveSpeed * dt;
       const g = this.groundAt(nx, nz, this.pos.y);
       // Не падаем с обрыва и не заходим в воду
       const targetWater = isLiquid(this.world.getBlock(Math.floor(nx), Math.floor((g ?? this.pos.y) - 1), Math.floor(nz)));
-      if (g !== null && !targetWater && Math.abs(g - this.pos.y) <= 1.15) {
+      if (g !== null && !targetWater && Math.abs(g - this.pos.y) <= 1.15 && !this.blockedAt(nx, nz)) {
         this.pos.x = nx;
         this.pos.z = nz;
         this.yBase = g;
-      } else {
-        this.heading += Math.PI * (0.5 + Math.random() * 0.6); // разворот
+        this.heading = course;
+        moved = true;
+      } else if (detour === null) {
+        this.startDetour(this.heading);      // один курс на секунду-другую, без верчения
       }
     }
+    if (this.trackStuck(dt, moved, wantSpeed) && detour === null) this.startDetour(this.heading);
 
     // Плавный подъём/спуск по рельефу
     this.pos.y += (this.yBase - this.pos.y) * Math.min(1, dt * 10);

@@ -5,6 +5,9 @@ import { isSolid, isLiquid, isSlab, blockBounds } from './blocks.js';
 const HW = CONFIG.PLAYER_WIDTH / 2;
 const PH = CONFIG.PLAYER_HEIGHT;
 const EPS = 0.001;
+// Присед: рост ниже, глаза ниже, с края блока не падаем
+const SNEAK_HEIGHT = 1.5;
+const SNEAK_EYE = 1.28;
 
 export class Player {
   constructor(world) {
@@ -19,6 +22,9 @@ export class Player {
     this.headInWater = false;
     this.sprinting = false;
     this.moving = false;
+    this.sneaking = false;      // зажато: крадётся (медленно, не падает с края)
+    this.eyeOffset = 0;         // 0 — стоим, 0.34 — присели (плавно)
+    this.graceT = 0;            // короткая неуязвимость (например, после паузы)
     this._stepAcc = 0;
     this.events = { onStep: null, onJump: null, onLand: null, onSplash: null };
     this._wasFlying = false;
@@ -43,7 +49,25 @@ export class Player {
   }
 
   eyePos() {
-    return { x: this.pos.x, y: this.pos.y + CONFIG.PLAYER_EYE, z: this.pos.z };
+    return { x: this.pos.x, y: this.pos.y + CONFIG.PLAYER_EYE - this.eyeOffset, z: this.pos.z };
+  }
+
+  /** Текущий рост для коллизий: ниже только когда крадёмся на земле */
+  height() {
+    return (this.sneaking && this.onGround) ? SNEAK_HEIGHT : PH;
+  }
+
+  /** Присесть можно только там, где над головой есть место */
+  _canStandUp() {
+    return !this.collides(this.pos.x, this.pos.y, this.pos.z, PH);
+  }
+
+  /**
+   * Неуязвимость на короткое время: используется после выхода из меню паузы,
+   * чтобы моб «не дожимал» игрока в ту же миллисекунду (вспышка урона из ниоткуда).
+   */
+  grace(seconds = 0.6) {
+    this.graceT = Math.max(this.graceT, seconds);
   }
 
   xpNeeded() { return 5 + this.level * 3; }
@@ -67,6 +91,7 @@ export class Player {
       this.hp = this.maxHp;
       return false;
     }
+    if (this.graceT > 0) return false;
     if (this.hurtT > 0 || this.hp <= 0) return false;
     this.hp = Math.max(0, this.hp - n);
     this.hurtT = 0.7;
@@ -82,7 +107,8 @@ export class Player {
   }
 
   // Пересечение AABB с блоками
-  collides(px, py, pz) {
+  collides(px, py, pz, height = null) {
+    const PH = height != null ? height : this.height();
     const x0 = Math.floor(px - HW), x1 = Math.floor(px + HW - EPS);
     const y0 = Math.floor(py), y1 = Math.floor(py + PH - EPS);
     const z0 = Math.floor(pz - HW), z1 = Math.floor(pz + HW - EPS);
@@ -109,6 +135,14 @@ export class Player {
     const w = this.world;
     // Регенерация и отслеживание падения
     this.hurtT = Math.max(0, this.hurtT - dt);
+    this.graceT = Math.max(0, this.graceT - dt);
+    // Присед: рост и высота глаз меняются плавно, как в классических песочницах.
+    // В воздухе поза сохраняется, но коллизия остаётся полной (см. height()).
+    const wantSneak = !!input.sneak && !this.flying && !this.inWater;
+    this.sneaking = wantSneak && (this.onGround || this.sneaking);
+    const wantEye = this.sneaking ? CONFIG.PLAYER_EYE - SNEAK_EYE : 0;
+    this.eyeOffset += (wantEye - this.eyeOffset) * Math.min(1, dt * 14);
+    if (Math.abs(this.eyeOffset - wantEye) < 0.002) this.eyeOffset = wantEye;
     if (this.hp > 0 && this.hp < this.maxHp && this.hurtT <= 0) {
       this.regenT += dt;
       if (this.regenT > 8) { this.regenT = 0; this.hp = Math.min(this.maxHp, this.hp + 1); }
@@ -117,7 +151,7 @@ export class Player {
     }
     // Вода?
     const feet = w.getBlock(Math.floor(this.pos.x), Math.floor(this.pos.y + 0.2), Math.floor(this.pos.z));
-    const head = w.getBlock(Math.floor(this.pos.x), Math.floor(this.pos.y + CONFIG.PLAYER_EYE), Math.floor(this.pos.z));
+    const head = w.getBlock(Math.floor(this.pos.x), Math.floor(this.pos.y + CONFIG.PLAYER_EYE - this.eyeOffset), Math.floor(this.pos.z));
     const wasWater = this.inWater;
     this.inWater = isLiquid(feet);
     this.headInWater = isLiquid(head);
@@ -159,7 +193,7 @@ export class Player {
       this.vel.y = Math.max(-4, Math.min(4, this.vel.y));
       this._move(dt);
     } else {
-      const sp = input.sprint ? CONFIG.SPRINT_SPEED : CONFIG.WALK_SPEED;
+      const sp = this.sneaking ? CONFIG.SNEAK_SPEED : (input.sprint ? CONFIG.SPRINT_SPEED : CONFIG.WALK_SPEED);
       const accel = this.onGround ? 12 : 4;
       const targetX = mx * sp, targetZ = mz * sp;
       this.vel.x += (targetX - this.vel.x) * Math.min(1, accel * dt);
@@ -200,8 +234,34 @@ export class Player {
     if (this.flying) this._wasFlying = true;
   }
 
+  /** Есть ли опора под ногами в точке (для защиты от падения с края в приседе) */
+  /**
+   * Есть ли под игроком опора в точке (px, py, pz).
+   * Колонки берутся «честно»: если тело накрывает хотя бы часть клетки с полом,
+   * опора есть (как в классике — с края можно чуть свеситься, но не уйти).
+   */
+  _hasFloorAt(px, py, pz) {
+    const y = Math.floor(py - 0.5);
+    // Колонки, которых тело реально касается: [v - HW, v + HW)
+    const first = (v) => Math.floor(v - HW);
+    const last = (v) => Math.ceil(v + HW) - 1;
+    for (let x = first(px); x <= last(px); x++) {
+      for (let z = first(pz); z <= last(pz); z++) {
+        const id = this.world.getBlock(x, y, z);
+        if (!isSolid(id)) continue;
+        const b = blockBounds(id);
+        const top = y + b.maxY;
+        // опорой считаем поверхность в пределах ступеньки: от 0.35 ниже подошв
+        // (плита/углубление) до 0.62 выше (обычный блок, на который можно зашагнуть)
+        if (py - top <= 0.62 && py - top >= -0.35) return true;
+      }
+    }
+    return false;
+  }
+
   /** Высота свободного полублока на пути: полный блок или низкий потолок не пускают. */
   _slabStepTop(px, py, pz) {
+    const PH = this.height();
     const x0 = Math.floor(px - HW), x1 = Math.floor(px + HW - EPS);
     const y0 = Math.floor(py), y1 = Math.floor(py + PH - EPS);
     const z0 = Math.floor(pz - HW), z1 = Math.floor(pz + HW - EPS);
@@ -225,8 +285,75 @@ export class Player {
 
   _move(dt) {
     const canStep = this.onGround && !this.flying && !this.inWater && this.vel.y <= 0;
+    // onGround сбрасывается ниже, поэтому для проверки «стоим на земле» в этом
+    // кадре запоминаем его заранее (иначе присед не защищал бы от падения с края)
+    const grounded = this.onGround;
+    // Крадущийся игрок упирается в край блока: проверяем опору под ногами ДО
+    // проверки коллизий, иначе он просто сошёл бы в пустоту (коллизии там нет).
+    /**
+     * Шаг вверх на препятствие высотой не более одного блока: ищем точную
+     * поверхность под ногами в новой точке и встаём ровно на неё (без «прилипания»
+     * с запасом, иначе игрок понемногу всплывал бы над полом).
+     */
+    const tryStepUp = (p) => {
+      const x0 = Math.floor(p.x - HW), x1 = Math.ceil(p.x + HW) - 1;
+      const z0 = Math.floor(p.z - HW), z1 = Math.ceil(p.z + HW) - 1;
+      const yLo = Math.floor(this.pos.y - 0.35);
+      const yHi = Math.floor(this.pos.y + 1.0001);
+      let best = null;
+      for (let y = yLo; y <= yHi; y++) {
+        for (let xi = x0; xi <= x1; xi++) {
+          for (let zi = z0; zi <= z1; zi++) {
+            const id = this.world.getBlock(xi, y, zi);
+            if (!isSolid(id)) continue;
+            const b = blockBounds(id);
+            const top = y + b.maxY;
+            const rise = top - this.pos.y;
+            if (rise <= -0.3 || rise > 1.0001) continue;
+            if (best === null || top > best) best = top;
+          }
+        }
+      }
+      if (best === null) return false;
+      const ny = best + 0.001;
+      if (this.collides(p.x, ny, p.z)) return false;
+      this.pos.x = p.x;
+      this.pos.z = p.z;
+      this.pos.y = ny;
+      this.vel.y = 0;
+      this.onGround = true;
+      return true;
+    };
+    const ledgeGuard = (axis, amount) => {
+      if (axis === 'y' || !this.sneaking || !grounded || this.flying) return null;
+      if (!this._hasFloorAt(this.pos.x, this.pos.y, this.pos.z)) return null;
+      const p = { ...this.pos };
+      p[axis] += amount;
+      // Если в конечной точке опоры уже нет — не пускаем дальше края
+      if (this._hasFloorAt(p.x, this.pos.y, p.z)) return null;
+      // Но если там ступенька, на которую можно встать, — поднимаемся на неё
+      if (tryStepUp(p)) return { done: true };
+      // Ищем последнее положение, где под ногами ещё есть опора
+      const dir = Math.sign(amount);
+      let best = null;
+      const limit = Math.abs(amount);
+      for (let d = limit; d >= 0.02; d -= 0.02) {
+        const q = { ...this.pos };
+        q[axis] += dir * d;
+        if (this._hasFloorAt(q.x, this.pos.y, q.z)) { best = q[axis]; break; }
+      }
+      return { value: best ?? this.pos[axis] };
+    };
     const step = (axis, amount) => {
       if (!amount) return;
+      const guard = ledgeGuard(axis, amount);
+      if (guard) {
+        if (guard.done) return;                 // уже переставили игрока на ступеньку
+        const before = this.pos[axis];
+        this.pos[axis] = guard.value;
+        if (Math.abs(guard.value - before) < Math.abs(amount) * 0.5) this.vel[axis] = 0;
+        return;
+      }
       const p = { ...this.pos };
       p[axis] += amount;
       if (!this.collides(p.x, p.y, p.z)) {
@@ -244,6 +371,13 @@ export class Player {
             this.pos[axis] = p[axis];
             return;
           }
+        }
+        // Крадущийся игрок плавно взбирается на обычный блок (в классике присед
+        // не мешает подняться на ступеньку) вместо того, чтобы упираться в неё.
+        if (this.sneaking) {
+          const q = { ...this.pos };
+          q[axis] = p[axis];
+          if (tryStepUp(q)) return;
         }
       }
       // Шаг по чуть-чуть (тонкого туннеля не будет: скорость*dt < размера блока)
@@ -269,10 +403,32 @@ export class Player {
     step('z', this.vel.z * dt);
     step('y', this.vel.y * dt);
     if (this.vel.y === 0 && this.onGround) {
-      // прилипание к земле
-      const q = { ...this.pos }; q.y -= 0.05;
-      if (!this.collides(q.x, q.y, q.z)) this.onGround = false;
+      // Прилипание к земле: «на земле» только если под ногами в пределах шага
+      // действительно есть опора. Старая проверка коллизией на 0.05 ниже
+      // срабатывала через кадр, из-за чего игрок считался висящим в воздухе
+      // (присед не защищал от падения с края, шаги звучали непрерывно).
+      if (!this._groundBelow(0.09)) this.onGround = false;
     }
+  }
+
+  /** Есть ли твёрдая опора в пределах eps блоков под подошвами (с учётом плит) */
+  _groundBelow(eps = 0.09) {
+    const x0 = Math.floor(this.pos.x - HW), x1 = Math.ceil(this.pos.x + HW) - 1;
+    const z0 = Math.floor(this.pos.z - HW), z1 = Math.ceil(this.pos.z + HW) - 1;
+    const yTop = Math.floor(this.pos.y + eps);
+    for (let xi = x0; xi <= x1; xi++) {
+      for (let zi = z0; zi <= z1; zi++) {
+        for (let y = Math.floor(this.pos.y - eps); y <= yTop; y++) {
+          const id = this.world.getBlock(xi, y, zi);
+          if (!isSolid(id)) continue;
+          const b = blockBounds(id);
+          const top = y + b.maxY;
+          const dy = this.pos.y - top;
+          if (dy >= -1e-4 && dy <= eps) return true;
+        }
+      }
+    }
+    return false;
   }
 
   toggleFly() {
@@ -298,7 +454,7 @@ export class Player {
     return {
       x: this.pos.x, y: this.pos.y, z: this.pos.z,
       yaw: this.yaw, pitch: this.pitch, flying: this.flying, hp: this.hp,
-      level: this.level, xp: this.xp,
+      level: this.level, xp: this.xp, sneaking: this.sneaking,
     };
   }
 

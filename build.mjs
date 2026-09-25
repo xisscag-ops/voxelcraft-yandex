@@ -1,7 +1,7 @@
 // Сборка: esbuild -> game.js (один файл для Яндекс Игр), опционально zip-архив
 import { build } from 'esbuild';
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
+import { copyFileSync, cpSync, mkdirSync, rmSync, existsSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -29,16 +29,27 @@ if (wantZip) {
   for (const f of ['index.html', 'styles.css', 'game.js']) {
     copyFileSync(path.join(root, f), path.join(releaseDir, f));
   }
+  // Папка music/ с треками пользователя едет в архив целиком (если она есть)
+  const musicDir = path.join(root, 'music');
+  const hasMusic = existsSync(musicDir);
+  if (hasMusic) cpSync(musicDir, path.join(releaseDir, 'music'), { recursive: true });
+  const entries = ['index.html', 'styles.css', 'game.js', ...(hasMusic ? ['music'] : [])];
   const zipPath = path.join(root, 'voxelcraft-yandex.zip');
   rmSync(zipPath, { force: true });
   try {
-    execFileSync('zip', ['-q', '-r', zipPath, 'index.html', 'styles.css', 'game.js'], { cwd: releaseDir });
+    execFileSync('zip', ['-q', '-r', zipPath, ...entries], { cwd: releaseDir });
   } catch (e) {
     // zip может отсутствовать — используем python3
-    execFileSync('python3', ['-m', 'zipfile', '-c', zipPath,
-      path.join(releaseDir, 'index.html'),
-      path.join(releaseDir, 'styles.css'),
-      path.join(releaseDir, 'game.js')]);
+    const files = [];
+    const walk = (dir) => {
+      for (const name of readdirSync(dir)) {
+        const full = path.join(dir, name);
+        if (statSync(full).isDirectory()) walk(full);
+        else files.push(full);
+      }
+    };
+    walk(releaseDir);
+    execFileSync('python3', ['-m', 'zipfile', '-c', zipPath, ...files]);
   }
   console.log('Готово:', zipPath, existsSync(zipPath) ? '' : '(ошибка)');
 }

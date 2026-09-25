@@ -59,6 +59,10 @@ export const BLOCK = {
   CHEST_NZ: 47,
   CHEST_PX: 48,
   CHEST_NX: 49,
+  // Новые блоки: берёзовые доски, забор и наковальня
+  BIRCH_PLANKS: 50,
+  FENCE: 51,
+  ANVIL: 52,
 };
 
 // tiles: [top, bottom, side] — индексы тайлов атласа
@@ -114,6 +118,11 @@ export const BLOCKS = [
   { id: 47, name: 'chest_nz', solid: true, tiles: [53, 53, 54, 55], front: 'nz', break: 'default', tool: 'wood', interactive: 'chest', chest: true, variant: true },
   { id: 48, name: 'chest_px', solid: true, tiles: [53, 53, 54, 55], front: 'px', break: 'default', tool: 'wood', interactive: 'chest', chest: true, variant: true },
   { id: 49, name: 'chest_nx', solid: true, tiles: [53, 53, 54, 55], front: 'nx', break: 'default', tool: 'wood', interactive: 'chest', chest: true, variant: true },
+  { id: 50, name: 'birch_planks', solid: true, tiles: [56, 56, 56], break: 'default', tool: 'wood' },
+  // Забор: твёрдый, но занимает только середину клетки (столбик) — через него видно
+  { id: 51, name: 'fence', solid: true, tiles: [57, 57, 57], break: 'default', tool: 'wood', shape: 'fence', fence: true },
+  // Наковальня: станция для инструментов выше каменных
+  { id: 52, name: 'anvil', solid: true, tiles: [58, 58, 59, 60], front: 'pz', break: 'slow', tool: 'stone', interactive: 'anvil', anvil: true },
 ];
 
 // Плотная (без просветов) текстура листвы для внутренних граней кроны
@@ -135,6 +144,7 @@ export const BLOCK_NAMES = {
     38: 'Деревянный полублок', 39: 'Каменный полублок', 40: 'Каменный полублок',
     41: 'Настенный факел', 42: 'Настенный факел', 43: 'Настенный факел', 44: 'Настенный факел', 45: 'Настенный факел',
     46: 'Сундук', 47: 'Сундук', 48: 'Сундук', 49: 'Сундук',
+    50: 'Берёзовые доски', 51: 'Забор', 52: 'Наковальня',
   },
   en: {
     1: 'Grass', 2: 'Dirt', 3: 'Stone', 4: 'Cobblestone', 5: 'Sand',
@@ -150,13 +160,15 @@ export const BLOCK_NAMES = {
     38: 'Wooden slab', 39: 'Stone slab', 40: 'Stone slab',
     41: 'Wall torch', 42: 'Wall torch', 43: 'Wall torch', 44: 'Wall torch', 45: 'Wall torch',
     46: 'Chest', 47: 'Chest', 48: 'Chest', 49: 'Chest',
+    50: 'Birch planks', 51: 'Fence', 52: 'Anvil',
   },
 };
 
 // Базовый набор (открыт сразу) и «набор строителя» (после рекламы за вознаграждение)
 export const STARTER_PALETTE = [
   BLOCK.GRASS, BLOCK.DIRT, BLOCK.STONE, BLOCK.SAND, BLOCK.LOG, BLOCK.PLANKS,
-  BLOCK.PLANK_SLAB, BLOCK.COBBLE_SLAB, BLOCK.TORCH, BLOCK.FURNACE, BLOCK.CHEST,
+  BLOCK.BIRCH_PLANKS, BLOCK.PLANK_SLAB, BLOCK.COBBLE_SLAB, BLOCK.FENCE,
+  BLOCK.TORCH, BLOCK.FURNACE, BLOCK.CHEST, BLOCK.ANVIL,
 ];
 export const BUILDER_PALETTE = [
   BLOCK.COBBLE, BLOCK.LEAVES, BLOCK.GLASS, BLOCK.BRICK, BLOCK.GLOW, BLOCK.SNOW, BLOCK.SLATE,
@@ -170,6 +182,8 @@ export const BUILDER_PALETTE = [
 const FULL_BOUNDS = Object.freeze({ minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 });
 const LOWER = Object.freeze({ ...FULL_BOUNDS, maxY: 0.5 });
 const UPPER = Object.freeze({ ...FULL_BOUNDS, minY: 0.5 });
+// Забор: столбик в центре клетки, чуть выше блока — через него не перепрыгнуть
+const FENCE_BOUNDS = Object.freeze({ minX: 0.375, minY: 0, minZ: 0.375, maxX: 0.625, maxY: 1.5, maxZ: 0.625 });
 const TORCH_BOUNDS = Object.freeze({ minX: 0.36, minY: 0, minZ: 0.36, maxX: 0.64, maxY: 0.84, maxZ: 0.64 });
 const DECOR_BOUNDS = Object.freeze({ minX: 0.2, minY: 0, minZ: 0.2, maxX: 0.8, maxY: 0.55, maxZ: 0.8 });
 // Настенный факел: узкая часть у стены, на которую он опирается
@@ -216,11 +230,39 @@ export function wallTorchSide(world, x, y, z, id = BLOCK.WALL_TORCH) {
 export function blockBounds(id, side = 'px') {
   const b = BLOCKS[id];
   if (b?.shape === 'slab') return b.half === 'top' ? UPPER : LOWER;
+  if (b?.shape === 'fence') return FENCE_BOUNDS;
   if (b?.wallTorch) return WALL_TORCH_BOUNDS[side] || WALL_TORCH_BOUNDS.px;
   if (b?.shape === 'torch') return TORCH_BOUNDS;
   return b?.decor ? DECOR_BOUNDS : FULL_BOUNDS;
 }
 export function isSlab(id) { return BLOCKS[id]?.shape === 'slab'; }
+export function isFence(id) { return BLOCKS[id]?.fence === true; }
+/** Блок нестандартной формы (плита, забор, факел, растение) — не полный куб */
+export function isShaped(id) { return !!BLOCKS[id]?.shape; }
+
+/**
+ * Пара «низ + верх» для полублоков: если поставить два одинаковых полублока
+ * друг на друга, они превращаются в полный блок.
+ * @returns {[number, number]|null} [нижний, верхний] id для этого полублока
+ */
+export function slabPair(id) {
+  if (id === BLOCK.PLANK_SLAB || id === BLOCK.PLANK_SLAB_TOP) return [BLOCK.PLANK_SLAB, BLOCK.PLANK_SLAB_TOP];
+  if (id === BLOCK.COBBLE_SLAB || id === BLOCK.COBBLE_SLAB_TOP) return [BLOCK.COBBLE_SLAB, BLOCK.COBBLE_SLAB_TOP];
+  return null;
+}
+/** Полный блок, который получается из двух таких полублоков (или null) */
+export function slabFullBlock(id) {
+  if (id === BLOCK.PLANK_SLAB || id === BLOCK.PLANK_SLAB_TOP) return BLOCK.PLANKS;
+  if (id === BLOCK.COBBLE_SLAB || id === BLOCK.COBBLE_SLAB_TOP) return BLOCK.COBBLE;
+  return null;
+}
+/** Предмет, который выпадает из полублока (верхняя плита даёт обычную плиту) */
+export function slabDropItem(id) {
+  if (id === BLOCK.PLANK_SLAB || id === BLOCK.PLANK_SLAB_TOP) return BLOCK.PLANK_SLAB;
+  if (id === BLOCK.COBBLE_SLAB || id === BLOCK.COBBLE_SLAB_TOP) return BLOCK.COBBLE_SLAB;
+  return id;
+}
+export function isAnvil(id) { return BLOCKS[id]?.anvil === true; }
 export function isSolid(id) { return !!BLOCKS[id]?.solid; }
 export function isOpaque(id) {
   const b = BLOCKS[id];
