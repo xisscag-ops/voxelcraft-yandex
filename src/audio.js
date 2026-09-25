@@ -340,6 +340,12 @@ export class Sfx {
     setTimeout(() => this._burst({ freq: 700, dur: 0.07, gain: 0.28, pitchDrop: 0.3 }), 110);
   }
 
+  burp() {
+    // Довольная отрыжка после еды: низкий короткий «брр»
+    this._tone({ freq: 150, dur: 0.22, gain: 0.16, type: 'sawtooth', slide: -60 });
+    setTimeout(() => this._tone({ freq: 110, dur: 0.16, gain: 0.12, type: 'triangle', slide: -30 }), 130);
+  }
+
   craft() {
     // «Молоток по верстаку»: два коротких стука и звон
     this._burst({ freq: 700, dur: 0.05, gain: 0.3, pitchDrop: 0.6 });

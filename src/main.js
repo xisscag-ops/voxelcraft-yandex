@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 import { BLOCK, BLOCKS, STARTER_PALETTE, BUILDER_PALETTE, breakKind, isSolid, isDecor } from './blocks.js';
-import { ITEM, blockItem, blockIdOf, blockDropItem, breakTime, itemDamage, itemName, placeBlockId, isBlockItem, itemDef } from './items.js';
+import { ITEM, blockItem, blockIdOf, blockDropItem, breakTime, itemDamage, itemName, placeBlockId, isBlockItem, itemDef, foodValue } from './items.js';
 import { Inventory, HOTBAR_SIZE } from './inventory.js';
 import { craft, needsTable } from './crafts.js';
 import { InventoryUI, setFullToast } from './inventory-ui.js';
@@ -17,6 +17,7 @@ import { Particles } from './particles.js';
 import { Weather } from './weather.js';
 import { ItemDrops } from './items.js';
 import { Arrows, buildArrowModel, arrowMaterials } from './projectiles.js';
+import { Eating } from './eating.js';
 import { Sky } from './sky.js';
 import { Sfx } from './audio.js';
 import { Input } from './input.js';
@@ -89,6 +90,10 @@ let bowCharge = 0;               // 0..1 — натяжение тетивы
 let bowCharging = false;
 let bowKick = 0;                 // отдача лука после выстрела
 const BOW_CHARGE_TIME = 0.85;    // полное натяжение за 0.85 с
+
+// Еда: держим ЛКМ с едой в руке — персонаж жуёт (см. src/eating.js)
+const eat = new Eating();
+let eatFullT = 0;                // пауза между подсказками «ты сыт»
 
 // Выживание
 let attackCd = 0;
@@ -419,6 +424,25 @@ function poseBow(dt, light) {
   nockedMats.forEach((m, i) => m.color.setHex(nockedBase[i] || 0xc0c0c0).multiplyScalar(lum));
 }
 
+/** Съедобный предмет в руке (или null) */
+function heldFood() {
+  const key = heldItem();
+  return key && foodValue(key) > 0 ? key : null;
+}
+
+/** Доели: здоровье прибавляется, предмет исчезает из инвентаря */
+function finishEat() {
+  const key = heldFood();
+  if (!key) return;
+  const heal = foodValue(key);
+  inventory.remove(key, 1);
+  refreshHotbar();
+  player.heal(heal);
+  ui.setHealth(player.hp, player.maxHp);
+  sfx.burp();
+  ui.toast(i18n.t('eat_ok'), 1400);
+}
+
 function updateHand(dt, light) {
   handPivot.visible = state === 'game';
   heldGroup.visible = !!heldKey && !isBowSelected();
@@ -433,6 +457,20 @@ function updateHand(dt, light) {
     -0.36 + 0.08 * p - Math.abs(Math.sin(handBob)) * bob,
     -0.55 - 0.15 * p,
   );
+  // Еда: пока держим кнопку, предмет подносится ко рту и покачивается в такт жеванию
+  if (eat.raised > 0.001) {
+    const k = eat.raised;
+    const chew = Math.sin(eat.t * 16) * 0.5 + 0.5;
+    handPivot.position.x += (-0.12 - handPivot.position.x) * k;
+    handPivot.position.y += (-0.13 + 0.05 * chew - handPivot.position.y) * k;
+    handPivot.position.z += (-0.42 - handPivot.position.z) * k;
+    handPivot.rotation.x += (-0.62 - 0.18 * chew - handPivot.rotation.x) * k;
+    handPivot.rotation.y += (0.16 - handPivot.rotation.y) * k;
+    handPivot.rotation.z += (0.08 - handPivot.rotation.z) * k;
+    heldGroup.scale.setScalar(1 + 0.05 * chew);
+  } else {
+    heldGroup.scale.setScalar(1);
+  }
   hand.material.color.setHex(0xd9a27a).multiplyScalar(0.35 + 0.65 * light);
   poseBow(dt, light);
   // Приглушаем предмет в руке по уровню освещения (и меши, и вложенные группы)
@@ -768,6 +806,7 @@ function doBreak(hit) {
 function handleDeath() {
   bowCharge = 0;
   bowCharging = false;
+  eat.reset();
   if (isCreative()) { player.hp = player.maxHp; return; }  // в креативе игрок бессмертен
   sfx.die();
   ui.flashHurt();
@@ -1028,6 +1067,7 @@ function showHints() {
   setTimeout(() => state === 'game'
     && ui.toast(i18n.t(isCreative() ? 'hint_fly' : 'hint_table'), 3500), 11400);
   setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_bow'), 4200), 15000);
+  setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_eat'), 4200), 21000);
   setTimeout(() => state === 'game' && ui.toast(i18n.t('esc_fullscreen'), 4500), 20500);
 }
 
@@ -1471,10 +1511,36 @@ function frame() {
       highlight.visible = false;
     }
 
+    // Еда: держим ЛКМ (или кнопку «копать» на телефоне) с едой в руке — персонаж жуёт.
+    // Отпустили раньше времени — анимация прерывается, предмет не тратится.
+    const foodKey = heldFood();
+    const hungry = player.hp < player.maxHp;
+    const holdEat = !!foodKey && input.breakHeld && !mobTarget;
+    eatFullT = Math.max(0, eatFullT - dt);
+    const eatEvent = eat.update(dt, holdEat, hungry);
+    if (eatEvent === 'chew') {
+      sfx.crunch();
+      // Крошки летят перед лицом — еда выглядит «настоящей»
+      const eye = player.eyePos();
+      const dir = player.lookDir();
+      particles.burst(
+        eye.x + dir.x * 0.55, eye.y + dir.y * 0.55 - 0.18, eye.z + dir.z * 0.55,
+        Math.random() < 0.5 ? 0xd64545 : 0xd8c48a, 2,
+      );
+    } else if (eatEvent === 'done') {
+      finishEat();
+    } else if (eatEvent === 'cancel') {
+      ui.setBreakProgress(0);
+    }
+    if (holdEat && !eat.active && !hungry && eatFullT <= 0) {
+      ui.toast(i18n.t('eat_full'), 2000);       // здоровье полное — есть нечего
+      eatFullT = 2.5;
+    }
+
     // Ломание: удержание ЛКМ/кнопки или быстрое по тапу (с анимацией трещин)
     let breaking = null;
     decorBreakCd = Math.max(0, decorBreakCd - dt);
-    if (hit && !mobTarget && isDecor(hit.id)) {
+    if (hit && !mobTarget && !eat.active && isDecor(hit.id)) {
       // Растения: мгновенный срыв удержанием кнопки, трещины не показываем
       if (input.breakHeld && decorBreakCd <= 0) breakDecor(hit);
       breakTarget = null;
@@ -1482,7 +1548,7 @@ function frame() {
       breakQuick = false;
       crackMesh.visible = false;
       ui.setBreakProgress(0);
-    } else if (hit && !mobTarget) {
+    } else if (hit && !mobTarget && !eat.active) {
       const same = breakTarget && breakTarget.x === hit.x && breakTarget.y === hit.y && breakTarget.z === hit.z;
       if (breakQuick) {
         if (same) breaking = hit;
@@ -1619,6 +1685,7 @@ function frame() {
     sfx.setRainLevel(weather.wetness);
   }
 
+  if (state !== 'game') eat.reset();
   updateHand(dt, sky.lightLevel ?? 1);
   renderer.render(scene, camera);
 }

@@ -8,8 +8,9 @@ import {
   RECIPES, craft, canCraft, validateRecipes, emptyGrid, matchRecipe, gridResult,
   craftFromGrid, needsTable, recipeGridSize,
 } from './src/crafts.js';
-import { ITEM, itemDef, blockItem, blockDropItem, breakTime, itemDamage, maxStack, placeBlockId, toolKind } from './src/items.js';
+import { ITEM, itemDef, foodValue, isFood, blockItem, blockDropItem, breakTime, itemDamage, maxStack, placeBlockId, toolKind } from './src/items.js';
 import { CONFIG } from './src/config.js';
+import { STRINGS } from './src/i18n.js';
 
 // Заглушка THREE — достаточно для toGeometry
 const calls = { geom: 0, verts: 0, idx: 0 };
@@ -352,6 +353,58 @@ check('крафт из сетки: пустая сетка', (() => {
   const i = new Inventory(CONFIG.INV_SIZE);
   return craftFromGrid(emptyGrid(2), 2, i) === 'nothing';
 })());
+
+// ---- Еда: съедобность и поедание удержанием ----
+{
+  const { Eating, EAT_TIME, CHEW_INTERVAL } = await import('./src/eating.js');
+  check('еда: яблоко съедобно, палка — нет', foodValue(ITEM.APPLE) === 4 && isFood(ITEM.APPLE)
+    && foodValue(ITEM.STICK) === 0 && !isFood(ITEM.STICK));
+  check('еда: удержание занимает около секунды', EAT_TIME > 0.8 && EAT_TIME < 1.6 && CHEW_INTERVAL > 0.1);
+  check('еда: без еды в руке поедание не начинается', (() => {
+    const e = new Eating();
+    let events = 0;
+    for (let i = 0; i < 180; i++) if (e.update(1 / 60, true, false)) events++;
+    return events === 0 && !e.active;
+  })());
+  check('еда: короткое нажатие не тратит предмет', (() => {
+    const e = new Eating();
+    let started = false, done = false;
+    for (let i = 0; i < 18; i++) {            // 0.3 с — меньше, чем нужно
+      const ev = e.update(1 / 60, true, true);
+      if (ev === 'start') started = true;
+      if (ev === 'done') done = true;
+    }
+    for (let i = 0; i < 60; i++) e.update(1 / 60, false, true);
+    return started && !done && !e.active && e.raised < 0.2;
+  })());
+  check('еда: удержание до конца съедает предмет', (() => {
+    const e = new Eating();
+    let done = false, chews = 0, maxRaise = 0;
+    for (let i = 0; i < 180 && !done; i++) {
+      const ev = e.update(1 / 60, true, true);
+      if (ev === 'done') done = true;
+      if (ev === 'chew') chews++;
+      maxRaise = Math.max(maxRaise, e.raised);
+    }
+    return done && chews >= 2 && maxRaise > 0.9;
+  })());
+  check('еда: повторное удержание снова кормит', (() => {
+    const e = new Eating();
+    let done = 0;
+    for (let round = 0; round < 2; round++) {
+      for (let i = 0; i < 180; i++) {
+        const ev = e.update(1 / 60, true, true);
+        if (ev === 'done') { done++; break; }
+      }
+      for (let i = 0; i < 30; i++) e.update(1 / 60, false, true);
+    }
+    return done === 2;
+  })());
+  check('еда: подсказки есть в обоих языках', (() => {
+    return !!STRINGS.ru.eat_full && !!STRINGS.en.eat_full
+      && !!STRINGS.ru.eat_ok && !!STRINGS.ru.hint_eat && !!STRINGS.en.hint_eat;
+  })());
+}
 
 // ---- Лук и стрелы ----
 check('лук и стрела есть в предметах', !!itemDef(ITEM.BOW) && !!itemDef(ITEM.ARROW));

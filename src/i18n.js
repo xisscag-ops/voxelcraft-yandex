@@ -28,7 +28,8 @@ export const STRINGS = {
     howto_text: `
       <b>ПК:</b> WASD — движение, мышь — обзор, ЛКМ — сломать (удерживать), ПКМ — поставить,
       колесо/1-9 — выбор слота, пробел — прыжок, Ctrl — бег, Shift — вниз в полёте,
-      <b>E</b> — инвентарь и крафт, <b>F</b> — съесть яблоко, Esc — пауза.<br><br>
+      <b>E</b> — инвентарь и крафт, <b>F</b> — съесть яблоко сразу, Esc — пауза.
+      С едой в руке удерживайте <b>ЛКМ</b> — персонаж жуёт, и предмет уходит в дело.<br><br>
       <b>Режимы:</b> в «Выживании» сломанные блоки попадают в инвентарь, блоки тратятся при
       установке, инструменты ускоряют работу, а мобы наносят урон. В «Креативе» все блоки
       бесконечны, блоки ломаются почти мгновенно, полёт — двойным пробелом, а игрок бессмертен.<br><br>
@@ -36,7 +37,8 @@ export const STRINGS = {
       клик — быстрый крафт), справа вверху — сетка 2×2: кладите предметы ЛКМ/ПКМ и забирайте результат.
       Рецепты «3×3» (кирки, топоры, мечи) требуют <b>верстак</b>: 4 доски в сетке 2×2 → верстак,
       поставьте его и нажмите ПКМ.<br><br>
-      <b>Телефон:</b> слева — джойстик, справа — обзор; короткий тап — сломать блок.
+      <b>Телефон:</b> слева — джойстик, справа — обзор; короткий тап — сломать блок,
+      а с едой в руке — удерживайте палец, чтобы поесть.
       Кнопки: прыжок, поставить, копать, слот «🎒» — инвентарь.<br><br>
       Прогресс (мир, инвентарь, яблоки) сохраняется автоматически.`,
     howto_title: 'Как играть',
@@ -74,6 +76,7 @@ export const STRINGS = {
     apple_get: 'Яблоко подобрано (F — съесть)',
     eat_ok: 'Хрусть! +2 сердца',
     eat_none: 'Яблок нет',
+    eat_full: 'Ты сыт — здоровье полное',
     gloom_warn: 'Ночью опасно: Хмари рядом!',
     mode_title: 'Выберите режим',
     mode_sub: 'Режим сохранится вместе с миром',
@@ -102,11 +105,11 @@ export const STRINGS = {
     catalog_locked: 'Набор строителя закрыт — посмотрите рекламу',
     inv_full: 'Инвентарь полон',
     bag_hint: 'E — инвентарь',
-    eat_hint: 'F  🍎',
+    eat_hint: '🍎 ЛКМ/F',
     fly_creative_only: 'Полёт доступен только в креативе',
     block_drop: 'Подобрано',
     hint_inventory: 'E — инвентарь и крафт',
-    hint_eat: 'Яблоко съедается клавишей F',
+    hint_eat: 'Яблоко: удерживайте ЛКМ, чтобы съесть (или F — сразу)',
     hint_table: '4 доски в сетке крафта → верстак: на нём открывается крафт 3×3',
   },
   en: {
@@ -137,7 +140,8 @@ export const STRINGS = {
     howto_text: `
       <b>Desktop:</b> WASD — move, mouse — look, LMB — break (hold), RMB — place,
       wheel/1-9 — pick slot, Space — jump, Ctrl — sprint, Shift — down while flying,
-      <b>E</b> — inventory & crafting, <b>F</b> — eat an apple, Esc — pause.<br><br>
+      <b>E</b> — inventory & crafting, <b>F</b> — eat an apple instantly, Esc — pause.
+      With food in hand hold <b>LMB</b> — the character chews and the item is used up.<br><br>
       <b>Modes:</b> in <b>Survival</b> broken blocks go to your inventory, placing consumes them,
       tools make work faster and mobs can hurt you. In <b>Creative</b> every block is infinite,
       blocks break almost instantly, double-tap Space flies and you cannot die.<br><br>
@@ -145,7 +149,8 @@ export const STRINGS = {
       green, click for instant crafting), the 2×2 grid is above: place items with LMB/RMB and take the
       result. Recipes marked “3×3” (pickaxes, axes, swords) need a <b>crafting table</b>:
       4 planks in the 2×2 grid → table, place it and press RMB.<br><br>
-      <b>Mobile:</b> joystick on the left, look on the right; quick tap — break a block.
+      <b>Mobile:</b> joystick on the left, look on the right; quick tap — break a block,
+      with food in hand hold your finger to eat.
       Buttons: jump, place, dig, «🎒» — inventory.<br><br>
       Progress (world, inventory, apples) saves automatically.`,
     howto_title: 'How to play',
@@ -183,6 +188,7 @@ export const STRINGS = {
     apple_get: 'Apple picked up (F to eat)',
     eat_ok: 'Crunch! +2 hearts',
     eat_none: 'No apples',
+    eat_full: 'Not hungry — health is full',
     gloom_warn: 'Night is dangerous: Gloom is near!',
     mode_title: 'Choose a mode',
     mode_sub: 'The mode is stored in this world',
@@ -211,11 +217,11 @@ export const STRINGS = {
     catalog_locked: 'Builder Pack is locked — watch an ad',
     inv_full: 'Inventory is full',
     bag_hint: 'E — inventory',
-    eat_hint: 'F  🍎',
+    eat_hint: '🍎 LMB/F',
     fly_creative_only: 'Flying is available in Creative only',
     block_drop: 'Picked up',
     hint_inventory: 'E — inventory & crafting',
-    hint_eat: 'Press F to eat an apple',
+    hint_eat: 'Apple: hold LMB to eat it (or press F instantly)',
     hint_table: '4 planks in the crafting grid → crafting table with 3×3 recipes',
   },
 };

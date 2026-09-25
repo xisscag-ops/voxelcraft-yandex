@@ -70,6 +70,20 @@ export const ITEMS = {
 const _defCache = new Map();
 
 /** Описание предмета или null, если такого предмета нет */
+/**
+ * Сытость предмета: сколько сердец здоровья он восстанавливает.
+ * 0 — предмет несъедобный.
+ */
+export function foodValue(key) {
+  const def = itemDef(key);
+  return def && def.kind === 'item' && def.food > 0 ? def.food : 0;
+}
+
+/** Съедобный предмет? */
+export function isFood(key) {
+  return foodValue(key) > 0;
+}
+
 export function itemDef(key) {
   if (!key) return null;
   if (_defCache.has(key)) return _defCache.get(key);
