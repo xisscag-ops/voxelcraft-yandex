@@ -48,7 +48,17 @@ export const BLOCK = {
   PLANK_SLAB_TOP: 38,
   COBBLE_SLAB: 39,
   COBBLE_SLAB_TOP: 40,
-  WALL_TORCH: 41,   // факел, закреплённый на стене (сторона берётся из соседнего блока)
+  WALL_TORCH: 41,   // старый настенный факел: сторона берётся из соседнего блока
+  // Настенные факелы с явной стороной крепления (стена со стороны +X, −X, +Z, −Z)
+  WALL_TORCH_PX: 42,
+  WALL_TORCH_NX: 43,
+  WALL_TORCH_PZ: 44,
+  WALL_TORCH_NZ: 45,
+  // Сундук: 4 варианта — лицевой стороной к игроку при установке
+  CHEST: 46,        // лицом к +Z
+  CHEST_NZ: 47,
+  CHEST_PX: 48,
+  CHEST_NX: 49,
 };
 
 // tiles: [top, bottom, side] — индексы тайлов атласа
@@ -95,8 +105,19 @@ export const BLOCKS = [
   { id: 38, name: 'plank_slab_top', solid: true, tiles: [8, 8, 8], break: 'default', tool: 'wood', shape: 'slab', slab: true, half: 'top' },
   { id: 39, name: 'cobble_slab', solid: true, tiles: [4, 4, 4], break: 'slow', tool: 'stone', shape: 'slab', slab: true, half: 'bottom' },
   { id: 40, name: 'cobble_slab_top', solid: true, tiles: [4, 4, 4], break: 'slow', tool: 'stone', shape: 'slab', slab: true, half: 'top' },
-  { id: 41, name: 'wall_torch', solid: false, tiles: [49, 49, 49], break: 'fast', shape: 'torch', torch: true, wallTorch: true, decor: true, transparent: true, emissive: true },
+  { id: 41, name: 'wall_torch', solid: false, tiles: [49, 49, 49], break: 'fast', shape: 'torch', torch: true, wallTorch: true, decor: true, transparent: true, emissive: true, variant: true },
+  { id: 42, name: 'wall_torch_px', solid: false, tiles: [49, 49, 49], break: 'fast', shape: 'torch', torch: true, wallTorch: true, wallSide: 'px', decor: true, transparent: true, emissive: true, variant: true },
+  { id: 43, name: 'wall_torch_nx', solid: false, tiles: [49, 49, 49], break: 'fast', shape: 'torch', torch: true, wallTorch: true, wallSide: 'nx', decor: true, transparent: true, emissive: true, variant: true },
+  { id: 44, name: 'wall_torch_pz', solid: false, tiles: [49, 49, 49], break: 'fast', shape: 'torch', torch: true, wallTorch: true, wallSide: 'pz', decor: true, transparent: true, emissive: true, variant: true },
+  { id: 45, name: 'wall_torch_nz', solid: false, tiles: [49, 49, 49], break: 'fast', shape: 'torch', torch: true, wallTorch: true, wallSide: 'nz', decor: true, transparent: true, emissive: true, variant: true },
+  { id: 46, name: 'chest', solid: true, tiles: [53, 53, 54, 55], front: 'pz', break: 'default', tool: 'wood', interactive: 'chest', chest: true },
+  { id: 47, name: 'chest_nz', solid: true, tiles: [53, 53, 54, 55], front: 'nz', break: 'default', tool: 'wood', interactive: 'chest', chest: true, variant: true },
+  { id: 48, name: 'chest_px', solid: true, tiles: [53, 53, 54, 55], front: 'px', break: 'default', tool: 'wood', interactive: 'chest', chest: true, variant: true },
+  { id: 49, name: 'chest_nx', solid: true, tiles: [53, 53, 54, 55], front: 'nx', break: 'default', tool: 'wood', interactive: 'chest', chest: true, variant: true },
 ];
+
+// Плотная (без просветов) текстура листвы для внутренних граней кроны
+export const DENSE_FOLIAGE_TILE = { 9: 50, 39: 51, 42: 52 };
 
 // Названия для UI
 export const BLOCK_NAMES = {
@@ -112,7 +133,8 @@ export const BLOCK_NAMES = {
     33: 'Кактус', 34: 'Обсидиан',
     35: 'Деревянный полублок', 36: 'Факел', 37: 'Печка',
     38: 'Деревянный полублок', 39: 'Каменный полублок', 40: 'Каменный полублок',
-    41: 'Настенный факел',
+    41: 'Настенный факел', 42: 'Настенный факел', 43: 'Настенный факел', 44: 'Настенный факел', 45: 'Настенный факел',
+    46: 'Сундук', 47: 'Сундук', 48: 'Сундук', 49: 'Сундук',
   },
   en: {
     1: 'Grass', 2: 'Dirt', 3: 'Stone', 4: 'Cobblestone', 5: 'Sand',
@@ -126,14 +148,15 @@ export const BLOCK_NAMES = {
     33: 'Cactus', 34: 'Obsidian',
     35: 'Wooden slab', 36: 'Torch', 37: 'Furnace',
     38: 'Wooden slab', 39: 'Stone slab', 40: 'Stone slab',
-    41: 'Wall torch',
+    41: 'Wall torch', 42: 'Wall torch', 43: 'Wall torch', 44: 'Wall torch', 45: 'Wall torch',
+    46: 'Chest', 47: 'Chest', 48: 'Chest', 49: 'Chest',
   },
 };
 
 // Базовый набор (открыт сразу) и «набор строителя» (после рекламы за вознаграждение)
 export const STARTER_PALETTE = [
   BLOCK.GRASS, BLOCK.DIRT, BLOCK.STONE, BLOCK.SAND, BLOCK.LOG, BLOCK.PLANKS,
-  BLOCK.PLANK_SLAB, BLOCK.COBBLE_SLAB, BLOCK.TORCH, BLOCK.FURNACE,
+  BLOCK.PLANK_SLAB, BLOCK.COBBLE_SLAB, BLOCK.TORCH, BLOCK.FURNACE, BLOCK.CHEST,
 ];
 export const BUILDER_PALETTE = [
   BLOCK.COBBLE, BLOCK.LEAVES, BLOCK.GLASS, BLOCK.BRICK, BLOCK.GLOW, BLOCK.SNOW, BLOCK.SLATE,
@@ -159,9 +182,23 @@ const WALL_TORCH_BOUNDS = {
 export function isWallTorch(id) { return BLOCKS[id]?.wallTorch === true; }
 export function isTorch(id) { return BLOCKS[id]?.torch === true; }
 
-/** На какое твёрдое основание опирается блок: 'py' — снизу, иначе сторона стены. */
+const SIDE_OFFSETS = { px: [1, 0, 0], nx: [-1, 0, 0], pz: [0, 0, 1], nz: [0, 0, -1] };
+/** Настенный факел, который крепится к стене со стороны side */
+export const WALL_TORCH_BY_SIDE = { px: 42, nx: 43, pz: 44, nz: 45 };
+/** Вариант блока-варианта (настенный факел с явной стороной, повёрнутый сундук) */
+export function isVariantBlock(id) { return BLOCKS[id]?.variant === true; }
+export function isChest(id) { return BLOCKS[id]?.chest === true; }
+/** Сундук, повёрнутый лицом в сторону side */
+export const CHEST_BY_FRONT = { pz: 46, nz: 47, px: 48, nx: 49 };
+
+/** На какое твёрдое основание опирается блок: 'ny' — снизу, иначе сторона стены. */
 export function torchSupport(id, world, x, y, z) {
   if (!isWallTorch(id)) return isSolid(world.getBlock(x, y - 1, z)) ? 'ny' : null;
+  const fixed = BLOCKS[id].wallSide;
+  if (fixed) {
+    const [dx, dy, dz] = SIDE_OFFSETS[fixed];
+    return isSolid(world.getBlock(x + dx, y + dy, z + dz)) ? fixed : null;
+  }
   for (const [side, dx, dy, dz] of [['px', 1, 0, 0], ['nx', -1, 0, 0], ['pz', 0, 0, 1], ['nz', 0, 0, -1]]) {
     if (isSolid(world.getBlock(x + dx, y + dy, z + dz))) return side;
   }
@@ -169,8 +206,10 @@ export function torchSupport(id, world, x, y, z) {
 }
 
 /** Сторона стены, к которой прикреплён настенный факел (или null) */
-export function wallTorchSide(world, x, y, z) {
-  const side = torchSupport(BLOCKS.WALL_TORCH, world, x, y, z);
+export function wallTorchSide(world, x, y, z, id = BLOCK.WALL_TORCH) {
+  const fixed = BLOCKS[id]?.wallSide;
+  if (fixed) return fixed;
+  const side = torchSupport(BLOCK.WALL_TORCH, world, x, y, z);
   return side === 'ny' ? null : side;
 }
 

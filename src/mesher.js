@@ -1,5 +1,5 @@
 // Меширование вокселей: только видимые грани + ambient occlusion на вершинах
-import { BLOCK, BLOCKS, isOpaque, isLiquid, isDecor, isSlab } from './blocks.js';
+import { BLOCK, BLOCKS, DENSE_FOLIAGE_TILE, isOpaque, isLiquid, isDecor, isSlab, isFoliage } from './blocks.js';
 import { tileUV } from './textures.js';
 
 // Яркость граней (классический «мультипликационный» свет)
@@ -60,12 +60,14 @@ class MeshBuilder {
     this.pos = [];
     this.uv = [];
     this.col = [];
+    this.torch = [];    // свет факелов — отдельный канал (см. шейдер terrainMat в main.js)
     this.idx = [];
   }
-  vertex(p, u, v, shade) {
+  vertex(p, u, v, shade, torch = 0) {
     this.pos.push(p[0], p[1], p[2]);
     this.uv.push(u, v);
     this.col.push(shade, shade, shade);
+    this.torch.push(torch);
     return this.pos.length / 3 - 1;
   }
   isEmpty() { return this.idx.length === 0; }
@@ -74,123 +76,155 @@ class MeshBuilder {
     g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
     g.setAttribute('uv', new THREE.Float32BufferAttribute(this.uv, 2));
     g.setAttribute('color', new THREE.Float32BufferAttribute(this.col, 3));
+    g.setAttribute('torchLight', new THREE.Float32BufferAttribute(this.torch, 1));
     g.setIndex(this.idx);
     g.computeBoundingSphere();
     return g;
   }
 }
 
-// Полный уровень небесного света. Свет гаснет на 1 уровень за блок,
-// поэтому от входа в пещеру темнота наступает плавно, а через 15 блоков
-// без источников остаётся полная темнота.
-export const SKY_LIGHT_LEVELS = 15;
+// Полный уровень небесного света. Свет гаснет на 1 уровень за блок, поэтому
+// от входа в пещеру темнота наступает плавно, а примерно через 20 блоков без
+// источников остаётся полная темнота.
+export const SKY_LIGHT_LEVELS = 20;
+// Запас вокруг чанка при расчёте света: целый соседний чанк. Свет из входа
+// в соседнем чанке доходит и сюда, поэтому на стыках чанков нет резких «ступенек».
+const LIGHT_MARGIN = 16;
+
+// Таблица непрозрачности по id — быстрее, чем isOpaque() на каждую клетку
+const OPAQUE_TABLE = new Uint8Array(256);
+for (let id = 0; id < 256; id++) OPAQUE_TABLE[id] = isOpaque(id) ? 1 : 0;
 
 /**
- * Поле небесного света для чанка с запасом в один блок по сторонам.
+ * Поле небесного света для чанка с запасом LIGHT_MARGIN блоков по сторонам.
  * 1. Колонки, открытые небу, получают полный уровень; под первым непрозрачным
  *    блоком свет обрывается.
- * 2. Свет распространяется по прозрачным блокам (воздух, вода, листва, стекло)
- *    с затуханием за блок: два-три растровых прохода по шести направлениям дают
- *    ту же картину, что честный заливной свет, но без очереди.
- * @returns {{ sample: (px: number, py: number, pz: number) => number }}
+ * 2. Свет растекается по прозрачным блокам (воздух, вода, листва, стекло)
+ *    честной заливкой (BFS) с затуханием 1 уровень за блок — он огибает углы,
+ *    заходит в боковые ходы и не обрывается на границе чанка.
+ * @returns {{ sample: (px: number, py: number, pz: number) => number, level: Function, opaqueAt: Function }}
  */
-export function buildSkylight(world, ox, oz, S, H) {
-  const W = S + 2;                       // область с запасом 1 блок: свет идёт из соседних чанков
+export function buildSkylight(world, ox, oz, S, H, margin = LIGHT_MARGIN) {
+  const M = margin;
+  const W = S + M * 2;
   const total = W * W * H;
-  const grid = new Uint8Array(total);    // уровень света 0..15
+  const grid = new Uint8Array(total);    // уровень света 0..SKY_LIGHT_LEVELS
   const opaque = new Uint8Array(total);  // 1 — блок не пропускает свет
   const index = (ix, iy, iz) => (ix * W + iz) * H + iy;
-  let lowY = H, highY = -1;
+  const x0w = ox - M, z0w = oz - M;
+  const MAX = SKY_LIGHT_LEVELS;
 
-  for (let iz = 0; iz < W; iz++) {
-    for (let ix = 0; ix < W; ix++) {
-      const wx = ox - 1 + ix, wz = oz - 1 + iz;
+  // Быстрый путь: читаем массивы блоков чанков напрямую
+  const CS = world.chunkSize;
+  const fast = typeof world.getChunk === 'function' && world.chunks instanceof Map;
+  for (let ix = 0; ix < W; ix++) {
+    for (let iz = 0; iz < W; iz++) {
+      const wx = x0w + ix, wz = z0w + iz;
+      let blocks = null, lx = 0, lz = 0;
+      if (fast) {
+        const cx = Math.floor(wx / CS), cz = Math.floor(wz / CS);
+        const chunk = world.getChunk(cx, cz);
+        blocks = chunk.blocks;
+        lx = wx - cx * CS; lz = wz - cz * CS;
+      }
       let open = true;
+      const base = (ix * W + iz) * H;
       for (let y = H - 1; y >= 0; y--) {
-        const solid = isOpaque(world.getBlock(wx, y, wz));
-        const i = index(ix, y, iz);
-        if (solid) opaque[i] = 1;
-        if (solid) open = false;
-        if (open) {
-          grid[i] = SKY_LIGHT_LEVELS;
-          if (y < lowY) lowY = y;
-          if (y > highY) highY = y;
+        const id = blocks ? blocks[(y * CS + lz) * CS + lx] : world.getBlock(wx, y, wz);
+        const solid = OPAQUE_TABLE[id];
+        if (solid) { opaque[base + y] = 1; open = false; }
+        else if (open) grid[base + y] = MAX;
+      }
+    }
+  }
+
+  // Источники заливки — освещённые небом клетки на границе с тенью
+  const queue = new Int32Array(total);
+  let head = 0, tail = 0;
+  const WH = W * H;
+  for (let ix = 0; ix < W; ix++) {
+    for (let iz = 0; iz < W; iz++) {
+      const base = (ix * W + iz) * H;
+      for (let y = 0; y < H; y++) {
+        const i = base + y;
+        if (grid[i] !== MAX) continue;
+        const dark = (j) => !opaque[j] && grid[j] < MAX - 1;
+        if ((y > 0 && dark(i - 1))
+          || (ix > 0 && dark(i - WH)) || (ix + 1 < W && dark(i + WH))
+          || (iz > 0 && dark(i - H)) || (iz + 1 < W && dark(i + H))) {
+          queue[tail++] = i;
         }
       }
     }
   }
-  if (highY < 0) {
-    return { sample: () => 0, grid, W, H };
+  while (head < tail) {
+    const i = queue[head++];
+    const v = grid[i] - 1;
+    if (v <= 0) continue;
+    const y = i % H;
+    const col = (i - y) / H;
+    const iz = col % W;
+    const ix = (col - iz) / W;
+    const spread = (j) => {
+      if (opaque[j] || grid[j] >= v) return;
+      grid[j] = v;
+      queue[tail++] = j;
+    };
+    if (y > 0) spread(i - 1);
+    if (y + 1 < H) spread(i + 1);
+    if (ix > 0) spread(i - WH);
+    if (ix + 1 < W) spread(i + WH);
+    if (iz > 0) spread(i - H);
+    if (iz + 1 < W) spread(i + H);
   }
 
-  const y0 = Math.max(0, lowY - SKY_LIGHT_LEVELS);
-  const y1 = Math.min(H - 1, highY);
-
-  // Прямой проход: свет приходит сверху и со сторон -x/-z.
-  const forwardPass = () => {
-    for (let y = y1; y >= y0; y--) {
-      for (let z = 0; z < W; z++) {
-        for (let x = 0; x < W; x++) {
-          const i = index(x, y, z);
-          if (opaque[i]) continue;
-          let v = grid[i];
-          if (x > 0) { const n = grid[i - W * H]; if (n - 1 > v) v = n - 1; }
-          if (z > 0) { const n = grid[i - H]; if (n - 1 > v) v = n - 1; }
-          if (y + 1 < H) { const n = grid[i + 1]; if (n - 1 > v) v = n - 1; }
-          if (v !== grid[i]) grid[i] = v;
-        }
-      }
-    }
+  /** Уровень света в клетке мира (за пределами поля: сверху небо, снизу темно) */
+  const level = (wx, wy, wz) => {
+    if (wy >= H) return MAX;
+    if (wy < 0) return 0;
+    const ix = wx - x0w, iz = wz - z0w;
+    if (ix < 0 || iz < 0 || ix >= W || iz >= W) return 0;
+    return grid[index(ix, wy, iz)];
   };
-  // Обратный проход: свет со сторон +x/+z и снизу вверх (козырьки, навесы).
-  const backwardPass = () => {
-    for (let y = y0; y <= y1; y++) {
-      for (let z = W - 1; z >= 0; z--) {
-        for (let x = W - 1; x >= 0; x--) {
-          const i = index(x, y, z);
-          if (opaque[i]) continue;
-          let v = grid[i];
-          if (x + 1 < W) { const n = grid[i + W * H]; if (n - 1 > v) v = n - 1; }
-          if (z + 1 < W) { const n = grid[i + H]; if (n - 1 > v) v = n - 1; }
-          if (y > 0) { const n = grid[i - 1]; if (n - 1 > v) v = n - 1; }
-          if (v !== grid[i]) grid[i] = v;
-        }
-      }
-    }
+  const opaqueAt = (wx, wy, wz) => {
+    if (wy >= H) return 0;
+    if (wy < 0) return 1;
+    const ix = wx - x0w, iz = wz - z0w;
+    if (ix < 0 || iz < 0 || ix >= W || iz >= W) return 1;
+    return opaque[index(ix, wy, iz)];
   };
-  forwardPass();
-  backwardPass();
-  forwardPass();
-
-  const at = (ix, iy, iz) => grid[index(ix, iy, iz)];
-  const sample = (px, py, pz) => {
-    const iy = Math.floor(py);
-    if (iy < 0) return 0;
-    if (iy >= H) return SKY_LIGHT_LEVELS;
-    // Билинейная интерполяция по горизонтали: мягкие переходы на стыке
-    // освещённой поверхности и пещеры. По вертикали — уровень своей клетки.
-    const gx = px - ox + 1;
-    const gz = pz - oz + 1;
-    const x0 = Math.min(W - 2, Math.max(0, Math.floor(gx - 0.5)));
-    const z0 = Math.min(W - 2, Math.max(0, Math.floor(gz - 0.5)));
-    const tx = Math.min(1, Math.max(0, gx - 0.5 - x0));
-    const tz = Math.min(1, Math.max(0, gz - 0.5 - z0));
-    const c00 = at(x0, iy, z0);
-    const c10 = at(x0 + 1, iy, z0);
-    const c01 = at(x0, iy, z0 + 1);
-    const c11 = at(x0 + 1, iy, z0 + 1);
-    const c0 = c00 + (c10 - c00) * tx;
-    const c1 = c01 + (c11 - c01) * tx;
-    return c0 + (c1 - c0) * tz;
-  };
-  return { sample, grid, W, H };
+  /** Уровень в клетке, содержащей точку */
+  const sample = (px, py, pz) => level(Math.floor(px), Math.floor(py), Math.floor(pz));
+  return { sample, level, opaqueAt, grid, W, H };
 }
 
-/** Яркость по уровню света: 15 → 1, 0 → 0 (в глубине — абсолютная темнота) */
+/**
+ * Яркость по уровню света: MAX → 1, 0 → 0 (в глубине — абсолютная темнота).
+ * Степенная кривая мягче прежней smoothstep: полумрак тянется глубже в пещеру,
+ * а тень у входа не проваливается резко в черноту.
+ */
+const BRIGHTNESS = new Float32Array(SKY_LIGHT_LEVELS * 4 + 1);
+for (let i = 0; i < BRIGHTNESS.length; i++) {
+  const t = i / (BRIGHTNESS.length - 1);
+  BRIGHTNESS[i] = t <= 0 ? 0 : Math.pow(t, 1.35);
+}
 function lightBrightness(level) {
   if (level <= 0) return 0;
   const t = Math.min(1, level / SKY_LIGHT_LEVELS);
-  return t * t * (3 - 2 * t);   // smoothstep: ровная середина, мягкий вход и выход
+  return BRIGHTNESS[Math.round(t * (BRIGHTNESS.length - 1))];
+}
+
+export const TORCH_LIGHT_RADIUS = 8.5;
+/**
+ * Яркость от факела на расстоянии d: 1 у пламени, 0 на краю радиуса.
+ * Та же формула считается в шейдере для факела в руке. Свет факела хранится
+ * в отдельном канале вершин и не умножается на дневной/ночной оттенок неба,
+ * поэтому днём он не пересвечивает, а ночью светит так же ярко.
+ */
+export function torchBrightness(d) {
+  if (d >= TORCH_LIGHT_RADIUS) return 0;
+  const falloff = 1 - d / TORCH_LIGHT_RADIUS;
+  return falloff * falloff;
 }
 
 function createLighting(world, ox, oz, S, H) {
@@ -199,29 +233,67 @@ function createLighting(world, ox, oz, S, H) {
   // Правки мира — быстрый источник факелов; при пересборке чанк уже знает их позиции.
   if (world.edits?.[Symbol.iterator]) {
     for (const [key, id] of world.edits) {
-      if (id !== BLOCK.TORCH && id !== BLOCK.WALL_TORCH) continue;
+      if (!BLOCKS[id]?.torch) continue;
       const [x, y, z] = key.split(',').map(Number);
       if (x < ox - 9 || x > ox + S + 9 || z < oz - 9 || z > oz + S + 9) continue;
       torches.push({ x: x + 0.5, y: y + 0.72, z: z + 0.5 });
     }
   }
 
-  return (p, normal, skyProbe = p) => {
-    let brightness = lightBrightness(skylight.sample(
-      skyProbe[0] + (normal[0] || 0) * 0.02,
-      skyProbe[1] + (normal[1] || 0) * 0.02,
-      skyProbe[2] + (normal[2] || 0) * 0.02,
-    ));
+  /**
+   * Сглаженный небесный свет в вершине: среднее по клеткам перед гранью,
+   * которые касаются вершины (как «плавное освещение» в классических песочницах).
+   * Непрозрачные клетки не участвуют — свет не протекает сквозь стены.
+   */
+  const smoothSky = (p, normal) => {
+    const axis = normal[0] ? 0 : normal[1] ? 1 : normal[2] ? 2 : -1;
+    const ranges = [];
+    for (let a = 0; a < 3; a++) {
+      const c = p[a];
+      const whole = Math.abs(c - Math.round(c)) < 1e-4;
+      if (a === axis) {
+        if (whole) ranges.push([normal[a] > 0 ? Math.round(c) : Math.round(c) - 1]);
+        else ranges.push([Math.floor(c)]);
+      } else if (whole) {
+        ranges.push([Math.round(c) - 1, Math.round(c)]);
+      } else {
+        ranges.push([Math.floor(c)]);
+      }
+    }
+    let sum = 0, n = 0, maxLevel = 0;
+    for (const x of ranges[0]) {
+      for (const y of ranges[1]) {
+        for (const z of ranges[2]) {
+          if (skylight.opaqueAt(x, y, z)) continue;
+          const l = skylight.level(x, y, z);
+          sum += l; n++;
+          if (l > maxLevel) maxLevel = l;
+        }
+      }
+    }
+    if (!n) return 0;
+    // Немного тянем среднее к самому яркому соседу: свет «отражается» и
+    // тень на стенах получается плавной, без тёмных полос в углах
+    return (sum / n) * 0.7 + maxLevel * 0.3;
+  };
+
+  // cell — клетка, из которой брать свет целиком (декор); иначе — сглаживание по вершине.
+  // Возвращает яркость неба; яркость факелов кладётся в light.torch.
+  const light = (p, normal, cell = null) => {
+    const level = cell
+      ? skylight.sample(cell[0], cell[1], cell[2])
+      : smoothSky(p, normal || [0, 1, 0]);
+    let torchLight = 0;
     for (const torch of torches) {
       const d = Math.hypot(p[0] - torch.x, p[1] - torch.y, p[2] - torch.z);
-      if (d >= 8.5) continue;
-      const falloff = 1 - d / 8.5;
-      // Значение выше единицы компенсирует общий ночной tint terrainMat,
-      // так что факел освещает пещеру, не делая ярче поверхность днём.
-      brightness = Math.max(brightness, 3.6 * falloff * falloff);
+      const b = torchBrightness(d);
+      if (b > torchLight) torchLight = b;
     }
-    return brightness;
+    light.torch = torchLight;       // второй канал: свет факелов в этой вершине
+    return lightBrightness(level);
   };
+  light.torch = 0;
+  return light;
 }
 
 /**
@@ -272,11 +344,17 @@ export function meshChunk(THREE, world, cx, cz) {
             // боковые грани воды — только против воздуха/непрозрачного выше? достаточно: не вода и не непрозрачный
           } else {
             if (isOpaque(nb)) continue;
-            // грань между двумя одинаковыми стеклянными/листьями/плитами — не рисуем
-            if (nb === id && (def.transparent || def.foliage || def.slab)) continue;
+            // грань между двумя одинаковыми стеклянными/плитами — не рисуем
+            if (nb === id && (def.transparent || def.slab)) continue;
           }
+          // Листва: грани между соседними блоками кроны рисуем плотной текстурой
+          // без просветов — сквозь середину дерева больше не видно неба
+          const innerFoliage = def.foliage && isFoliage(nb);
 
-          const tileIdx = def.tiles[face.face];
+          let tileIdx = def.tiles[face.face];
+          if (innerFoliage) tileIdx = DENSE_FOLIAGE_TILE[tileIdx] ?? tileIdx;
+          else if (def.front && face.key === def.front && def.tiles[3] != null) tileIdx = def.tiles[3];
+          const innerShade = innerFoliage ? 0.78 : 1;
           const [u0, v0, u1, v1] = tileUV(tileIdx);
           const baseShade = FACE_SHADE[face.key];
           const emissive = !!def.emissive;
@@ -315,14 +393,10 @@ export function meshChunk(THREE, world, cx, cz) {
 
             const u = vert.u === 0 ? u0 : u1;
             const v = vert.v === 0 ? v0 : v1;
-            const probe = [
-              wx + 0.08 + vert.pos[0] * 0.84,
-              y + 0.08 + vert.pos[1] * 0.84,
-              wz + 0.08 + vert.pos[2] * 0.84,
-            ];
-            for (let axis = 0; axis < 3; axis++) if (n[axis]) probe[axis] = p[axis] + n[axis] * 0.02;
-            const shade = emissive ? 1.0 : baseShade * AO_LEVEL[ao] * lightAt(p, n, probe);
-            vi.push(builder.vertex(p, u, v, shade));
+            const lp = yTopOffset && vert.pos[1] === 1 ? [p[0], y + 1, p[2]] : p;
+            const k = baseShade * innerShade * AO_LEVEL[ao];
+            const shade = emissive ? 1.0 : k * lightAt(lp, n);
+            vi.push(builder.vertex(p, u, v, shade, emissive ? 0 : k * lightAt.torch));
           }
 
           // Классический флип триангуляции по AO (борьба с артефактами диагонали);
@@ -376,9 +450,8 @@ function addSlabFaces(builder, world, wx, y, wz, def, lightAt) {
         u = f.pos[i][0] === 0 ? u0 : u1;
         v = f.pos[i][1] === y1 ? v0 : v1;
       }
-      const probe = [p[0] + n[0] * 0.02, p[1] + n[1] * 0.02, p[2] + n[2] * 0.02];
-      const shade = def.emissive ? 1.0 : f.shade * lightAt(p, n, probe);
-      vi.push(builder.vertex(p, u, v, shade));
+      const shade = def.emissive ? 1.0 : f.shade * lightAt(p, n);
+      vi.push(builder.vertex(p, u, v, shade, def.emissive ? 0 : f.shade * lightAt.torch));
     }
     builder.idx.push(vi[0], vi[1], vi[2], vi[0], vi[2], vi[3]);
   }
@@ -445,6 +518,7 @@ function addDecorQuads(builder, world, wx, y, wz, def, lightAt) {
   const baseShade = 0.72 + 0.07 * open;
 
   const y0 = 0.02, y1 = 0.92, m = 0.15;
+  const cell = [wx + 0.5, y + 0.5, wz + 0.5];
   // Две плоскости: (m,m)-(1-m,1-m) и (1-m,m)-(m,1-m)
   const planes = [
     [[m, m], [1 - m, 1 - m]],
@@ -460,8 +534,8 @@ function addDecorQuads(builder, world, wx, y, wz, def, lightAt) {
       [wx + ax, y + y1, wz + az, u0, v1],
     ]) {
       const p = [px, py, pz];
-      const probe = [wx + 0.5, py + 0.02, wz + 0.5];
-      vi.push(builder.vertex(p, u, v, baseShade * lightAt(p, [0, 1, 0], probe)));
+      const sky = lightAt(p, [0, 1, 0], cell);
+      vi.push(builder.vertex(p, u, v, baseShade * sky, baseShade * lightAt.torch));
     }
     // Обе стороны плоскости (обход/против обхода)
     builder.idx.push(vi[0], vi[1], vi[2], vi[0], vi[2], vi[3]);

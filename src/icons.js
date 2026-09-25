@@ -380,6 +380,26 @@ export function pixelSpriteCanvas(name, size = 48) {
   return c;
 }
 
+/**
+ * Пиксели спрайта (16×16) для объёмной модели предмета в руке: та же картинка,
+ * что и в инвентаре, выдавленная в толщину. null — у предмета нет пиксель-арта.
+ * @returns {null | Array<{ x: number, y: number, color: string }>}
+ */
+export function spritePixels(name) {
+  const sp = SPRITES[name];
+  if (!sp) return null;
+  const out = [];
+  for (let y = 0; y < 16; y++) {
+    const row = sp.rows[y] || '';
+    for (let x = 0; x < 16; x++) {
+      const ch = row[x];
+      if (!ch || ch === '.' || !sp.pal[ch]) continue;
+      out.push({ x, y, color: sp.pal[ch] });
+    }
+  }
+  return out;
+}
+
 /** Иконка блока по id: кубик или плоский спрайт */
 export function blockIconCanvas(id, size = 48) {
   if (FLAT_BLOCKS.has(id)) return blockSpriteCanvas(id, size);

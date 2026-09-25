@@ -159,7 +159,12 @@ const BLOCK_DETAILS = {
   [BLOCK.TORCH]: { ru: 'Светильник для освещения тёмных мест.', en: 'A small light source for dark places.' },
   [BLOCK.FURNACE]: { ru: 'Печь для переплавки руды и песка. Положите сырьё и топливо, затем нажмите ПКМ.', en: 'Smelts ore and sand. Add an ingredient and fuel, then right-click.' },
   [BLOCK.WALL_TORCH]: { ru: 'Тот же светильник, но висит на стене — поставьте факел на боковой блок.', en: 'The same light source, mounted on a wall: place a torch against a side block.' },
+  [BLOCK.CHEST]: { ru: 'Хранилище на 27 ячеек. ПКМ — открыть, Shift+клик — быстро переложить предмет.', en: 'Stores 27 stacks. Right-click to open, Shift+click to move items quickly.' },
 };
+for (const id of [BLOCK.WALL_TORCH_PX, BLOCK.WALL_TORCH_NX, BLOCK.WALL_TORCH_PZ, BLOCK.WALL_TORCH_NZ]) {
+  BLOCK_DETAILS[id] = BLOCK_DETAILS[BLOCK.WALL_TORCH];
+}
+for (const id of [BLOCK.CHEST_NZ, BLOCK.CHEST_PX, BLOCK.CHEST_NX]) BLOCK_DETAILS[id] = BLOCK_DETAILS[BLOCK.CHEST];
 
 const ITEM_DETAILS = {
   [ITEM.STICK]: { ru: 'Материал для рукоятей инструментов, лука и стрел.', en: 'A crafting material for tool handles, bows and arrows.' },
@@ -271,7 +276,8 @@ export function blockDropItem(id, rng = Math.random) {
   if (id === BLOCK.IRON_ORE) return ITEM.RAW_IRON;
   if (id === BLOCK.GOLD_ORE) return ITEM.RAW_GOLD;
   if (id === BLOCK.DIAMOND_ORE) return ITEM.DIAMOND;
-  if (id === BLOCK.TORCH || id === BLOCK.WALL_TORCH) return blockItem(BLOCK.TORCH);
+  if (BLOCKS[id]?.torch) return blockItem(BLOCK.TORCH);
+  if (BLOCKS[id]?.chest) return blockItem(BLOCK.CHEST);
   if (id === BLOCK.SLAB) return blockItem(BLOCK.SLAB);
   if (id === BLOCK.FURNACE) return blockItem(BLOCK.FURNACE);
   // с высокой травы иногда падает пшеница для хлеба
@@ -366,11 +372,11 @@ export class ItemDrops {
       const id = blockIdOf(kind);
       const def = BLOCKS[id];
       if (def && def.tiles && !def.shape && this.tileMaterial) {
-        const [top, bottom, side] = def.tiles;
+        const [top, bottom, side, front = side] = def.tiles;
         const mats = [
           this.tileMaterial(side), this.tileMaterial(side),
           this.tileMaterial(top), this.tileMaterial(bottom),
-          this.tileMaterial(side), this.tileMaterial(side),
+          this.tileMaterial(front), this.tileMaterial(side),
         ];
         const geo = SLAB_BLOCKS.has(id) ? this.slabGeo : this.geo;
         return new THREE.Mesh(geo, mats);

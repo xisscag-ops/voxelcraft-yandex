@@ -45,7 +45,7 @@ export function raycastVoxel(world, ox, oy, oz, dx, dy, dz, maxDist) {
     const id = world.getBlock(x, y, z);
     if (id !== BLOCK.AIR && id !== BLOCK.WATER) {
       // Настенный факел занимает узкую часть клетки у своей стены
-      const side = isWallTorch(id) ? (wallTorchSide(world, x, y, z) || 'px') : 'px';
+      const side = isWallTorch(id) ? (wallTorchSide(world, x, y, z, id) || 'px') : 'px';
       const hit = rayBox(blockBounds(id, side), [x, y, z], origin, dir);
       if (hit) {
         const at = Math.max(0, hit.enter);
