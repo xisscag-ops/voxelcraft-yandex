@@ -3,7 +3,7 @@ import { makeRng } from './noise.js';
 
 export const TILE = 16;
 export const ATLAS_COLS = 8;
-export const ATLAS_ROWS = 8;   // 8x8 = 64 тайла (запас под новые блоки)
+export const ATLAS_ROWS = 4;
 
 // Индексы тайлов
 export const T = {
@@ -14,14 +14,8 @@ export const T = {
   CRACK0: 17, CRACK1: 18, CRACK2: 19, CRACK3: 20, CRACK4: 21,
   // Декоративная растительность
   GRASS_TUFT: 22, FLOWER_RED: 23, FLOWER_YELLOW: 24, FERN: 25, CLOVER: 26,
-  // Руды и новые камни
-  COAL_ORE: 27, IRON_ORE: 28, GOLD_ORE: 29, DIAMOND_ORE: 30, GRAVEL: 31,
-  SANDSTONE: 32, ICE: 33, MOSSY: 34,
-  // Деревья разных пород
-  BIRCH_SIDE: 35, BIRCH_TOP: 36, BIRCH_LEAVES: 37,
-  SPRUCE_SIDE: 38, SPRUCE_TOP: 39, SPRUCE_LEAVES: 40,
-  // Прочее
-  CACTUS_SIDE: 41, CACTUS_TOP: 42, TABLE_TOP: 43, TABLE_SIDE: 44, OBSIDIAN: 45,
+  // Верстак (крафт 3x3)
+  TABLE_TOP: 27, TABLE_SIDE: 28,
 };
 
 export const CRACK_TILES = [17, 18, 19, 20, 21];
@@ -41,37 +35,6 @@ function noisyFill(data, rng, base, vary, alpha = 255) {
         Math.max(0, Math.min(255, base[0] + v)),
         Math.max(0, Math.min(255, base[1] + v)),
         Math.max(0, Math.min(255, base[2] + v)), alpha);
-    }
-  }
-}
-
-// Вкрапления руды в каменной основе
-function oreBlobs(data, rng, color, n = 7) {
-  for (let i = 0; i < n; i++) {
-    const cx = 2 + ((rng() * 12) | 0);
-    const cy = 2 + ((rng() * 12) | 0);
-    const w = 2 + ((rng() * 2) | 0);
-    const h = 2 + ((rng() * 2) | 0);
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const v = (rng() - 0.5) * 26;
-        px(data, cx + x, cy + y, color[0] + v, color[1] + v, color[2] + v);
-      }
-    }
-  }
-}
-
-// Листва с просветами
-function leavesFill(data, rng, base, holes = 0.14) {
-  noisyFill(data, rng, base, 22);
-  for (let i = 0; i < 26; i++) {
-    const x = (rng() * TILE) | 0, y = (rng() * TILE) | 0;
-    const v = (rng() - 0.5) * 34;
-    px(data, x, y, base[0] + v * 0.6, base[1] + v * 0.6, base[2] + v * 0.4);
-  }
-  for (let y = 0; y < TILE; y++) {
-    for (let x = 0; x < TILE; x++) {
-      if (rng() < holes) px(data, x, y, 0, 0, 0, 0);
     }
   }
 }
@@ -335,161 +298,45 @@ const painters = {
       }
     }
   },
-
-  // ---- Руды и камни ----
-  [T.COAL_ORE](data, rng) { painters[T.STONE](data, rng); oreBlobs(data, rng, [38, 36, 40], 8); },
-  [T.IRON_ORE](data, rng) { painters[T.STONE](data, rng); oreBlobs(data, rng, [196, 150, 118], 7); },
-  [T.GOLD_ORE](data, rng) { painters[T.STONE](data, rng); oreBlobs(data, rng, [232, 196, 76], 6); },
-  [T.DIAMOND_ORE](data, rng) { painters[T.STONE](data, rng); oreBlobs(data, rng, [110, 226, 226], 6); },
-  [T.GRAVEL](data, rng) {
-    noisyFill(data, rng, [124, 118, 112], 18);
-    for (let i = 0; i < 22; i++) {
-      const x = (rng() * TILE) | 0, y = (rng() * TILE) | 0;
-      const v = (rng() - 0.5) * 30;
-      px(data, x, y, 100 + v, 94 + v, 88 + v);
-      if (rng() < 0.5) px(data, (x + 1) % TILE, y, 146 + v, 140 + v, 134 + v);
-    }
-  },
-  [T.SANDSTONE](data, rng) {
-    noisyFill(data, rng, [220, 206, 152], 10);
-    for (const by of [3, 8, 13]) {
-      for (let x = 0; x < TILE; x++) {
-        const v = (rng() - 0.5) * 14;
-        px(data, x, by, 198 + v, 182 + v, 128 + v);
-        px(data, x, by + 1, 206 + v, 190 + v, 136 + v);
-      }
-    }
-  },
-  [T.ICE](data, rng) {
-    noisyFill(data, rng, [172, 208, 236], 10);
-    for (let i = 0; i < 10; i++) {
-      let x = (rng() * TILE) | 0, y = (rng() * TILE) | 0;
-      for (let k = 0; k < 4 + rng() * 5; k++) {
-        px(data, x, y, 210, 234, 250);
-        x = (x + (rng() < 0.5 ? 1 : 0)) % TILE;
-        y = (y - 1 + TILE) % TILE;
-      }
-    }
-  },
-  [T.MOSSY](data, rng) {
-    painters[T.COBBLE](data, rng);
-    for (let i = 0; i < 60; i++) {
-      const x = (rng() * TILE) | 0, y = (rng() * TILE) | 0;
-      if (rng() < 0.75) {
-        const v = (rng() - 0.5) * 26;
-        px(data, x, y, 74 + v, 122 + v, 58 + v);
-      }
-    }
-  },
-  // ---- Деревья разных пород ----
-  [T.BIRCH_SIDE](data, rng) {
-    noisyFill(data, rng, [219, 216, 205], 8);
-    for (let i = 0; i < 12; i++) {
-      const y = (rng() * TILE) | 0;
-      const x = (rng() * 10) | 0;
-      const w = 1 + ((rng() * 3) | 0);
-      for (let k = 0; k < w; k++) px(data, x + k, y, 66, 60, 54);
-    }
-  },
-  [T.BIRCH_TOP](data, rng) {
-    noisyFill(data, rng, [206, 198, 178], 8);
-    for (let y = 0; y < TILE; y++) {
-      for (let x = 0; x < TILE; x++) {
-        const d = Math.hypot(x - 7.5, y - 7.5);
-        if (d > 6.5) px(data, x, y, 226, 222, 210);
-        else if (((d * 1.6) | 0) % 2 === 0) {
-          const v = (rng() - 0.5) * 10;
-          px(data, x, y, 176 + v, 166 + v, 142 + v);
-        }
-      }
-    }
-  },
-  [T.BIRCH_LEAVES](data, rng) { leavesFill(data, rng, [124, 178, 84], 0.15); },
-  [T.SPRUCE_SIDE](data, rng) {
-    noisyFill(data, rng, [72, 52, 34], 10);
-    for (let x = 0; x < TILE; x++) {
-      if (rng() < 0.4) {
-        const v = (rng() - 0.5) * 14;
-        for (let y = 0; y < TILE; y++) px(data, x, y, 52 + v, 36 + v, 22 + v);
-      }
-    }
-  },
-  [T.SPRUCE_TOP](data, rng) {
-    noisyFill(data, rng, [128, 96, 62], 8);
-    for (let y = 0; y < TILE; y++) {
-      for (let x = 0; x < TILE; x++) {
-        const d = Math.hypot(x - 7.5, y - 7.5);
-        if (((d * 1.5) | 0) % 2 === 0) {
-          const v = (rng() - 0.5) * 10;
-          px(data, x, y, 96 + v, 70 + v, 44 + v);
-        }
-      }
-    }
-  },
-  [T.SPRUCE_LEAVES](data, rng) { leavesFill(data, rng, [58, 108, 72], 0.16); },
-  // ---- Кактус, верстак, обсидиан ----
-  [T.CACTUS_SIDE](data, rng) {
-    noisyFill(data, rng, [78, 142, 68], 10);
-    for (const x of [1, 5, 10, 14]) {
-      for (let y = 0; y < TILE; y++) {
-        const v = (rng() - 0.5) * 12;
-        px(data, x, y, 54 + v, 112 + v, 48 + v);
-      }
-    }
-    for (let i = 0; i < 16; i++) px(data, (rng() * TILE) | 0, (rng() * TILE) | 0, 226, 232, 210);
-  },
-  [T.CACTUS_TOP](data, rng) {
-    noisyFill(data, rng, [86, 150, 74], 10);
-    for (let y = 0; y < TILE; y++) {
-      for (let x = 0; x < TILE; x++) {
-        const d = Math.hypot(x - 7.5, y - 7.5);
-        if (d > 5.5) px(data, x, y, 58, 116, 50);
-        if (d < 3) px(data, x, y, 112, 178, 92);
-      }
-    }
-  },
+  // Верстак: крышка с сеткой и инструментами
   [T.TABLE_TOP](data, rng) {
     painters[T.PLANKS](data, rng);
+    // Тёмная рамка и внутренняя сетка (как рабочая поверхность)
     for (let i = 0; i < TILE; i++) {
-      px(data, i, 0, 92, 66, 38);
-      px(data, i, 15, 92, 66, 38);
-      px(data, 0, i, 92, 66, 38);
-      px(data, 15, i, 92, 66, 38);
+      px(data, i, 0, 74, 52, 30);
+      px(data, i, TILE - 1, 74, 52, 30);
+      px(data, 0, i, 74, 52, 30);
+      px(data, TILE - 1, i, 74, 52, 30);
     }
-    for (const [x, y] of [[5, 5], [10, 5], [5, 10], [10, 10]]) {
-      px(data, x, y, 74, 52, 30);
-      px(data, x + 1, y + 1, 132, 100, 58);
+    for (let i = 1; i < TILE - 1; i++) {
+      if (i % 5 === 0) {
+        for (let j = 1; j < TILE - 1; j++) px(data, i, j, 118, 88, 52);
+      }
     }
+    // Инструменты на крышке: пила (светлая) и молоток (тёмный)
+    for (let x = 3; x <= 9; x++) px(data, x, 3, 190, 190, 198);
+    for (let y = 3; y <= 6; y++) px(data, 9, y, 190, 190, 198);
+    for (let x = 10; x <= 13; x++) px(data, x, 12, 96, 96, 104);
+    for (let y = 9; y <= 12; y++) px(data, 12, y, 150, 118, 70);
   },
   [T.TABLE_SIDE](data, rng) {
     painters[T.PLANKS](data, rng);
+    // Верхняя кромка и вертикальные стойки
     for (let x = 0; x < TILE; x++) {
-      const v = (rng() - 0.5) * 10;
-      px(data, x, 0, 96 + v, 70 + v, 42 + v);
-      px(data, x, 1, 152 + v, 118 + v, 72 + v);
+      px(data, x, 0, 150, 116, 68);
+      px(data, x, 1, 108, 80, 46);
+      px(data, x, 2, 88, 64, 38);
     }
-    for (let y = 4; y < TILE - 2; y++) {
-      px(data, 3, y, 88, 62, 36);
-      px(data, 12, y, 88, 62, 36);
+    for (let y = 3; y < TILE; y++) {
+      px(data, 2, y, 96, 70, 42);
+      px(data, 13, y, 96, 70, 42);
     }
-    for (let x = 5; x < 11; x++) px(data, x, 8, 74, 52, 30);
-  },
-  [T.OBSIDIAN](data, rng) {
-    noisyFill(data, rng, [26, 22, 38], 8);
-    for (let i = 0; i < 14; i++) {
-      const x = (rng() * TILE) | 0, y = (rng() * TILE) | 0;
-      const v = (rng() - 0.5) * 20;
-      px(data, x, y, 62 + v, 44 + v, 108 + v);
-    }
-    for (let i = 0; i < 6; i++) px(data, (rng() * TILE) | 0, (rng() * TILE) | 0, 128, 112, 190);
+    // Полка с инструментом
+    for (let x = 3; x < 13; x++) px(data, x, 8, 84, 60, 36);
+    for (let y = 4; y <= 7; y++) px(data, 6, y, 176, 176, 184);
+    for (let y = 5; y <= 7; y++) px(data, 9, y, 124, 92, 52);
   },
 };
-
-// Трещины при ломании блока (5 стадий) — раньше в атлас не рисовались,
-// из-за чего анимация трещин была не видна
-for (let stage = 0; stage < 5; stage++) {
-  painters[T.CRACK0 + stage] = (data, rng) => drawCracks(data, rng, stage);
-}
 
 // Растущие трещины: чем выше стадия, тем гуще сетка
 function drawCracks(data, rng, stage) {
@@ -573,10 +420,11 @@ export function tileIcon(idx, size = 48) {
 }
 
 let _atlasCanvas = null;
-function buildAtlasOnce() {
+export function atlasCanvas() {
   if (!_atlasCanvas) _atlasCanvas = buildAtlas();
   return _atlasCanvas;
 }
+const buildAtlasOnce = atlasCanvas;
 
 // Отдельный канвас одного тайла (для оверлея трещин)
 export function tileCanvas(idx) {

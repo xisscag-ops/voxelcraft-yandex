@@ -2,19 +2,19 @@
 export class Input {
   constructor() {
     this.keys = new Set();
+    this.pressed = new Set();   // одиночные нажатия (съедаются в игровом кадре)
     this.mouse = { dx: 0, dy: 0, left: false, right: false };
     this.move = { forward: 0, right: 0 };       // -1..1
     this.jump = false;
     this.sneak = false;
     this.sprint = false;
     this.locked = false;
+    this.enabled = false;       // ввод обрабатывается только в состоянии игры
     this.isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
     this.handlers = {
       onToggleFly: null, onDigit: null, onScroll: null, onPause: null,
-      onActionBreak: null, onActionPlace: null, onFullscreenChange: null,
+      onActionBreak: null, onActionPlace: null, onToggleInventory: null,
     };
-    this.allowFullscreen = true;   // настройка «Полный экран» (settings.fullscreen)
-    this.keysLocked = false;
     this._flyTapT = 0;
     this._swallowLook = 0;
     this._joystick = { active: false, id: -1, baseX: 0, baseY: 0, x: 0, y: 0 };
@@ -25,7 +25,10 @@ export class Input {
 
   requestLock(el) {
     if (this.isTouch) return;
-    el.requestPointerLock?.();
+    try {
+      const p = el.requestPointerLock?.();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch (e) { /* браузер может отклонить запрос — игрок просто кликнет ещё раз */ }
   }
 
   // Защита от браузерных сочетаний клавиш, зума, прокрутки, выделения и жестов,
@@ -67,44 +70,20 @@ export class Input {
     window.addEventListener('resize', pin);
   }
 
-  // Полноэкранный режим + захват клавиш.
-  // Важно: Esc тоже попадает в захват (Keyboard Lock API, Chrome/Edge) — тогда браузер
-  // не выходит из полного экрана по нажатию, а клавиша приходит в игру как пауза.
-  // Выйти из полного экрана в этом режиме можно удержанием Esc (подсказка браузера).
+  // Полноэкранный режим + блокировка системных клавиш (Esc оставляем для паузы)
   async enterFullscreen() {
-    if (this.allowFullscreen === false) return;
     const el = document.documentElement;
     try {
       if (!document.fullscreenElement && el.requestFullscreen) {
         await el.requestFullscreen({ navigationUI: 'hide' });
       }
     } catch (e) { /* iframe без allowfullscreen — не критично */ }
-    await this.lockKeys();
-  }
-
-  /** Захват клавиш доступен только в полном экране и только в Chromium-браузерах */
-  async lockKeys() {
-    if (!document.fullscreenElement || !navigator.keyboard?.lock) return false;
     try {
-      await navigator.keyboard.lock([
-        'Escape', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyN', 'KeyT', 'KeyQ', 'KeyF', 'KeyE',
-        'Tab', 'AltLeft', 'MetaLeft', 'MetaRight', 'ControlLeft', 'ControlRight', 'F3',
-      ]);
-      this.keysLocked = true;
-    } catch (e) {
-      this.keysLocked = false;   // Safari/Firefox/iframe без разрешения — Esc останется за браузером
-    }
-    return this.keysLocked;
-  }
-
-  unlockKeys() {
-    try { if (this.keysLocked) navigator.keyboard?.unlock?.(); } catch (e) { /* noop */ }
-    this.keysLocked = false;
-  }
-
-  exitFullscreen() {
-    this.unlockKeys();
-    try { if (document.fullscreenElement) document.exitFullscreen(); } catch (e) { /* noop */ }
+      if (document.fullscreenElement && navigator.keyboard?.lock) {
+        await navigator.keyboard.lock(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyN', 'KeyT', 'KeyQ',
+          'Tab', 'AltLeft', 'MetaLeft', 'MetaRight', 'ControlLeft', 'ControlRight']);
+      }
+    } catch (e) { /* не поддерживается */ }
   }
 
   _bind() {
@@ -112,8 +91,10 @@ export class Input {
     window.addEventListener('keydown', (e) => {
       if (e.repeat) return;
       this.keys.add(e.code);
+      this.pressed.add(e.code);
       if (e.code === 'Escape') this.handlers.onPause?.();
-      if (e.code === 'KeyF') this.handlers.onToggleFly?.();
+      if (e.code === 'KeyE') this.handlers.onToggleInventory?.();
+      if (e.code === 'KeyI') this.handlers.onToggleInventory?.();
       if (e.code === 'F1') e.preventDefault();
       if (e.code.startsWith('Digit')) {
         const n = Number(e.code.slice(5));
@@ -129,14 +110,6 @@ export class Input {
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
     window.addEventListener('blur', () => { this.keys.clear(); this.mouse.left = this.mouse.right = false; });
-
-    // Полный экран: держим клавиши (в том числе Esc) захваченными, пока мы в нём
-    document.addEventListener('fullscreenchange', () => {
-      const on = !!document.fullscreenElement;
-      if (on) this.lockKeys();
-      else this.unlockKeys();
-      this.handlers.onFullscreenChange?.(on);
-    });
 
     document.addEventListener('pointerlockchange', () => {
       const was = this.locked;
@@ -179,6 +152,7 @@ export class Input {
     const joyRect = () => joyEl.getBoundingClientRect();
 
     const onTouchStart = (e) => {
+      if (!this.enabled) return;   // окно инвентаря/меню: жесты не перехватываем
       for (const t of e.changedTouches) {
         const jr = joyRect();
         const inJoy = t.clientX >= jr.left - 20 && t.clientX <= jr.right + 20 &&
@@ -210,6 +184,7 @@ export class Input {
     };
 
     const onTouchMove = (e) => {
+      if (!this.enabled) return;
       for (const t of e.changedTouches) {
         if (t.identifier === this._joystick.id) {
           const dx = t.clientX - this._joystick.baseX;
@@ -234,6 +209,7 @@ export class Input {
     };
 
     const onTouchEnd = (e) => {
+      if (!this.enabled) return;
       for (const t of e.changedTouches) {
         if (t.identifier === this._joystick.id) {
           this._joystick.active = false;
@@ -310,6 +286,15 @@ export class Input {
     this.breakHeld = this.mouse.left || this._buttons.has('break');
     this.placeHeld = this.mouse.right;
   }
+
+  /** Нажатие, которое нужно обработать ровно один раз */
+  consumePress(code) {
+    if (!this.pressed.has(code)) return false;
+    this.pressed.delete(code);
+    return true;
+  }
+
+  clearPresses() { this.pressed.clear(); }
 
   consumeLook() {
     const dx = this.mouse.dx, dy = this.mouse.dy;

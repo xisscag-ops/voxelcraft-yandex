@@ -27,15 +27,18 @@ export const STRINGS = {
     ready: 'Мир готов!',
     howto_text: `
       <b>ПК:</b> WASD — движение, мышь — обзор, ЛКМ — сломать (удерживать), ПКМ — поставить,
-      колесо/1-9 — выбор предмета, пробел — прыжок, Ctrl — бег, Shift — вниз в полёте,
-      двойной пробел или F — режим полёта, E — съесть яблоко, Esc — пауза.<br><br>
-      <b>Лук:</b> выберите лук в панели (слот 7), удерживайте ПКМ для натяжения и отпустите —
-      стрела полетит. Выпущенные стрелы можно подобрать с земли, а попадание в моба иногда
-      возвращает стрелу. Стрелы иногда выпадают из листвы.<br><br>
-      <b>Трава и цветы:</b> ломаются мгновенно, одним нажатием — с треском, без анимации трещин.<br><br>
+      колесо/1-9 — выбор слота, пробел — прыжок, Ctrl — бег, Shift — вниз в полёте,
+      <b>E</b> — инвентарь и крафт, <b>F</b> — съесть яблоко, Esc — пауза.<br><br>
+      <b>Режимы:</b> в «Выживании» сломанные блоки попадают в инвентарь, блоки тратятся при
+      установке, инструменты ускоряют работу, а мобы наносят урон. В «Креативе» все блоки
+      бесконечны, блоки ломаются почти мгновенно, полёт — двойным пробелом, а игрок бессмертен.<br><br>
+      <b>Крафт:</b> откройте инвентарь (E). Слева — список рецептов (доступные подсвечены зелёным,
+      клик — быстрый крафт), справа вверху — сетка 2×2: кладите предметы ЛКМ/ПКМ и забирайте результат.
+      Рецепты «3×3» (кирки, топоры, мечи) требуют <b>верстак</b>: 4 доски в сетке 2×2 → верстак,
+      поставьте его и нажмите ПКМ.<br><br>
       <b>Телефон:</b> слева — джойстик, справа — обзор; короткий тап — сломать блок.
-      Кнопки: прыжок, поставить/выстрел, полёт, вниз/вверх.<br><br>
-      Ставьте и ломайте блоки, стройте что угодно. Прогресс сохраняется автоматически.`,
+      Кнопки: прыжок, поставить, копать, слот «🎒» — инвентарь.<br><br>
+      Прогресс (мир, инвентарь, яблоки) сохраняется автоматически.`,
     howto_title: 'Как играть',
     pause_hint: 'Esc — пауза и освобождение мыши',
     unlocked_blocks: 'Открыты новые блоки в панели!',
@@ -53,7 +56,7 @@ export const STRINGS = {
     fly_off: 'Режим полёта: выключен',
     hint_break: 'Удерживайте ЛКМ, чтобы сломать блок',
     hint_place: 'ПКМ — поставить блок',
-    hint_fly: 'Дважды пробел — полёт',
+    hint_fly: 'Дважды пробел — полёт (креатив)',
     to_spawn: 'К спавну',
     to_spawn_ok: 'Вы у дома!',
     rain_start: 'Пошёл дождь…',
@@ -61,16 +64,43 @@ export const STRINGS = {
     blocks_built: 'Построено блоков',
     died: 'Вы погибли!',
     respawned: 'Возрождение у спавна',
-    apple_get: 'Яблоко подобрано (E — съесть)',
+    apple_get: 'Яблоко подобрано (F — съесть)',
     eat_ok: 'Хрусть! +2 сердца',
     eat_none: 'Яблок нет',
     gloom_warn: 'Ночью опасно: Хмари рядом!',
-    fullscreen: 'Полный экран',
-    no_arrows: 'Стрелы закончились! Подберите выпущенные или наломайте листвы',
-    arrow_pickup: 'Стрела подобрана',
-    hint_bow: 'Лук: удерживайте ПКМ для натяжения, отпустите — выстрел',
-    esc_fullscreen: 'Esc — пауза. Чтобы выйти из полного экрана, удерживайте Esc',
-    fullscreen_off: 'Полный экран браузера выключен',
+    mode_title: 'Выберите режим',
+    mode_sub: 'Режим сохранится вместе с миром',
+    mode_survival: 'Выживание',
+    mode_survival_sub: 'Ломайте блоки, собирайте ресурсы и крафтите — мобы опасны',
+    mode_creative: 'Креатив',
+    mode_creative_sub: 'Все блоки бесконечны, полёт двойным пробелом, бессмертие',
+    mode_now: 'Режим',
+    inv_title: 'Инвентарь',
+    inv_hint: 'ЛКМ — взять/положить стопку, ПКМ — по одному или половину',
+    craft_grid: 'Крафт 2×2',
+    craft_hint: 'Собирайте предметы в сетке, результат — справа. Клик по рецепту слева — быстрый крафт',
+    table_title: 'Верстак 3×3',
+    table_hint: 'ПКМ по верстаку — крафт 3×3',
+    need_table: 'Нужен верстак',
+    need_table_short: '3×3',
+    craft_take: 'Заберите результат',
+    craft_nothing: 'Такой рецепт неизвестен',
+    table_open: 'Верстак открыт',
+    craft_title: 'Крафт',
+    craft_ok: 'Скрафчено',
+    craft_missing: 'Не хватает материалов',
+    craft_no_room: 'Нет места в инвентаре',
+    catalog_title: 'Каталог',
+    catalog_hint: 'Клик — положить в выбранный слот хотбара',
+    catalog_locked: 'Набор строителя закрыт — посмотрите рекламу',
+    inv_full: 'Инвентарь полон',
+    bag_hint: 'E — инвентарь',
+    eat_hint: 'F  🍎',
+    fly_creative_only: 'Полёт доступен только в креативе',
+    block_drop: 'Подобрано',
+    hint_inventory: 'E — инвентарь и крафт',
+    hint_eat: 'Яблоко съедается клавишей F',
+    hint_table: '4 доски в сетке крафта → верстак: на нём открывается крафт 3×3',
   },
   en: {
     title: 'VoxelCraft',
@@ -99,15 +129,18 @@ export const STRINGS = {
     ready: 'World ready!',
     howto_text: `
       <b>Desktop:</b> WASD — move, mouse — look, LMB — break (hold), RMB — place,
-      wheel/1-9 — pick item, Space — jump, Ctrl — sprint, Shift — down while flying,
-      double-tap Space or F — fly mode, E — eat an apple, Esc — pause.<br><br>
-      <b>Bow:</b> select the bow in the hotbar (slot 7), hold RMB to draw and release to shoot.
-      Arrows you shot can be picked up from the ground, and hitting a mob may return an arrow.
-      Arrows sometimes drop from leaves.<br><br>
-      <b>Grass and flowers:</b> break instantly with a single click and a rustle — no cracks.<br><br>
+      wheel/1-9 — pick slot, Space — jump, Ctrl — sprint, Shift — down while flying,
+      <b>E</b> — inventory & crafting, <b>F</b> — eat an apple, Esc — pause.<br><br>
+      <b>Modes:</b> in <b>Survival</b> broken blocks go to your inventory, placing consumes them,
+      tools make work faster and mobs can hurt you. In <b>Creative</b> every block is infinite,
+      blocks break almost instantly, double-tap Space flies and you cannot die.<br><br>
+      <b>Crafting:</b> open the inventory (E). The recipe list is on the left (available ones are
+      green, click for instant crafting), the 2×2 grid is above: place items with LMB/RMB and take the
+      result. Recipes marked “3×3” (pickaxes, axes, swords) need a <b>crafting table</b>:
+      4 planks in the 2×2 grid → table, place it and press RMB.<br><br>
       <b>Mobile:</b> joystick on the left, look on the right; quick tap — break a block.
-      Buttons: jump, place/shoot, fly, up/down.<br><br>
-      Break and place blocks, build anything. Progress saves automatically.`,
+      Buttons: jump, place, dig, «🎒» — inventory.<br><br>
+      Progress (world, inventory, apples) saves automatically.`,
     howto_title: 'How to play',
     pause_hint: 'Esc — pause & release mouse',
     unlocked_blocks: 'New blocks unlocked in the hotbar!',
@@ -125,7 +158,7 @@ export const STRINGS = {
     fly_off: 'Fly mode: off',
     hint_break: 'Hold LMB to break a block',
     hint_place: 'RMB — place a block',
-    hint_fly: 'Double-tap Space to fly',
+    hint_fly: 'Double-tap Space to fly (Creative)',
     to_spawn: 'To spawn',
     to_spawn_ok: 'Welcome home!',
     rain_start: 'It starts raining…',
@@ -133,16 +166,43 @@ export const STRINGS = {
     blocks_built: 'Blocks built',
     died: 'You died!',
     respawned: 'Respawned at spawn',
-    apple_get: 'Apple picked up (E to eat)',
+    apple_get: 'Apple picked up (F to eat)',
     eat_ok: 'Crunch! +2 hearts',
     eat_none: 'No apples',
     gloom_warn: 'Night is dangerous: Gloom is near!',
-    fullscreen: 'Fullscreen',
-    no_arrows: 'Out of arrows! Pick up the ones you shot or knock leaves',
-    arrow_pickup: 'Arrow picked up',
-    hint_bow: 'Bow: hold RMB to draw, release to shoot',
-    esc_fullscreen: 'Esc — pause. Hold Esc to leave fullscreen',
-    fullscreen_off: 'Browser fullscreen is off',
+    mode_title: 'Choose a mode',
+    mode_sub: 'The mode is stored in this world',
+    mode_survival: 'Survival',
+    mode_survival_sub: 'Break blocks, gather resources and craft — mobs are dangerous',
+    mode_creative: 'Creative',
+    mode_creative_sub: 'Infinite blocks, double-tap space to fly, immortal',
+    mode_now: 'Mode',
+    inv_title: 'Inventory',
+    inv_hint: 'LMB — take/put a stack, RMB — one item or half',
+    craft_grid: 'Crafting 2×2',
+    craft_hint: 'Arrange items in the grid; the result is on the right. Click a recipe to craft instantly',
+    table_title: 'Table 3×3',
+    table_hint: 'RMB on a crafting table — 3×3 crafting',
+    need_table: 'Crafting table required',
+    need_table_short: '3×3',
+    craft_take: 'Take the result',
+    craft_nothing: 'Unknown recipe',
+    table_open: 'Crafting table opened',
+    craft_title: 'Crafting',
+    craft_ok: 'Crafted',
+    craft_missing: 'Not enough materials',
+    craft_no_room: 'No room in inventory',
+    catalog_title: 'Catalog',
+    catalog_hint: 'Click to put an item into the selected hotbar slot',
+    catalog_locked: 'Builder Pack is locked — watch an ad',
+    inv_full: 'Inventory is full',
+    bag_hint: 'E — inventory',
+    eat_hint: 'F  🍎',
+    fly_creative_only: 'Flying is available in Creative only',
+    block_drop: 'Picked up',
+    hint_inventory: 'E — inventory & crafting',
+    hint_eat: 'Press F to eat an apple',
+    hint_table: '4 planks in the crafting grid → crafting table with 3×3 recipes',
   },
 };
 

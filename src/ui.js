@@ -1,7 +1,6 @@
 // HTML-интерфейс: экраны, хотбар, HUD, тосты, настройки
-import { BLOCKS, BLOCK_NAMES } from './blocks.js';
-import { tileIcon } from './textures.js';
-import { itemIcon, ITEM_NAMES } from './gear.js';
+import { itemIconEl } from './icons.js';
+import { itemName, itemDef } from './items.js';
 
 export class UI {
   constructor(i18n) {
@@ -9,9 +8,10 @@ export class UI {
     this.handlers = {
       onPlay: null, onResume: null, onSaveQuit: null, onNewWorld: null,
       onSettingsChange: null, onReward: null, onSlot: null, onPauseBtn: null,
-      onToSpawn: null,
+      onToSpawn: null, onMode: null, onModeBack: null, onBag: null,
     };
-    this._screens = ['loading-screen', 'menu-screen', 'pause-screen', 'howto-screen', 'settings-screen'];
+    this._screens = ['loading-screen', 'menu-screen', 'mode-screen', 'pause-screen',
+      'howto-screen', 'settings-screen', 'inventory-screen'];
     this._bind();
   }
 
@@ -35,6 +35,10 @@ export class UI {
     click('btn-reward2', () => this.handlers.onReward?.());
     click('btn-home', () => this.handlers.onToSpawn?.());
     click('btn-pause-hud', () => this.handlers.onPauseBtn?.());
+    click('btn-bag', () => this.handlers.onBag?.());
+    click('btn-mode-survival', () => this.handlers.onMode?.('survival'));
+    click('btn-mode-creative', () => this.handlers.onMode?.('creative'));
+    click('btn-mode-back', () => this.handlers.onModeBack?.());
 
     // Настройки
     const vol = document.getElementById('set-volume');
@@ -58,10 +62,6 @@ export class UI {
     snd?.addEventListener('change', () => {
       this.handlers.onSettingsChange?.({ sound: snd.checked });
     });
-    const fs = document.getElementById('set-fullscreen');
-    fs?.addEventListener('change', () => {
-      this.handlers.onSettingsChange?.({ fullscreen: fs.checked });
-    });
   }
 
   applySettings(s) {
@@ -75,8 +75,6 @@ export class UI {
     if (vd) { vd.value = s.viewDistance ?? 5; if (vdLabel) vdLabel.textContent = vd.value; }
     const snd = document.getElementById('set-sound');
     if (snd) snd.checked = s.sound !== false;
-    const fs = document.getElementById('set-fullscreen');
-    if (fs) fs.checked = s.fullscreen !== false;
   }
 
   applyI18n() {
@@ -95,8 +93,18 @@ export class UI {
     document.title = `${t('title')} — ${t('tagline')}`;
   }
 
+  /** Подпись режима («Выживание» / «Креатив») на экране паузы */
+  showModeLabel(mode) {
+    const el = document.getElementById('pause-mode');
+    if (!el) return;
+    el.textContent = this.i18n.t('mode_now') + ': ' + this.i18n.t(mode === 'survival' ? 'mode_survival' : 'mode_creative');
+  }
+
   setHasSave(v) {
     this._hasSave = v;
+    const btnPlay = document.getElementById('btn-play');
+    if (btnPlay) btnPlay.textContent = this.i18n.t(v ? 'continue' : 'play');
+    document.getElementById('btn-new-world')?.classList.toggle('hidden', !v);
   }
 
   showScreen(id, overlay = false) {
@@ -122,6 +130,11 @@ export class UI {
     document.getElementById('btn-pause-hud')?.classList.toggle('hidden', !v);
   }
 
+  /** Кнопка полёта есть только в креативе */
+  setFlyButton(v) {
+    document.getElementById('btn-fly')?.classList.toggle('hidden', !v);
+  }
+
   setLoading(p, text) {
     const bar = document.getElementById('loading-bar');
     if (bar) bar.style.width = Math.round(p * 100) + '%';
@@ -129,68 +142,41 @@ export class UI {
     if (label && text) label.textContent = text;
   }
 
-  // Хотбар: список записей { kind: 'block', id } либо { kind: 'item', item: 'bow' }
-  buildHotbar(entries, lang) {
+  // Хотбар: 9 ячеек инвентаря (слоты 0..8) с иконками и счётчиками
+  buildHotbar(slots, lang, opts = {}) {
     const bar = document.getElementById('hotbar');
     if (!bar) return;
+    this._hotbarSlots = slots;
     bar.innerHTML = '';
-    entries.forEach((entry, i) => {
+    for (let i = 0; i < slots.length; i++) {
+      const stack = slots[i];
       const slot = document.createElement('div');
       slot.className = 'slot';
       slot.dataset.index = i;
-      let tip = '';
-      if (entry.kind === 'item') {
-        slot.dataset.item = entry.item;
-        const icon = itemIcon(entry.item, 44);
-        icon.className = 'slot-icon';
-        slot.appendChild(icon);
-        tip = ITEM_NAMES[lang]?.[entry.item] || ITEM_NAMES.ru[entry.item] || '';
-        // Счётчик боеприпасов прямо на слоте лука
-        if (entry.item === 'bow') {
-          const badge = document.createElement('span');
-          badge.className = 'slot-badge';
-          badge.textContent = this._arrows ?? 0;
-          slot.appendChild(badge);
+      let title = '';
+      if (stack) {
+        const icon = itemIconEl(stack.key, 44);
+        if (icon) slot.appendChild(icon);
+        title = itemName(stack.key, lang);
+        const inf = opts.creative && itemDef(stack.key)?.kind === 'block';
+        if (inf || stack.count > 1) {
+          const count = document.createElement('span');
+          count.className = 'slot-count';
+          count.textContent = inf ? '∞' : String(stack.count);
+          slot.appendChild(count);
         }
-      } else {
-        const def = BLOCKS[entry.id];
-        if (def?.tiles) {
-          const icon = tileIcon(def.tiles[2], 44);
-          icon.className = 'slot-icon';
-          slot.appendChild(icon);
-        }
-        tip = BLOCK_NAMES[lang]?.[entry.id] || BLOCK_NAMES.ru[entry.id] || '';
       }
       const num = document.createElement('span');
       num.className = 'slot-num';
-      num.textContent = (i < 9 ? i + 1 : '·');
+      num.textContent = String(i + 1);
       slot.appendChild(num);
-      const tipEl = document.createElement('div');
-      tipEl.className = 'slot-tip';
-      tipEl.textContent = tip;
-      slot.appendChild(tipEl);
+      const tip = document.createElement('div');
+      tip.className = 'slot-tip';
+      tip.textContent = title;
+      slot.appendChild(tip);
       slot.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.handlers.onSlot?.(i); });
       bar.appendChild(slot);
-    });
-  }
-
-  /** Количество стрел: HUD + значок на слоте лука */
-  setArrows(n) {
-    this._arrows = n;
-    const hud = document.getElementById('arrows');
-    if (hud) {
-      hud.classList.toggle('hidden', n <= 0);
-      hud.textContent = '🏹 ×' + n;
     }
-    document.querySelectorAll('#hotbar .slot[data-item="bow"] .slot-badge').forEach((el) => {
-      el.textContent = n;
-    });
-  }
-
-  /** На тач-экране кнопка «поставить» превращается в кнопку выстрела */
-  setPlaceButtonBow(on) {
-    const el = document.getElementById('btn-place');
-    if (el) el.textContent = on ? '🏹' : '🧱';
   }
 
   setHotbarSelection(i) {
@@ -253,6 +239,27 @@ export class UI {
     document.getElementById('ad-overlay')?.classList.toggle('hidden', !on);
   }
 
+  setHealthVisible(v) {
+    const el = document.getElementById('hearts');
+    if (el) el.classList.toggle('hidden', !v);
+  }
+
+  blinkHearts() {
+    const el = document.getElementById('hearts');
+    if (!el) return;
+    el.classList.remove('blink');
+    void el.offsetWidth;
+    el.classList.add('blink');
+  }
+
+  shake() {
+    const el = document.getElementById('hud');
+    if (!el) return;
+    el.classList.remove('shake');
+    void el.offsetWidth;
+    el.classList.add('shake');
+  }
+
   setHealth(hp, max = 20) {
     const el = document.getElementById('hearts');
     if (!el) return;
@@ -271,11 +278,12 @@ export class UI {
     }
   }
 
-  setApples(n) {
+  setApples(n, mode = 'survival') {
     const el = document.getElementById('apples');
     if (!el) return;
-    el.classList.toggle('hidden', n <= 0);
-    el.textContent = 'E  🍎 ×' + n;
+    if (n <= 0 || mode === 'creative') { el.classList.add('hidden'); return; }
+    el.classList.remove('hidden');
+    el.textContent = this.i18n.t('eat_hint') + ' ×' + n;
   }
 
   flashHurt() {
