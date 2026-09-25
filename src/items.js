@@ -158,6 +158,7 @@ const BLOCK_DETAILS = {
   [BLOCK.COBBLE_SLAB_TOP]: { ru: 'Верхняя каменная плита для ступеней и перекрытий.', en: 'A top cobblestone slab for steps and ceilings.' },
   [BLOCK.TORCH]: { ru: 'Светильник для освещения тёмных мест.', en: 'A small light source for dark places.' },
   [BLOCK.FURNACE]: { ru: 'Печь для переплавки руды и песка. Положите сырьё и топливо, затем нажмите ПКМ.', en: 'Smelts ore and sand. Add an ingredient and fuel, then right-click.' },
+  [BLOCK.WALL_TORCH]: { ru: 'Тот же светильник, но висит на стене — поставьте факел на боковой блок.', en: 'The same light source, mounted on a wall: place a torch against a side block.' },
 };
 
 const ITEM_DETAILS = {
@@ -270,7 +271,7 @@ export function blockDropItem(id, rng = Math.random) {
   if (id === BLOCK.IRON_ORE) return ITEM.RAW_IRON;
   if (id === BLOCK.GOLD_ORE) return ITEM.RAW_GOLD;
   if (id === BLOCK.DIAMOND_ORE) return ITEM.DIAMOND;
-  if (id === BLOCK.TORCH) return blockItem(BLOCK.TORCH);
+  if (id === BLOCK.TORCH || id === BLOCK.WALL_TORCH) return blockItem(BLOCK.TORCH);
   if (id === BLOCK.SLAB) return blockItem(BLOCK.SLAB);
   if (id === BLOCK.FURNACE) return blockItem(BLOCK.FURNACE);
   // с высокой травы иногда падает пшеница для хлеба
@@ -328,22 +329,59 @@ const SLAB_BLOCKS = new Set([
   BLOCK.PLANK_SLAB, BLOCK.PLANK_SLAB_TOP, BLOCK.COBBLE_SLAB, BLOCK.COBBLE_SLAB_TOP,
 ]);
 
-/** Яблоки, выпадающие из листвы (подбираются игроком) */
+/**
+ * Выпавшие предметы. Внешний вид собирается по ключу предмета:
+ *  • блок — кубик с настоящими текстурами атласа (top/bottom/side);
+ *  • инструмент, еда, руда — спрайт из иконки предмета;
+ *  • факел — объёмная модель (её даёт игра через `modelFor`).
+ * Провайдеры материалов приходят из main.js: в тестах и без DOM работает
+ * запасной вариант — цветной кубик.
+ */
 export class ItemDrops {
-  constructor(scene) {
+  constructor(scene, visuals = {}) {
     this.scene = scene;
     this.items = [];
     this.geo = new THREE.BoxGeometry(0.28, 0.28, 0.28);
     this.stemGeo = new THREE.BoxGeometry(0.08, 0.1, 0.08);
     this.slabGeo = new THREE.BoxGeometry(0.28, 0.14, 0.28);
+    this.quadGeo = new THREE.PlaneGeometry(0.32, 0.32);
     this.mats = {
       apple: new THREE.MeshBasicMaterial({ color: APPLE.color }),
       stem: new THREE.MeshBasicMaterial({ color: APPLE.stem }),
     };
     // Pre-make mats for ore items
     this._itemMats = new Map();
+    this.tileMaterial = visuals.tileMaterial || null;     // (tileIdx) => Material
+    this.iconMaterial = visuals.iconMaterial || null;     // (key) => Material
+    this.modelFor = visuals.modelFor || null;             // (key) => Object3D | null
     this.onPickup = null; // (kind) => void
     this.max = 50;
+  }
+
+  /** Тело предмета: текстурированный кубик, спрайт или модель */
+  _buildBody(kind) {
+    const custom = this.modelFor ? this.modelFor(kind) : null;
+    if (custom) return custom;
+    if (isBlockItem(kind)) {
+      const id = blockIdOf(kind);
+      const def = BLOCKS[id];
+      if (def && def.tiles && !def.shape && this.tileMaterial) {
+        const [top, bottom, side] = def.tiles;
+        const mats = [
+          this.tileMaterial(side), this.tileMaterial(side),
+          this.tileMaterial(top), this.tileMaterial(bottom),
+          this.tileMaterial(side), this.tileMaterial(side),
+        ];
+        const geo = SLAB_BLOCKS.has(id) ? this.slabGeo : this.geo;
+        return new THREE.Mesh(geo, mats);
+      }
+    }
+    const icon = itemDef(kind)?.icon;
+    if (icon && this.iconMaterial) {
+      const sprite = new THREE.Mesh(this.quadGeo, this.iconMaterial(kind));
+      return sprite;
+    }
+    return null;
   }
 
   _matFor(kind) {
@@ -374,15 +412,17 @@ export class ItemDrops {
     const g = new THREE.Group();
     const isApple = kind === 'apple' || kind === ITEM.APPLE;
     const mat = this._matFor(isApple ? 'apple' : kind);
-    let body;
-    // slab as flat box
-    if (isBlockItem(kind) && SLAB_BLOCKS.has(blockIdOf(kind))) {
-      body = new THREE.Mesh(this.slabGeo, mat);
-    } else {
-      body = new THREE.Mesh(this.geo, mat);
+    let body = this._buildBody(kind);
+    if (!body) {
+      // запасной вариант: цветной кубик (полублок — плоский)
+      body = new THREE.Mesh(
+        isBlockItem(kind) && SLAB_BLOCKS.has(blockIdOf(kind)) ? this.slabGeo : this.geo,
+        mat,
+      );
     }
     g.add(body);
-    if (isApple) {
+    const textured = body.isMesh && !Array.isArray(body.material) && !!body.material.map;
+    if (isApple && !textured) {
       const stem = new THREE.Mesh(this.stemGeo, this.mats.stem);
       stem.position.y = 0.18;
       g.add(stem);

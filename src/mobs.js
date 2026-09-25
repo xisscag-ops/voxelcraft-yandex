@@ -38,8 +38,15 @@ function fixedPart(mat, geoCache, key, w, h, d, color) {
   return new THREE.Mesh(geoCache.get(key), mat);
 }
 
-// Материал «полностью красного» моба на время вспышки урона
-const HURT_MAT = new THREE.MeshBasicMaterial({ color: 0xff3a2e });
+// Материал «красного» моба: вспышка урона и анимация смерти.
+// Цвет задаётся через vertexColors, поэтому силуэт и лицо моба не теряются.
+const HURT_MAT = new THREE.MeshBasicMaterial({ vertexColors: true, color: 0xff3a2e });
+
+// Сколько длится анимация смерти: моб заваливается, краснеет и оседает
+export const MOB_DEATH_TIME = 1.8;
+// Цвет умирающего моба: яркий красный в начале → тёмный в конце
+const DEATH_COLOR_FROM = [1, 0.23, 0.18];
+const DEATH_COLOR_TO = [0.35, 0.05, 0.04];
 
 // Враждебные мобы: сами нападают на игрока (паук, крипер и зомби).
 // Волк — только если его ударить.
@@ -579,6 +586,7 @@ export class Mob {
     this.dead = false;
     this.dying = -1;             // >= 0 — идёт анимация смерти (0..1)
     this.deathDir = Math.random() < 0.5 ? -1 : 1;
+    this.hurtMats = new Map();   // базовый материал → красный клон для этого моба
     this.hostile = HOSTILE.has(type);
     this.angry = false;          // волк злится, если его ударить
     this.fuseT = -1;             // крипер: >= 0 — горит фитиль
@@ -728,13 +736,23 @@ export class Mob {
     return this.dying < 0;
   }
 
-  /** Полностью красный моб на время вспышки */
+  /**
+   * Красный моб на время вспышки урона и на всю анимацию смерти.
+   * Материал клонируется с базового, поэтому сохраняются прозрачность
+   * (слизень) и цвета деталей — моб «краснеет», а не становится силуэтом.
+   */
   setHurtTint(on) {
     const walk = (o) => {
       if (o.isMesh) {
         if (on) {
           if (!o.userData._baseMat) o.userData._baseMat = o.material;
-          o.material = HURT_MAT;
+          let tinted = this.hurtMats.get(o.userData._baseMat);
+          if (!tinted) {
+            tinted = o.userData._baseMat.clone();
+            tinted.color.copy(HURT_MAT.color);
+            this.hurtMats.set(o.userData._baseMat, tinted);
+          }
+          o.material = tinted;
         } else if (o.userData._baseMat) {
           o.material = o.userData._baseMat;
           o.userData._baseMat = null;
@@ -743,6 +761,17 @@ export class Mob {
       for (const c of o.children) walk(c);
     };
     walk(this.v.group);
+  }
+
+  /** Плавно перекрашивает умирающего моба из яркого красного в тёмный */
+  tintDeath(k) {
+    for (const mat of this.hurtMats.values()) {
+      mat.color.setRGB(
+        DEATH_COLOR_FROM[0] + (DEATH_COLOR_TO[0] - DEATH_COLOR_FROM[0]) * k,
+        DEATH_COLOR_FROM[1] + (DEATH_COLOR_TO[1] - DEATH_COLOR_FROM[1]) * k,
+        DEATH_COLOR_FROM[2] + (DEATH_COLOR_TO[2] - DEATH_COLOR_FROM[2]) * k,
+      );
+    }
   }
 
   /** Тик вспышки урона: 0.3 с красный, затем обратно */
@@ -792,11 +821,13 @@ export class Mob {
     this.flashT = 0.3;
     this.setHurtTint(true);
     if (this.hp <= 0) {
-      // Не исчезаем мгновенно: сначала проигрывается анимация смерти (updateDeath)
+      // Не исчезаем мгновенно: сначала проигрывается долгая анимация смерти,
+      // на всё её время моб остаётся красным (updateDeath).
       this.dying = 0;
       this.state = 'dead';
       this.fuseT = -1;
-      this.setHurtTint(false);
+      this.flashT = 0;
+      this.setHurtTint(true);
       this.v.group.scale.setScalar(this.baseScale);
       this.v.group.rotation.x = 0;
       this.v.group.rotation.z = 0;
@@ -812,19 +843,35 @@ export class Mob {
     return false;
   }
 
-  /** Анимация смерти: моб заваливается набок, оседает и уменьшается */
+  /**
+   * Долгая анимация смерти: моб краснеет, заваливается набок, вздрагивает,
+   * оседает и уменьшается. Живёт дольше вспышки урона, поэтому игрок успевает
+   * разглядеть и «красную текстуру», и рассыпающиеся частицы в конце.
+   */
   updateDeath(dt) {
     const v = this.v;
-    this.dying = Math.min(1, this.dying + dt / 0.75);
+    this.dying = Math.min(1, this.dying + dt / MOB_DEATH_TIME);
     const k = this.dying;
-    const fall = k * k;
+    const topple = Math.min(1, k / 0.45);          // заваливание — первая половина
+    const fall = topple * topple * (3 - 2 * topple);
+    const settle = Math.min(1, Math.max(0, (k - 0.35) / 0.65));   // оседание и усадка
+    const sink = settle * settle;
+
     v.group.rotation.order = 'YXZ';
-    v.group.rotation.x = 0;
-    v.group.rotation.z = this.deathDir * fall * Math.PI * 0.5;
     v.group.rotation.y = this.heading;
-    const s = this.baseScale * (1 - fall * 0.4);
-    v.group.scale.set(s, s * (1 - fall * 0.3), s);
-    v.group.position.set(this.pos.x, this.pos.y + Math.max(0, 0.14 - fall * 0.3), this.pos.z);
+    v.group.rotation.z = this.deathDir * fall * Math.PI * 0.5;
+    // Короткая судорога, когда моб касается земли
+    v.group.rotation.x = -0.22 * fall + Math.sin(k * Math.PI * 3) * 0.1 * (1 - settle);
+
+    const s = this.baseScale * (1 - sink * 0.42);
+    v.group.scale.set(
+      s * (1 + 0.06 * Math.sin(k * Math.PI)),
+      s * (1 - 0.34 * sink),
+      s,
+    );
+    v.group.position.set(this.pos.x, this.pos.y + 0.14 * (1 - fall) - 0.34 * sink, this.pos.z);
+
+    this.tintDeath(k);
     if (this.dying >= 1) this.dead = true;   // дальше MobManager убирает моба и зовёт onDeath
   }
 

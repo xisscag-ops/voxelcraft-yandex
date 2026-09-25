@@ -1,5 +1,5 @@
 // Мир: чанки-колонны, генерация рельефа, деревья, правки игрока
-import { BLOCK, isDecor, isSolid } from './blocks.js';
+import { BLOCK, isDecor, isSolid, torchSupport } from './blocks.js';
 import { fbm2d, fbm3d, makeRng, hash3 } from './noise.js';
 import { CONFIG } from './config.js';
 
@@ -13,6 +13,10 @@ const PEAK_H = 51;        // выше — снежные вершины
 const H = CONFIG.WORLD_HEIGHT;
 const SEA = CONFIG.SEA_LEVEL;
 const FEATURE_CELL = 160;       // глобальная сетка для карьер и разломов
+// Полоса пещер: медленно дрейфующая по миру высота, вокруг которой идут тоннели
+const CAVE_BASE = 6;
+const CAVE_SPAN = 14;           // полоса 6..20 — ниже поверхности, выше сланцевого дна
+const HALL_SPAN = 4;            // насколько зал может расширить полосу тоннеля
 
 function idx(x, y, z) {
   return (y * S + z) * S + x;
@@ -214,47 +218,64 @@ export class World {
       }
     }
 
-    // Тоннели образуют связанные меандрирующие системы, а не случайные вертикальные полости.
-    // Контурные 2D-поля задают трассы, низкочастотная деформация и отдельные поля высоты
-    // изгибают их в пространстве. Вариативный радиус формирует неровные стены и ответвления.
+    // Пещеры: длинные меандрирующие тоннели в одной низкочастотной полосе глубин.
+    // Высоту полосы задаёт медленное (длинноволновое) поле, а не рельеф под ногами,
+    // поэтому пол пещеры опускается и поднимается плавно — без резких перепадов
+    // и без вертикальных колодцев. Трассы идут с небольшими вертикальными
+    // смещениями и пересекаются: несколько пещер сливаются в общие системы.
     const rngCave = makeRng(hash3(cx, 5, cz, seed) * 0x7fffffff);
     const carvedTop = new Int16Array(S * S);
+    // Опорная высота пещер: медленно дрейфует по миру (~0.1 блока за блок),
+    // поэтому пол пещеры опускается и поднимается без обрывов.
+    // Одна и та же полоса — и для тоннелей, и для залов: они срастаются в одну систему.
+    const caveGuide = new Float32Array(S * S);
+    const caveCeil = new Int16Array(S * S);
+    for (let z = 0; z < S; z++) {
+      for (let x = 0; x < S; x++) {
+        const h = terrainHeight[z * S + x];
+        const yTop = h - 4 - ((rngCave() * 2) | 0);
+        caveCeil[z * S + x] = yTop;
+        if (yTop < 9) { caveGuide[z * S + x] = -1; continue; }
+        const guide = CAVE_BASE + fbm2d((ox + x) * 0.0052, (oz + z) * 0.0052, seed + 2027, 2) * CAVE_SPAN;
+        caveGuide[z * S + x] = guide > yTop ? -1 : guide;   // под тонкой породой полости нет
+      }
+    }
     for (let z = 0; z < S; z++) {
       for (let x = 0; x < S; x++) {
         const wx = ox + x, wz = oz + z;
-        const h = terrainHeight[z * S + x];
-        const yTop = h - 4 - ((rngCave() * 3) | 0);
-        if (yTop < 8) continue;
+        const yTop = caveCeil[z * S + x];
+        const guide = caveGuide[z * S + x];
+        if (guide < 0) continue;
 
-        const warpX = (fbm2d(wx * 0.012, wz * 0.012, seed + 1211, 3) - 0.5) * 9;
-        const warpZ = (fbm2d(wx * 0.012 + 19, wz * 0.012 - 31, seed + 1319, 3) - 0.5) * 9;
+        const warpX = (fbm2d(wx * 0.011, wz * 0.011, seed + 1211, 3) - 0.5) * 12;
+        const warpZ = (fbm2d(wx * 0.011 + 19, wz * 0.011 - 31, seed + 1319, 3) - 0.5) * 12;
         const px = wx + warpX, pz = wz + warpZ;
         const detail = fbm2d(wx * 0.075 + 7, wz * 0.075 - 13, seed + 1433, 2);
-        const verticalLimit = Math.max(7, Math.min(43, yTop - 3));
         const paths = [
           {
-            n: fbm2d(px * 0.024, pz * 0.024, seed + 404, 4), threshold: 0.072,
-            center: 6 + fbm2d(wx * 0.011 + 5, wz * 0.011 - 8, seed + 909, 3) * (verticalLimit - 6),
-            radius: 1.55, variation: 1.25,
+            // Длинная широкая трасса: основной ход системы
+            n: fbm2d(px * 0.010, pz * 0.010, seed + 404, 4), threshold: 0.105,
+            radius: 1.9, variation: 1.5, lift: 0,
           },
           {
-            n: fbm2d(px * 0.041 + 11, pz * 0.041 - 6, seed + 707, 3), threshold: 0.052,
-            center: 7 + fbm2d(wx * 0.017 - 17, wz * 0.017 + 9, seed + 1511, 3) * (verticalLimit - 7),
-            radius: 1.05, variation: 1.15,
+            // Второй ход идёт рядом по высоте — пересекается с первым и сливается
+            n: fbm2d((wx - warpZ) * 0.0135 - 23, (wz + warpX) * 0.0135 + 17, seed + 808, 3), threshold: 0.058,
+            radius: 1.5, variation: 1.3, lift: 1.0,
           },
           {
-            n: fbm2d((wx - warpZ) * 0.018 - 23, (wz + warpX) * 0.018 + 17, seed + 808, 3), threshold: 0.045,
-            center: 8 + fbm2d(wx * 0.008 + 33, wz * 0.008 - 25, seed + 1613, 2) * (verticalLimit - 8),
-            radius: 1.8, variation: 1.45,
+            // Третий — низкий, чтобы система получалась «двухэтажной», но связной
+            n: fbm2d(px * 0.0072 + 41, pz * 0.0072 - 29, seed + 606, 3), threshold: 0.075,
+            radius: 2.3, variation: 1.7, lift: -1.0,
           },
         ];
         for (const path of paths) {
           const distance = Math.abs(path.n - 0.5);
           if (distance >= path.threshold) continue;
           const strength = 1 - distance / path.threshold;
-          const radius = path.radius + strength * path.variation + (detail - 0.5) * 0.55;
-          const centerY = path.center + (detail - 0.5) * 1.4;
-          const y0 = Math.max(3, Math.floor(centerY - radius));
+          const radius = path.radius + strength * path.variation + (detail - 0.5) * 0.5;
+          const centerY = guide + path.lift + (detail - 0.5) * 1.2;
+          if (centerY > yTop - 2) continue;
+          const y0 = Math.max(4, Math.floor(centerY - radius));
           const y1 = Math.min(yTop, Math.ceil(centerY + radius));
           for (let y = y0; y <= y1; y++) {
             const vertical = (y - centerY) / Math.max(0.7, radius);
@@ -292,9 +313,9 @@ export class World {
             const wx = ox + ix * STEP, wy = CY0 + iy * STEP, wz = oz + iz * STEP;
             const warpIndex = iz * gn + ix;
             grid[(iz * gyn + iy) * gn + ix] = fbm3d(
-              (wx + warpX[warpIndex]) * 0.035,
-              wy * 0.067,
-              (wz + warpZ[warpIndex]) * 0.035,
+              (wx + warpX[warpIndex]) * 0.026,
+              wy * 0.034,
+              (wz + warpZ[warpIndex]) * 0.026,
               seed + 1500,
               3,
             );
@@ -320,16 +341,22 @@ export class World {
         for (let x = 0; x < S; x++) {
           const wx = ox + x, wz = oz + z;
           const h = terrainHeight[z * S + x];
-          const yTop = Math.min(CY1, h - 6 - ((rngCave() * 3) | 0));
-          for (let y = CY0; y <= yTop; y++) {
+          const guide = caveGuide[z * S + x];
+          if (guide < 0) continue;
+          const yTop = Math.min(CY1, Math.min(caveCeil[z * S + x], h - 6 - ((rngCave() * 3) | 0)));
+          // Зал — расширение той же полосы: он «съедает» стену тоннеля и сливается с ним,
+          // а не висит отдельным этажом выше или ниже
+          const hallLow = Math.max(CY0, Math.floor(guide - HALL_SPAN));
+          const hallHigh = Math.min(yTop, Math.ceil(guide + HALL_SPAN));
+          for (let y = hallLow; y <= hallHigh; y++) {
             const b = chunk.get(x, y, z);
             if (b !== BLOCK.STONE && b !== BLOCK.SLATE && b !== BLOCK.DIRT && b !== BLOCK.MOSSY) continue;
             const n = sample(x / STEP, (y - CY0) / STEP, z / STEP)
-              + (fbm3d(wx * 0.09, y * 0.16, wz * 0.09, seed + 1600, 2) - 0.5) * 0.28;
+              + (fbm3d(wx * 0.09, y * 0.12, wz * 0.09, seed + 1600, 2) - 0.5) * 0.26;
             // К поверхности залы сходят на нет: иначе под холмами получается ровный срез
             const near = h - y;
-            const extra = near < 13 ? (13 - near) * 0.022 : 0;
-            if (n < 0.675 + extra) continue;
+            const extra = near < 13 ? (13 - near) * 0.02 : 0;
+            if (n < 0.63 + extra) continue;
             chunk.set(x, y, z, BLOCK.AIR);
             if (y > carvedTop[z * S + x]) carvedTop[z * S + x] = y;
           }
@@ -337,69 +364,89 @@ export class World {
       }
     }
 
-    // Входы в пещеры: в каждом чанке раскрываем лаз к самой близкой к поверхности
-    // полости. Так пещеры всегда можно найти снаружи, а не только прокопаться наугад.
-    let mouths = 0;
+    // Выравнивание пола пещер: где рядом с полом зияет яма глубже двух блоков,
+    // подсыпаем камень. Спуски и подъёмы превращаются в ступени по два блока —
+    // по ним можно и спуститься, и подняться, не падая. Проход в два блока
+    // повторяем дважды: первый проход поднимает пол, второй чинит склоны за ним.
     for (let pass = 0; pass < 2; pass++) {
-      let best = -1, bestX = 0, bestZ = 0;
       for (let z = 0; z < S; z++) {
         for (let x = 0; x < S; x++) {
-          const top = carvedTop[z * S + x];
-          if (top < 4) continue;
-          const h = terrainHeight[z * S + x];
-          if (h <= SEA + 2) continue;                    // пляжи и дно не вскрываем
-          const depth = h - 1 - top;                     // сколько породы над полостью
-          if (depth < 2 || depth > 8) continue;
-          // нужна настоящая полость, а не подрезанный блок
-          if (chunk.get(x, top - 1, z) !== BLOCK.AIR) continue;
-          if (best < 0 || depth < best) { best = depth; bestX = x; bestZ = z; }
+          for (let y = Math.min(terrainHeight[z * S + x] - 4, 29); y >= 4; y--) {
+            if (chunk.get(x, y, z) !== BLOCK.AIR) continue;
+            // над полом должно быть место в рост игрока (1.8 блока)
+            if (chunk.get(x, y + 1, z) !== BLOCK.AIR) continue;
+            if (!isSolid(chunk.get(x, y - 1, z))) continue;          // под ногами не пол
+            for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+              const nx = x + dx, nz = z + dz;
+              if (nx < 0 || nz < 0 || nx >= S || nz >= S) continue;
+              if (chunk.get(nx, y, nz) !== BLOCK.AIR) continue;      // туда не шагнуть
+              if (chunk.get(nx, y - 1, nz) !== BLOCK.AIR) continue;  // там не яма
+              let yf = y - 1;
+              while (yf > 5 && chunk.get(nx, yf - 1, nz) === BLOCK.AIR) yf--;
+              if (chunk.get(nx, yf - 1, nz) === BLOCK.WATER) continue;   // озеро не засыпаем
+              if (yf < 5 || y - yf < 3) continue;
+              for (let fy = yf; fy <= y - 2; fy++) chunk.set(nx, fy, nz, BLOCK.STONE);
+            }
+          }
         }
       }
-      if (best < 0) break;
+    }
+
+    // Вход в пещеру: в самом «тонком» месте чанка прорубаем колодец от поверхности
+    // к полости, а внутри — каменную винтовую лестницу от поверхности до самого
+    // пола пещеры. Спускаться и выбираться можно шагом, отвесных ям нет.
+    let best = -1, bestX = 0, bestZ = 0;
+    for (let z = 1; z < S - 1; z++) {
+      for (let x = 1; x < S - 1; x++) {
+        const top = carvedTop[z * S + x];
+        if (top < 4) continue;
+        const h = terrainHeight[z * S + x];
+        if (h <= SEA + 2) continue;                    // пляжи и дно не вскрываем
+        const depth = h - 1 - top;                     // сколько породы над полостью
+        if (depth < 2 || depth > 13) continue;
+        // нужна настоящая полость, а не подрезанный блок
+        if (chunk.get(x, top - 1, z) !== BLOCK.AIR) continue;
+        if (best < 0 || depth < best) { best = depth; bestX = x; bestZ = z; }
+      }
+    }
+    if (best >= 0) {
       const top = carvedTop[bestZ * S + bestX];
-      // Лаз 2×2, чтобы можно было спуститься
-      for (const [dx, dz] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+      const SHAFT = [[0, 0], [1, 0], [1, 1], [0, 1]];   // обход по периметру 2×2
+      // Открытый лаз сверху до полости: вскрываем и дерновый слой, иначе вход не найти
+      let minH = H;
+      for (const [dx, dz] of SHAFT) {
         const x = bestX + dx, z = bestZ + dz;
         if (x < 0 || z < 0 || x >= S || z >= S) continue;
         const h = terrainHeight[z * S + x];
-        for (let y = top + 1; y < h; y++) {
+        if (h < minH) minH = h;
+        for (let y = top + 1; y <= h; y++) {
           const b = chunk.get(x, y, z);
           if (b === BLOCK.WATER || b === BLOCK.ICE) break;
           chunk.set(x, y, z, BLOCK.AIR);
         }
       }
-      // Затираем полость рядом с лазом, чтобы он не упирался в стену
-      for (let dz = -1; dz <= 2; dz++) {
-        for (let dx = -1; dx <= 2; dx++) {
-          const x = bestX + dx, z = bestZ + dz;
-          if (x < 1 || z < 1 || x >= S - 1 || z >= S - 1) continue;
-          const b = chunk.get(x, top + 1, z);
-          if (b === BLOCK.STONE || b === BLOCK.DIRT || b === BLOCK.MOSSY || b === BLOCK.GRAVEL) {
-            chunk.set(x, top + 1, z, BLOCK.AIR);
-          }
-        }
+      // Самый глубокий пол под колодцем — докуда вести лестницу
+      let base = top;
+      for (const [dx, dz] of SHAFT) {
+        const x = bestX + dx, z = bestZ + dz;
+        if (x < 0 || z < 0 || x >= S || z >= S) continue;
+        let y = top;
+        while (y > 5 && chunk.get(x, y - 1, z) === BLOCK.AIR) y--;
+        if (y < base) base = y;
       }
-      mouths++;
-      // Второй лаз — только если первый далеко от края (иначе дыр слишком много)
-      if (pass === 0 && rngCave() > 0.45) break;
+      // Винтовая лестница: каждая следующая ступень на блок ниже и на блок в сторону.
+      // Начинаем от самой низкой стенки лаза, чтобы первый шаг был в один блок.
+      for (let y = minH - 1, k = 0; y > base; y--, k++) {
+        const [dx, dz] = SHAFT[k % 4];
+        const x = bestX + dx, z = bestZ + dz;
+        if (x < 0 || z < 0 || x >= S || z >= S) continue;
+        if (y > terrainHeight[z * S + x]) continue;     // над землёй ступеней не ставим
+        if (chunk.get(x, y, z) === BLOCK.AIR) chunk.set(x, y, z, BLOCK.STONE);
+      }
     }
-    void mouths;
 
-    // Вертикальные колодцы на поверхность (стали чаще и шире)
-    for (let z = 0; z < S; z++) {
-      for (let x = 0; x < S; x++) {
-        if (rngCave() >= 0.004) continue;
-        const h = terrainHeight[z * S + x];
-        if (h <= SEA + 3) continue;
-        const depth = 8 + ((rngCave() * 10) | 0);
-        for (let y = h - 1; y > h - depth; y--) {
-          if (y < 2) break;
-          const b = chunk.get(x, y, z);
-          if (b === BLOCK.SLATE || b === BLOCK.WATER || b === BLOCK.ICE) break;
-          chunk.set(x, y, z, BLOCK.AIR);
-        }
-      }
-    }
+    // Отдельных вертикальных колодцев больше нет: каждый вход — лестница,
+    // по которой можно спуститься и подняться без падений.
 
     // Руды и гравий в каменных слоях
     const rngOre = makeRng(hash3(cx, 7, cz, seed) * 0x7fffffff);
@@ -597,13 +644,28 @@ export class World {
     }
     // Растения и факелы не висят в воздухе: если опора исчезла,
     // автоматически убираем декор над ней и сохраняем эту правку.
-    const above = wy + 1 < H ? this.getBlock(wx, wy + 1, wz) : BLOCK.AIR;
-    if (!isSolid(id) && isDecor(above)) {
-      this.setBlock(wx, wy + 1, wz, BLOCK.AIR, recordEdit);
-      if (this.onUnsupportedDecor) this.onUnsupportedDecor(wx, wy + 1, wz, above);
+    if (!isSolid(id) && !isDecor(id)) {
+      const above = wy + 1 < H ? this.getBlock(wx, wy + 1, wz) : BLOCK.AIR;
+      if (isDecor(above)) {
+        this.setBlock(wx, wy + 1, wz, BLOCK.AIR, recordEdit);
+        if (this.onUnsupportedDecor) this.onUnsupportedDecor(wx, wy + 1, wz, above);
+      }
+    }
+    // Настенные факелы держатся за боковую стену: вместе с опорой убираем и их.
+    if (!isSolid(id)) {
+      for (const [dx, dy, dz] of [[-1, 0, 0], [1, 0, 0], [0, 0, -1], [0, 0, 1]]) {
+        const nx = wx + dx, nz = wz + dz;
+        const neighbour = this.getBlock(nx, wy, nz);
+        if (!isDecor(neighbour)) continue;
+        if (torchSupport(neighbour, this, nx, wy, nz) === null) {
+          this.setBlock(nx, wy, nz, BLOCK.AIR, recordEdit);
+          if (this.onUnsupportedDecor) this.onUnsupportedDecor(nx, wy, nz, neighbour);
+        }
+      }
     }
     // Свет факела выходит за пределы чанка — обновляем соседние меши.
-    if (previous === BLOCK.TORCH || id === BLOCK.TORCH) {
+    if (previous === BLOCK.TORCH || id === BLOCK.TORCH
+        || previous === BLOCK.WALL_TORCH || id === BLOCK.WALL_TORCH) {
       for (let dz = -1; dz <= 1; dz++) {
         for (let dx = -1; dx <= 1; dx++) {
           if (dx || dz) this.markDirty(cx + dx, cz + dz);
