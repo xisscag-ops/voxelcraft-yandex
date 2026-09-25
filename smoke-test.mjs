@@ -132,6 +132,53 @@ check('raycast misses up to sky', (() => {
   return raycastVoxel(world2, 2.5, h + 3.5, 2.5, 0, 1, 0, 6) === null;
 })());
 
+// ---- Пещеры: полости под землёй, входы с поверхности, натёки ----
+{
+  const cw = new World(4242);
+  const S = CONFIG.CHUNK_SIZE, SEA = CONFIG.SEA_LEVEL;
+  let columns = 0, hollow = 0, deepHollow = 0, mouths = 0, spikes = 0;
+  for (let cx = -2; cx <= 2; cx++) {
+    for (let cz = -2; cz <= 2; cz++) {
+      const c = cw.getChunk(cx, cz);
+      const ox = cx * S, oz = cz * S;
+      for (let x = 0; x < S; x++) {
+        for (let z = 0; z < S; z++) {
+          const h = cw.heightAt(ox + x, oz + z);
+          columns++;
+          let top = -1;
+          for (let y = 4; y < h; y++) {
+            const b = c.get(x, y, z);
+            if (b === BLOCK.AIR) { hollow++; if (top < y) top = y; }
+            if (y <= h - 9) {
+              // считаем сквозные полости на глубине
+              if (b === BLOCK.AIR && deepHollow < columns * 4) deepHollow++;
+            }
+            if (b === BLOCK.SLATE && c.get(x, y + 1, z) === BLOCK.AIR) spikes++;
+          }
+          if (h > SEA + 2 && c.get(x, h - 1, z) === BLOCK.AIR && c.get(x, h - 2, z) === BLOCK.AIR) mouths++;
+        }
+      }
+    }
+  }
+  const airShare = hollow / columns;
+  check('пещеры: под землёй есть полости', airShare > 0.05, 'их ' + (airShare * 100).toFixed(1) + '% высоты колонок');
+  check('пещеры: воздух распределён по глубине', deepHollow > 200, 'считано ' + deepHollow);
+  check('пещеры: есть входы с поверхности', mouths >= 2, 'входов ' + mouths + ' на ' + columns + ' колонок');
+  check('пещеры: в залах есть натёки из сланца', spikes > 10, 'натёков ' + spikes);
+
+  // Пещеры детерминированы: тот же сид — тот же мир
+  const cw2 = new World(4242);
+  let same = true;
+  for (let y = 4; y < 30 && same; y++) {
+    for (let x = 0; x < S; x++) {
+      for (let z = 0; z < S; z++) {
+        if (cw.getBlock(x, y, z) !== cw2.getBlock(x, y, z)) { same = false; break; }
+      }
+    }
+  }
+  check('пещеры: генерация детерминирована', same);
+}
+
 // ---- Декоративная трава ----
 // Мир состоит из биомов (пустыни, горы, снег), поэтому травяные участки ищем
 // на площадке пошире — в радиусе 6 чанков они точно есть
