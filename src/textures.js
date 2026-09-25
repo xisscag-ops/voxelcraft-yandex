@@ -31,6 +31,8 @@ export const T = {
   CHEST_TOP: 53, CHEST_SIDE: 54, CHEST_FRONT: 55,
   // Берёзовые доски, забор и наковальня
   BIRCH_PLANKS: 56, FENCE: 57, ANVIL_TOP: 58, ANVIL_SIDE: 59, ANVIL_FRONT: 60,
+  // Природа: заснеженный песок, пещерная лиана и светящийся гриб
+  SAND_SNOW_SIDE: 61, VINE: 62, GLOW_SHROOM: 63,
 };
 
 export const CRACK_TILES = [17, 18, 19, 20, 21];
@@ -64,6 +66,24 @@ function oreBlobs(data, rng, color, n = 7) {
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         const v = (rng() - 0.5) * 26;
+        px(data, cx + x, cy + y, color[0] + v, color[1] + v, color[2] + v);
+      }
+    }
+  }
+}
+
+// Мелкие малоконтрастные вкрапления (уголь в камне): пятнышки 1-2 пикселя,
+// по тону близкие к камню — руда заметна, но не «вырвиглазная»
+function softOreSpecks(data, rng, color, n = 11) {
+  for (let i = 0; i < n; i++) {
+    const cx = 1 + ((rng() * 14) | 0);
+    const cy = 1 + ((rng() * 14) | 0);
+    const wide = rng() < 0.4;
+    const w = wide ? 2 : 1;
+    const h = wide ? 1 : 2;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const v = (rng() - 0.5) * 12;
         px(data, cx + x, cy + y, color[0] + v, color[1] + v, color[2] + v);
       }
     }
@@ -384,7 +404,8 @@ const painters = {
   },
 
 // ---- Руды и камни ----
-  [T.COAL_ORE](data, rng) { painters[T.STONE](data, rng); oreBlobs(data, rng, [38, 36, 40], 8); },
+  // Уголь: мелкие тёмно-серые точки, близкие по тону к камню (не контрастные)
+  [T.COAL_ORE](data, rng) { painters[T.STONE](data, rng); softOreSpecks(data, rng, [84, 82, 82], 10); softOreSpecks(data, rng, [64, 62, 62], 6); },
   [T.IRON_ORE](data, rng) { painters[T.STONE](data, rng); oreBlobs(data, rng, [196, 150, 118], 7); },
   [T.GOLD_ORE](data, rng) { painters[T.STONE](data, rng); oreBlobs(data, rng, [232, 196, 76], 6); },
   [T.DIAMOND_ORE](data, rng) { painters[T.STONE](data, rng); oreBlobs(data, rng, [110, 226, 226], 6); },
@@ -716,6 +737,66 @@ const painters = {
     }
     px(data, 2, 6, 122, 126, 134); px(data, 3, 6, 122, 126, 134);   // блик на роге
   },
+  // ---- Заснеженный песок: песчаная сторона со снежной коркой сверху ----
+  [T.SAND_SNOW_SIDE](data, rng) {
+    painters[T.SAND](data, rng);
+    for (let x = 0; x < TILE; x++) {
+      const h = 3 + ((rng() * 3) | 0);
+      for (let y = 0; y < h; y++) {
+        const v = (rng() - 0.5) * 10;
+        // Рваная снежная кромка: местами сползает на песок язычками
+        const edge = y === h - 1 && rng() < 0.55;
+        px(data, x, y, edge ? 214 : 240 + v, edge ? 220 : 245 + v, edge ? 214 : 250 + v);
+      }
+    }
+  },
+  // ---- Пещерная лиана: тонкие свисающие плети с листиками ----
+  [T.VINE](data, rng) {
+    for (let y = 0; y < TILE; y++) for (let x = 0; x < TILE; x++) px(data, x, y, 0, 0, 0, 0);
+    for (let s = 0; s < 4; s++) {
+      let x = 2 + ((rng() * 12) | 0);
+      const len = 9 + ((rng() * 7) | 0);
+      for (let i = 0; i < len; i++) {
+        const y = i;
+        if (rng() < 0.22) x += rng() < 0.5 ? -1 : 1;   // плеть слегка вьётся
+        x = Math.max(0, Math.min(TILE - 1, x));
+        const v = (rng() - 0.5) * 24;
+        px(data, x, y, 58 + v, 104 + v, 52 + v);
+        // листики по бокам плети
+        if (rng() < 0.45) {
+          const side = rng() < 0.5 ? -1 : 1;
+          const lx = Math.max(0, Math.min(TILE - 1, x + side));
+          px(data, lx, y, 72 + v, 126 + v, 58 + v);
+        }
+      }
+    }
+  },
+  // ---- Светящийся пещерный гриб: ножка и бирюзовая светящаяся шляпка ----
+  [T.GLOW_SHROOM](data, rng) {
+    for (let y = 0; y < TILE; y++) for (let x = 0; x < TILE; x++) px(data, x, y, 0, 0, 0, 0);
+    // ножка
+    for (let y = 8; y <= 15; y++) {
+      const w = y > 12 ? 2 : 1;
+      for (let x = 8 - w; x <= 7 + w; x++) {
+        const v = (rng() - 0.5) * 14;
+        px(data, x, y, 196 + v, 224 + v, 214 + v);
+      }
+    }
+    // шляпка: округлая, светится бирюзой
+    for (let y = 3; y <= 8; y++) {
+      const half = 5 - Math.abs(5.5 - y) * 0.9;
+      for (let x = Math.round(8 - half); x <= Math.round(7 + half); x++) {
+        const v = (rng() - 0.5) * 20;
+        const rim = y <= 4 || x <= Math.round(8 - half) + 0 || x >= Math.round(7 + half);
+        px(data, x, y, ...(rim ? [96 + v, 210 + v, 186 + v] : [150 + v, 246 + v, 220 + v]));
+      }
+    }
+    // блики и «споры» света
+    for (const [x, y] of [[6, 5], [9, 6], [11, 5], [7, 7], [10, 4]]) px(data, x, y, 226, 255, 244);
+    // маленький грибочек рядом
+    for (let y = 11; y <= 15; y++) px(data, 3, y, 176, 208, 198);
+    for (let y = 9; y <= 11; y++) for (let x = 2; x <= 4; x++) px(data, x, y, 120, 226, 200);
+  },
 };
 
 function chestWood(data, rng) {
@@ -771,7 +852,7 @@ function drawCracks(data, rng, stage) {
 const tileColors = {};
 
 // Тайлы-источники света не затемняются: они должны выглядеть яркими.
-const EMISSIVE_TILES = new Set([T.GLOW, T.TORCH, T.FURNACE_FRONT]);
+const EMISSIVE_TILES = new Set([T.GLOW, T.TORCH, T.FURNACE_FRONT, T.GLOW_SHROOM]);
 // Общий множитель яркости атласа: текстуры чуть темнее «мультяшных»,
 // ближе к реальному освещению (просили больше реализма).
 export const ATLAS_DARKEN = 0.9;

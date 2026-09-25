@@ -535,8 +535,8 @@ check('дерево без топора ×1.6', Math.abs(breakTime(BLOCK.LOG, nu
 check('топор ускоряет дерево ×0.5', Math.abs(breakTime(BLOCK.LOG, ITEM.WOOD_AXE, 'survival') - BASE_LOG * 0.5) < 1e-9);
 check('каменный топор быстрее деревянного', breakTime(BLOCK.LOG, ITEM.STONE_AXE, 'survival') < breakTime(BLOCK.LOG, ITEM.WOOD_AXE, 'survival'));
 check('земля ломается как раньше', Math.abs(breakTime(BLOCK.DIRT, null, 'survival') - CONFIG.BREAK_TIME.fast) < 1e-9);
-check('креатив: блок ломается за 0.12 с',
-  breakTime(BLOCK.STONE, null, 'creative') === CONFIG.CREATIVE_BREAK_TIME && CONFIG.CREATIVE_BREAK_TIME === 0.12);
+check('креатив: блок ломается за 0.045 с',
+  breakTime(BLOCK.STONE, null, 'creative') === CONFIG.CREATIVE_BREAK_TIME && CONFIG.CREATIVE_BREAK_TIME === 0.045);
 check('урон: рука 1, деревянный меч 2, каменный 3',
   itemDamage(null) === 1 && itemDamage(ITEM.WOOD_SWORD) === 2 && itemDamage(ITEM.STONE_SWORD) === 3);
 
@@ -564,8 +564,8 @@ check('инвентарь полон → лишнее не влезает', (() 
 
 // ---- Крафт ----
 check('рецепты без ошибок', validateRecipes().length === 0, validateRecipes().join('; '));
-check('39 рецептов (берёзовые доски, забор, наковальня, металлические инструменты)',
-  RECIPES.length === 39, 'их ' + RECIPES.length);
+check('40 рецептов (берёзовые доски, забор, наковальня, металлические инструменты, алмазный молот)',
+  RECIPES.length === 40, 'их ' + RECIPES.length);
 function craftWith(input, id) {
   const i = new Inventory(CONFIG.INV_SIZE);
   for (const [k, n] of Object.entries(input)) i.add(k, n);
@@ -1181,8 +1181,8 @@ check('сундук: разметка и стили панели', html.includes
     const ingots = RECIPES.filter((r) => /^(iron|gold)_ingot$/.test(r.id));
     return ingots.length === 2 && ingots.every((r) => !r.station);
   })());
-  check('без наковальни доступен ровно 30 рецептов, с наковальней — 39',
-    recipesFor(null).length === 30 && recipesFor(anvilStation).length === 39,
+  check('без наковальни доступен ровно 30 рецептов, с наковальней — 40',
+    recipesFor(null).length === 30 && recipesFor(anvilStation).length === 40,
     recipesFor(null).length + '/' + recipesFor(anvilStation).length);
   check('сетка 3×3 на наковальне собирает алмазный меч', (() => {
     const g = emptyGrid(3);

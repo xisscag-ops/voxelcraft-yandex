@@ -63,6 +63,10 @@ export const BLOCK = {
   BIRCH_PLANKS: 50,
   FENCE: 51,
   ANVIL: 52,
+  // Природа: заснеженный песок, пещерные лианы и светящийся гриб
+  SNOWY_SAND: 53,
+  VINE: 54,
+  GLOW_SHROOM: 55,
 };
 
 // tiles: [top, bottom, side] — индексы тайлов атласа
@@ -123,6 +127,12 @@ export const BLOCKS = [
   { id: 51, name: 'fence', solid: true, tiles: [57, 57, 57], break: 'default', tool: 'wood', shape: 'fence', fence: true },
   // Наковальня: станция для инструментов выше каменных
   { id: 52, name: 'anvil', solid: true, tiles: [58, 58, 59, 60], front: 'pz', break: 'slow', tool: 'stone', interactive: 'anvil', anvil: true },
+  // Заснеженный песок: песчаный пляж холодных зон со снежной коркой
+  { id: 53, name: 'snowy_sand', solid: true, tiles: [13, 5, 61], break: 'fast' },
+  // Пещерная лиана: свисает с потолка, срывается мгновенно
+  { id: 54, name: 'vine', solid: false, tiles: [62, 62, 62], break: 'fast', transparent: true, decor: true, hang: true },
+  // Светящийся пещерный гриб: растение, которое немного освещает вокруг
+  { id: 55, name: 'glow_shroom', solid: false, tiles: [63, 63, 63], break: 'fast', transparent: true, decor: true, emissive: true, lightRadius: 5.5 },
 ];
 
 // Плотная (без просветов) текстура листвы для внутренних граней кроны
@@ -145,6 +155,7 @@ export const BLOCK_NAMES = {
     41: 'Настенный факел', 42: 'Настенный факел', 43: 'Настенный факел', 44: 'Настенный факел', 45: 'Настенный факел',
     46: 'Сундук', 47: 'Сундук', 48: 'Сундук', 49: 'Сундук',
     50: 'Берёзовые доски', 51: 'Забор', 52: 'Наковальня',
+    53: 'Заснеженный песок', 54: 'Лиана', 55: 'Светящийся гриб',
   },
   en: {
     1: 'Grass', 2: 'Dirt', 3: 'Stone', 4: 'Cobblestone', 5: 'Sand',
@@ -161,6 +172,7 @@ export const BLOCK_NAMES = {
     41: 'Wall torch', 42: 'Wall torch', 43: 'Wall torch', 44: 'Wall torch', 45: 'Wall torch',
     46: 'Chest', 47: 'Chest', 48: 'Chest', 49: 'Chest',
     50: 'Birch planks', 51: 'Fence', 52: 'Anvil',
+    53: 'Snowy sand', 54: 'Vine', 55: 'Glow mushroom',
   },
 };
 
@@ -176,7 +188,7 @@ export const BUILDER_PALETTE = [
   BLOCK.BIRCH_LOG, BLOCK.BIRCH_LEAVES, BLOCK.SPRUCE_LOG, BLOCK.SPRUCE_LEAVES,
   BLOCK.SANDSTONE, BLOCK.MOSSY, BLOCK.GRAVEL, BLOCK.ICE, BLOCK.CACTUS,
   BLOCK.COAL_ORE, BLOCK.IRON_ORE, BLOCK.GOLD_ORE, BLOCK.DIAMOND_ORE,
-  BLOCK.OBSIDIAN,
+  BLOCK.OBSIDIAN, BLOCK.VINE, BLOCK.GLOW_SHROOM,
 ];
 
 const FULL_BOUNDS = Object.freeze({ minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 });

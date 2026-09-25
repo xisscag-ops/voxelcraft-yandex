@@ -1,5 +1,5 @@
 // Мир: чанки-колонны, генерация рельефа, деревья, правки игрока
-import { BLOCK, isDecor, isSolid, isTorch, torchSupport } from './blocks.js';
+import { BLOCK, BLOCKS, isDecor, isSolid, isTorch, torchSupport } from './blocks.js';
 import { fbm2d, makeRng, hash3 } from './noise.js';
 import { CONFIG } from './config.js';
 
@@ -19,6 +19,8 @@ const CAVE_MAX_REACH = 76;      // максимальная длина хода 
 const CAVE_BOTTOM = 5;          // ниже — сланцевое дно
 const CAVE_TOP = 46;            // выше ходы не поднимаются
 const CAVE_CRUST = 4;           // толщина нетронутой породы под поверхностью
+// Периметр колодца 3×3 — по нему идёт винтовая лестница входа в пещеру
+const RING_8 = [[-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0]];
 
 function idx(x, y, z) {
   return (y * S + z) * S + x;
@@ -34,6 +36,7 @@ export class Chunk {
     this.meshOpaque = null;
     this.meshWater = null;
     this.generated = false;
+    this.genLights = null;   // [{x,y,z}] — светящиеся растения, выращенные генератором
   }
   get(x, y, z) { return this.blocks[idx(x, y, z)]; }
   set(x, y, z, v) { this.blocks[idx(x, y, z)] = v; }
@@ -47,6 +50,9 @@ export class World {
     this.seaLevel = SEA;
     this.chunks = new Map();          // "cx,cz" -> Chunk
     this.edits = new Map();           // "x,y,z" -> id (правки игрока, сохраняются)
+    this.lootChests = new Set();      // "x,y,z" — сундуки с лутом, сгенерированные в пещерах
+    this.waterQueue = [];             // клетки, которым предстоит проверка на затекание воды
+    this.waterQueued = new Map();     // дедупликация очереди: ключ -> минимальный запас «шагов»
     this.onUnsupportedDecor = null;   // (x,y,z,id) — растение/факел лишились опоры
     this.onBlockReplaced = null;      // (x,y,z,previous,id) — блок в клетке сменился
   }
@@ -97,15 +103,19 @@ export class World {
     const c = Math.tanh((cont - 0.5) * 5);
     let h = SEA + 3 + c * 18 + (hills - 0.5) * 12;
     const mountain = Math.max(0, mt - 0.46) / 0.54;
-    h += Math.pow(mountain, 1.5) * 30;
+    // Острые пики: степень выше единицы делает подножие пологим, а вершину — крутой;
+    // зазубренный гребень (ridge) добавляет горам резкие кромки.
+    h += Math.pow(mountain, 1.9) * 34;
     const ridge = 1 - Math.abs(ridgeN * 2 - 1);
-    h += ridge * ridge * mountain * 16;
+    h += Math.pow(ridge, 3) * mountain * 22;
     return Math.max(3, Math.min(H - 3, Math.round(h)));
   }
 
   /**
    * Детерминированная геологическая особенность рядом с колонкой.
-   * Карьеры формируют уступчатые выемки, а разломы — длинные узкие ущелья.
+   * Карьеры и разломы встречаются в нескольких вариантах формы: чаши,
+   * террасные выемки, узкие каньоны-карьеры, глубокие колодцы; у разломов —
+   * прямые и сильно изогнутые, с разными профилями глубины и ширины.
    */
   featureAt(wx, wz) {
     const gx0 = Math.floor(wx / FEATURE_CELL);
@@ -122,16 +132,43 @@ export class World {
         let feature;
 
         if (type === 'quarry') {
+          // Четыре силуэта: округлая чаша, террасный карьер, вытянутый каньон и колодец
+          const styleRoll = hash3(gx, 1201, gz, this.seed);
+          const style = styleRoll < 0.34 ? 'bowl' : styleRoll < 0.62 ? 'terrace' : styleRoll < 0.85 ? 'canyon' : 'pit';
           const rx = 11 + hash3(gx, 401, gz, this.seed) * 8;
           const rz = 10 + hash3(gx, 503, gz, this.seed) * 7;
           const depth = 9 + hash3(gx, 601, gz, this.seed) * 9;
-          // Неровный край и ступени вместо идеально круглой воронки.
-          const rim = Math.sin(dx * 0.37 + gx) * Math.sin(dz * 0.31 + gz) * 0.035;
-          const radius = Math.hypot(dx / rx, dz / rz) + rim;
-          if (radius >= 1) continue;
-          const cut = Math.floor(((1 - radius) * depth) / 3) * 3;
+          let radius, cut;
+          if (style === 'canyon') {
+            // Каньон: узкий длинный карьер со ступенчатыми стенками
+            const angle = hash3(gx, 1301, gz, this.seed) * Math.PI;
+            const along = dx * Math.cos(angle) + dz * Math.sin(angle);
+            const across = -dx * Math.sin(angle) + dz * Math.cos(angle);
+            const len = 16 + hash3(gx, 1403, gz, this.seed) * 8;
+            const wave = Math.sin(along * 0.22 + gx) * 1.3;
+            radius = Math.max(Math.abs(along) / len, Math.abs(across + wave) / (rz * 0.55));
+            if (radius >= 1) continue;
+            const step = 4;
+            cut = Math.floor(((1 - radius * radius) * depth * 1.25) / step) * step;
+          } else if (style === 'pit') {
+            // Глубокий колодец: маленький радиус, большая глубина, почти отвесные стены
+            radius = Math.hypot(dx / (rx * 0.5), dz / (rz * 0.5));
+            if (radius >= 1) continue;
+            const step = 2;
+            cut = Math.floor((Math.pow(1 - radius, 0.55) * depth * 1.7) / step) * step;
+          } else {
+            const rim = Math.sin(dx * 0.37 + gx) * Math.sin(dz * 0.31 + gz) * 0.035;
+            radius = Math.hypot(dx / rx, dz / rz) + rim;
+            if (radius >= 1) continue;
+            if (style === 'terrace') {
+              const step = 2 + ((hash3(gx, 1503, gz, this.seed) * 2) | 0);
+              cut = Math.floor(((1 - radius) * depth * 1.15) / step) * step;
+            } else {
+              cut = Math.floor(((1 - radius) * depth) / 3) * 3;
+            }
+          }
           if (cut < 3) continue;
-          feature = { type, cut, radius, rx, rz, depth, x: fx, z: fz };
+          feature = { type, style, cut, radius, rx, rz, depth, x: fx, z: fz };
         } else {
           const angle = hash3(gx, 701, gz, this.seed) * Math.PI * 2;
           const along = dx * Math.cos(angle) + dz * Math.sin(angle);
@@ -139,17 +176,33 @@ export class World {
           const halfLength = 44 + hash3(gx, 809, gz, this.seed) * 24;
           if (Math.abs(along) >= halfLength) continue;
           const phase = hash3(gx, 907, gz, this.seed) * Math.PI * 2;
-          const bend = Math.sin(along * 0.052 + phase) * 2.4
-            + Math.sin(along * 0.13 - phase) * 0.7;
-          const width = 3.2 + hash3(gx, 1009, gz, this.seed) * 2.7;
+          // Два характера изгиба: плавная меандра или резкий рывок в сторону
+          const bendStyle = hash3(gx, 1601, gz, this.seed);
+          const bend = bendStyle < 0.5
+            ? Math.sin(along * 0.052 + phase) * 2.4 + Math.sin(along * 0.13 - phase) * 0.7
+            : Math.sin(along * 0.028 + phase) * 3.6 + Math.sin(along * 0.19 - phase) * 1.6;
+          // Ширина: ровная, клиновидная или с «карманами» по сторонам
+          const widthRoll = hash3(gx, 1703, gz, this.seed);
+          const t = along / halfLength;                       // -1..1 вдоль разлома
+          let width = 3.2 + hash3(gx, 1009, gz, this.seed) * 2.7;
+          if (widthRoll < 0.33) width *= 1 - Math.abs(t) * 0.4;                    // сужается к концам
+          else if (widthRoll < 0.66) width *= 1 + Math.sin(t * 5 + phase) * 0.35;  // карманы
           const acrossDist = Math.abs(across - bend);
           const radius = acrossDist / width;
           if (radius >= 1) continue;
           const depth = 19 + hash3(gx, 1103, gz, this.seed) * 17;
-          // Обрывчатые стенки с несколькими каменными террасами по краям.
-          const cut = Math.floor((depth * Math.pow(1 - radius, 0.42)) / 2) * 2;
+          // Профиль глубины: у половины разломов дно идёт уступами к одному концу,
+          // у остальных — чаша с обрывистыми стенками и несколькими террасами.
+          let cut;
+          if (bendStyle >= 0.5) {
+            const taper = 1 - Math.max(0, t) * 0.55;         // глубже к одному концу
+            const step = 2;
+            cut = Math.floor((depth * Math.pow(Math.max(0, 1 - radius), 0.42) * taper) / step) * step;
+          } else {
+            cut = Math.floor((depth * Math.pow(1 - radius, 0.42)) / 2) * 2;
+          }
           if (cut < 2) continue;
-          feature = { type, cut, radius, width, depth, along, halfLength, x: fx, z: fz };
+          feature = { type, style: bendStyle >= 0.5 ? 'tapered' : 'meander', cut, radius, width, depth, along, halfLength, x: fx, z: fz };
         }
         if (!best || feature.cut > best.cut) best = feature;
       }
@@ -321,7 +374,7 @@ export class World {
               b = h < 7 ? BLOCK.SLATE
                 : feature.type === 'quarry' && hash3(wx, y, wz, seed + 3300) < 0.07 ? BLOCK.GRAVEL
                   : BLOCK.STONE;
-            } else if (h <= SEA + 2) b = BLOCK.SAND;         // пляжи
+            } else if (h <= SEA + 2) b = cold ? BLOCK.SNOWY_SAND : BLOCK.SAND;  // пляжи; в холодных зонах песок под снегом
             else if (h >= PEAK_H) b = BLOCK.SNOW;            // снежные вершины
             else if (rocky) b = BLOCK.STONE;
             else if (cold) b = BLOCK.SNOW;
@@ -376,65 +429,97 @@ export class World {
       }
     }
 
-    // Вход в пещеру: в самом «тонком» месте чанка прорубаем колодец от поверхности
-    // к полости, а внутри — каменную винтовую лестницу от поверхности до самого
-    // пола пещеры. Спускаться и выбираться можно шагом, отвесных ям нет.
-    let best = -1, bestX = 0, bestZ = 0;
-    for (let z = 1; z < S - 1; z++) {
-      for (let x = 1; x < S - 1; x++) {
+    // Вход в пещеру: ищем место у подножия склона (подошва горы, холма или
+    // обрыва) с тонкой породой над полостью и прорубаем просторный колодец 3×3
+    // с каменной винтовой лестницей-спиралью вокруг центрального столба.
+    let bestScore = -Infinity, bestX = 0, bestZ = 0, bestTop = 0;
+    for (let z = 2; z < S - 2; z++) {
+      for (let x = 2; x < S - 2; x++) {
         const top = carvedTop[z * S + x];
         if (top < 4) continue;
         const h = terrainHeight[z * S + x];
         if (h <= SEA + 2) continue;                    // пляжи и дно не вскрываем
-        const depth = h - 1 - top;                     // сколько породы над полостью
-        if (depth < 2 || depth > 13) continue;
+        const depth = h - 1 - top;
+        if (depth < 2 || depth > 14) continue;
         // нужна настоящая полость, а не подрезанный блок
         if (chunk.get(x, top - 1, z) !== BLOCK.AIR) continue;
         // и ход достаточно глубокий, чтобы спуск был лестницей, а не ямкой
         let floor = top;
         while (floor > 5 && chunk.get(x, floor - 1, z) === BLOCK.AIR) floor--;
         if (h - floor < 7) continue;
-        if (best < 0 || depth < best) { best = depth; bestX = x; bestZ = z; }
+        // Рельеф вокруг: вход тем уместнее, чем выше местность поднимается рядом
+        // (подножие склона), и тем хуже, чем больше вокруг ям и обрывов вниз.
+        let rise = 0, drop = 0;
+        for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1],
+          [2, 0], [-2, 0], [0, 2], [0, -2]]) {
+          const nh = terrainHeight[(z + dz) * S + (x + dx)];
+          rise += Math.max(0, nh - h);
+          drop += Math.max(0, h - nh);
+        }
+        const roll = hash3(ox + x, 4901, oz + z, this.seed);
+        const score = Math.min(rise, 30) * 1.2 - Math.min(drop, 24) * 0.9 - depth * 0.8 + roll * 6;
+        if (score > bestScore) { bestScore = score; bestX = x; bestZ = z; bestTop = top; }
       }
     }
-    if (best >= 0) {
-      const top = carvedTop[bestZ * S + bestX];
-      const SHAFT = [[0, 0], [1, 0], [1, 1], [0, 1]];   // обход по периметру 2×2
-      // Открытый лаз сверху до полости: вскрываем и дерновый слой, иначе вход не найти
-      let minH = H;
-      for (const [dx, dz] of SHAFT) {
-        const x = bestX + dx, z = bestZ + dz;
-        if (x < 0 || z < 0 || x >= S || z >= S) continue;
+    let entX = -1, entZ = -1;          // координаты входа — рядом с ними пол не рвём
+    if (bestScore > -Infinity) {
+      // Вход-колодец 2×2 с винтовой лестницей: на каждом уровне камень ровно
+      // в одной из четырёх колонн по кругу — спуск ступенями по 1–2 блока,
+      // ни одного свободного падения. Колонны входа целиком внутри чанка.
+      entX = Math.max(1, Math.min(S - 3, bestX));
+      entZ = Math.max(1, Math.min(S - 3, bestZ));
+      const shaft = [[entX, entZ], [entX + 1, entZ], [entX + 1, entZ + 1], [entX, entZ + 1]];
+      const hHigh = Math.max(...shaft.map(([x, z]) => terrainHeight[z * S + x]));
+      // Вскрываем колодец: каждую колонну копаем от её собственной бровки вниз
+      for (const [x, z] of shaft) {
         const h = terrainHeight[z * S + x];
-        if (h < minH) minH = h;
-        for (let y = top + 1; y <= h; y++) {
+        for (let y = h; y >= 6; y--) {
           const b = chunk.get(x, y, z);
           if (b === BLOCK.WATER || b === BLOCK.ICE) break;
           chunk.set(x, y, z, BLOCK.AIR);
         }
       }
       // Самый глубокий пол под колодцем — докуда вести лестницу
-      let base = top;
-      for (const [dx, dz] of SHAFT) {
-        const x = bestX + dx, z = bestZ + dz;
-        if (x < 0 || z < 0 || x >= S || z >= S) continue;
-        let y = top;
+      let base = hHigh;
+      for (const [x, z] of shaft) {
+        let y = terrainHeight[z * S + x];
         while (y > 5 && chunk.get(x, y - 1, z) === BLOCK.AIR) y--;
         if (y < base) base = y;
       }
-      // Винтовая лестница: каждая следующая ступень на блок ниже и на блок в сторону.
-      // Начинаем от самой низкой стенки лаза, чтобы первый шаг был в один блок.
-      for (let y = minH - 1, k = 0; y > base; y--, k++) {
-        const [dx, dz] = SHAFT[k % 4];
-        const x = bestX + dx, z = bestZ + dz;
-        if (x < 0 || z < 0 || x >= S || z >= S) continue;
-        if (y > terrainHeight[z * S + x]) continue;     // над землёй ступеней не ставим
-        if (chunk.get(x, y, z) === BLOCK.AIR) chunk.set(x, y, z, BLOCK.STONE);
+      // Ступени по кругу — ровно одна колонна на уровень, спуск по 1–2 блока.
+      // Выше бровки колонны не ставим; на самой бровке дёрн меняем на камень.
+      let k = 0;
+      for (let y = hHigh - 1; y > base; y--, k++) {
+        const [x, z] = shaft[k % 4];
+        if (y > terrainHeight[z * S + x]) continue;
+        const b = chunk.get(x, y, z);
+        if (b === BLOCK.AIR || b === BLOCK.GRASS || b === BLOCK.DIRT
+          || b === BLOCK.SAND || b === BLOCK.SNOW || b === BLOCK.SNOWY_SAND
+          || b === BLOCK.STONE) {
+          chunk.set(x, y, z, BLOCK.STONE);
+        }
       }
     }
 
     // Отдельных вертикальных колодцев больше нет: каждый вход — лестница,
     // по которой можно спуститься и подняться без падений.
+    // Случайные выходы пещер на поверхность «запечатываем»: если полость
+    // вскрывается сама по себе, а не винтовой лестницей, закрыём её дёрном —
+    // иначе по карте попадаются отвесные дыры, в которые нельзя спуститься.
+    for (let x = 0; x < S; x++) {
+      for (let z = 0; z < S; z++) {
+        if (entX >= 0 && Math.abs(x - entX) <= 1 && Math.abs(z - entZ) <= 1) continue;
+        const h = terrainHeight[z * S + x];
+        if (h <= SEA + 2) continue;
+        let y = h;
+        let filled = 0;
+        while (y > 4 && chunk.get(x, y, z) === BLOCK.AIR && filled < 6) {
+          chunk.set(x, y, z, filled < 2 ? BLOCK.DIRT : BLOCK.STONE);
+          y--;
+          filled++;
+        }
+      }
+    }
 
     // Руды и гравий в каменных слоях
     const rngOre = makeRng(hash3(cx, 7, cz, seed) * 0x7fffffff);
@@ -507,10 +592,123 @@ export class World {
       }
     }
 
-    // Деревья разных пород (полностью внутри чанка, чтобы не пересекать границы)
+    // Рельеф пола пещер: полублоки-ступени и обрывы-уступы, чтобы ходы не были
+    // «коридором с ровным полом». Детерминировано по координатам клетки.
+    for (let z = 1; z < S - 1; z++) {
+      for (let x = 1; x < S - 1; x++) {
+        // винтовую лестницу входа не разрушаем
+        if (entX >= 0 && Math.abs(x - entX) <= 1 && Math.abs(z - entZ) <= 1) continue;
+        const yMax = Math.min(CAVE_TOP + 1, terrainHeight[z * S + x] - CAVE_CRUST + 1);
+        for (let y = 7; y < yMax; y++) {
+          if (chunk.get(x, y, z) !== BLOCK.AIR) continue;
+          if (chunk.get(x, y + 1, z) !== BLOCK.AIR) continue;   // нужен проход в рост
+          const floor = chunk.get(x, y - 1, z);
+          if (floor !== BLOCK.STONE && floor !== BLOCK.SLATE && floor !== BLOCK.MOSSY) continue;
+          const wx = ox + x, wz = oz + z;
+          const roll = hash3(wx, 6107, wz, this.seed);
+          if (roll < 0.14) {
+            chunk.set(x, y - 1, z, BLOCK.COBBLE_SLAB);          // полублок-ступенька
+          } else if (roll < 0.24) {
+            // Небольшой обрыв: выламываем пол на 1-2 блока — ямки и уступы
+            const deep = 1 + ((hash3(wx, 6207, wz, this.seed) * 2) | 0);
+            for (let dy = 0; dy < deep; dy++) {
+              const below = chunk.get(x, y - 1 - dy, z);
+              if (below === BLOCK.STONE || below === BLOCK.SLATE || below === BLOCK.MOSSY) {
+                chunk.set(x, y - 1 - dy, z, BLOCK.AIR);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Сундуки с лутом в глубоких гротах: редко, на сухом полу, подальше от входа
+    {
+      const rngChest = makeRng(hash3(cx, 71, cz, seed) * 0x7fffffff);
+      if (rngChest() < 0.42) {
+        for (let attempt = 0; attempt < 10; attempt++) {
+          const x = 2 + ((rngChest() * (S - 4)) | 0);
+          const z = 2 + ((rngChest() * (S - 4)) | 0);
+          const yMax = Math.min(CAVE_TOP, terrainHeight[z * S + x] - CAVE_CRUST - 4);
+          if (yMax < 10) continue;
+          const y = 8 + ((rngChest() * (yMax - 8)) | 0);
+          if (chunk.get(x, y, z) !== BLOCK.AIR) continue;
+          if (chunk.get(x, y + 1, z) !== BLOCK.AIR) continue;
+          const floor = chunk.get(x, y - 1, z);
+          if (floor !== BLOCK.STONE && floor !== BLOCK.SLATE && floor !== BLOCK.MOSSY) continue;
+          const faceRoll = rngChest();
+          const facing = faceRoll < 0.25 ? BLOCK.CHEST : faceRoll < 0.5 ? BLOCK.CHEST_NZ
+            : faceRoll < 0.75 ? BLOCK.CHEST_PX : BLOCK.CHEST_NX;
+          chunk.set(x, y, z, facing);
+          this.lootChests.add(`${ox + x},${y},${oz + z}`);
+          break;
+        }
+      }
+    }
+
+    // Пещерная флора: светящиеся грибы на полу группками и лианы с потолка.
+    // Гриб — слабый источник света (свет запекается в меш чанка, см. genLights).
+    chunk.genLights = [];
+    {
+      const rngFlora = makeRng(hash3(cx, 83, cz, seed) * 0x7fffffff);
+      const groups = 2 + ((rngFlora() * 3) | 0);
+      for (let g = 0; g < groups; g++) {
+        const gx = 1 + ((rngFlora() * (S - 2)) | 0);
+        const gz = 1 + ((rngFlora() * (S - 2)) | 0);
+        const gMax = Math.min(CAVE_TOP, terrainHeight[gz * S + gx] - CAVE_CRUST);
+        if (gMax < 12) continue;
+        const gy = 7 + ((rngFlora() * (gMax - 7)) | 0);
+        const patch = 1 + ((rngFlora() * 3) | 0);
+        for (let i = 0; i < patch * 3; i++) {
+          const x = gx + ((rngFlora() * 3) | 0) - 1;
+          const z = gz + ((rngFlora() * 3) | 0) - 1;
+          if (x < 1 || z < 1 || x >= S - 1 || z >= S - 1) continue;
+          const dy = ((rngFlora() * 3) | 0) - 1;
+          const y = gy + dy;
+          if (y < 7 || y >= H - 1) continue;
+          if (chunk.get(x, y, z) !== BLOCK.AIR || chunk.get(x, y + 1, z) !== BLOCK.AIR) continue;
+          const floor = chunk.get(x, y - 1, z);
+          if (floor !== BLOCK.STONE && floor !== BLOCK.SLATE && floor !== BLOCK.MOSSY) continue;
+          if (rngFlora() < 0.5) {
+            chunk.set(x, y, z, BLOCK.GLOW_SHROOM);
+            chunk.genLights.push({ x: ox + x, y, z: oz + z });
+          }
+        }
+      }
+      // Лианы: свисают с каменных потолков гротов, плетьми по 1-4 блока
+      for (let z = 1; z < S - 1; z++) {
+        for (let x = 1; x < S - 1; x++) {
+          const yMax = Math.min(CAVE_TOP + 1, terrainHeight[z * S + x] - CAVE_CRUST + 1);
+          for (let y = 8; y < yMax; y++) {
+            if (chunk.get(x, y, z) !== BLOCK.AIR) continue;
+            const ceil = chunk.get(x, y + 1, z);
+            if (ceil !== BLOCK.STONE && ceil !== BLOCK.SLATE && ceil !== BLOCK.MOSSY) continue;
+            const below = chunk.get(x, y - 1, z);
+            if (below !== BLOCK.AIR) continue;
+            const roll = hash3(ox + x, 6307 + y, oz + z, this.seed);
+            if (roll >= 0.05) continue;
+            const len = 1 + (((roll * 400) | 0) % 4);
+            for (let dy = 0; dy < len; dy++) {
+              const vy = y - dy;
+              if (vy < 6) break;
+              if (chunk.get(x, vy, z) !== BLOCK.AIR) break;
+              chunk.set(x, vy, z, BLOCK.VINE);
+            }
+          }
+        }
+      }
+    }
+
+    // Деревья разных пород (полностью внутри чанка, чтобы не пересекать границы).
+    // Между деревьями держим дистанцию: кроны разных пород не должны
+    // срастаться в один сплошной комок листвы.
     const rng = makeRng(hash3(cx, 0, cz, seed) * 0x7fffffff);
-    const treeCount = 3 + ((rng() * 3) | 0);
-    // Каждое четвёртое дерево — «большое»: высокий толстый ствол, ветки и широкая крона
+    const treeCount = 5 + ((rng() * 3) | 0);   // пробуем чаще — часть отпадёт по дистанции
+    const treeSpots = [];                      // занятые кронами места: {x, z, r}
+    const tooClose = (x, z, r) => treeSpots.some((s) => {
+      const dx = s.x - x, dz = s.z - z;
+      return dx * dx + dz * dz < (s.r + r + 1) * (s.r + r + 1);
+    });
     let bigCounter = 0;
     for (let t = 0; t < treeCount; t++) {
       const tx = 3 + ((rng() * (S - 6)) | 0);
@@ -520,7 +718,14 @@ export class World {
       const surface = chunk.get(tx, th, tz);
       if (surface !== BLOCK.GRASS && surface !== BLOCK.SNOW) continue;
       const cold = this.isCold(ox + tx, oz + tz);
-      const tree = (surface === BLOCK.SNOW || cold) ? 'spruce' : (rng() < 0.32 ? 'birch' : 'oak');
+      // Порода зависит от биома; в холоде — ели и сосны, в тепле больше выбора
+      let tree;
+      const pick = rng();
+      if (surface === BLOCK.SNOW || cold) {
+        tree = pick < 0.55 ? 'spruce' : 'pine';
+      } else {
+        tree = pick < 0.3 ? 'birch' : pick < 0.44 ? 'tall_birch' : pick < 0.58 ? 'pine' : 'oak';
+      }
       const put = (lx, ly, lz, id, onlyAir = true) => {
         if (lx < 0 || lz < 0 || lx >= S || lz >= S || ly < 0 || ly >= H) return;
         if (onlyAir && chunk.get(lx, ly, lz) !== BLOCK.AIR) return;
@@ -528,15 +733,19 @@ export class World {
       };
       // Большая крона шире на 2 клетки, поэтому такому дереву нужно больше места
       const bigRoll = rng();
-      const isBig = bigRoll < 0.26 && tree !== 'birch' && bigCounter < 2;
+      const isBig = bigRoll < 0.26 && (tree === 'oak' || tree === 'spruce') && bigCounter < 2;
+      const crownR = isBig ? 4 : 2;
+      if (tooClose(tx, tz, crownR)) continue;              // не сливаемся с соседями
       if (isBig) {
         if (tx < 5 || tz < 5 || tx >= S - 5 || tz >= S - 5) continue;
         if (th + 14 >= H) continue;
         bigCounter++;
+        treeSpots.push({ x: tx, z: tz, r: crownR });
         if (tree === 'spruce') growBigSpruce(tx, tz, th, put);
         else growBigOak(tx, tz, th, put);
         continue;
       }
+      treeSpots.push({ x: tx, z: tz, r: crownR });
       if (tree === 'oak') {
         const trunkH = 4 + ((rng() * 3) | 0);
         for (let dy = trunkH - 2; dy <= trunkH + 1; dy++) {
@@ -562,12 +771,43 @@ export class World {
           }
         }
         for (let dy = 1; dy <= trunkH; dy++) chunk.set(tx, th + dy, tz, BLOCK.BIRCH_LOG);
+      } else if (tree === 'tall_birch') {
+        // Стройная высокая берёза: тонкий ствол 7-10 и узкая крона-яйцо
+        const trunkH = 7 + ((rng() * 4) | 0);
+        for (let dy = trunkH - 3; dy <= trunkH + 1; dy++) {
+          const r = dy >= trunkH - 1 ? 1 : 2;
+          for (let dx = -r; dx <= r; dx++) {
+            for (let dz = -r; dz <= r; dz++) {
+              if ((dx * dx + dz * dz) > r * r + 1) continue;
+              if (Math.abs(dx) === r && Math.abs(dz) === r && rng() < 0.5) continue;
+              put(tx + dx, th + dy, tz + dz, BLOCK.BIRCH_LEAVES);
+            }
+          }
+        }
+        for (let dy = 1; dy <= trunkH; dy++) chunk.set(tx, th + dy, tz, BLOCK.BIRCH_LOG);
+      } else if (tree === 'pine') {
+        // Сосна: высокий голый ствол и узкая крона-зонтик из еловой хвои наверху
+        const trunkH = 7 + ((rng() * 4) | 0);
+        for (let dy = trunkH - 2; dy <= trunkH; dy++) {
+          const r = dy === trunkH - 2 ? 2 : 1;
+          for (let dx = -r; dx <= r; dx++) {
+            for (let dz = -r; dz <= r; dz++) {
+              if (Math.abs(dx) + Math.abs(dz) > r + 1) continue;
+              if (r > 0 && Math.abs(dx) === r && Math.abs(dz) === r && rng() < 0.6) continue;
+              put(tx + dx, th + dy, tz + dz, BLOCK.SPRUCE_LEAVES);
+            }
+          }
+        }
+        put(tx, th + trunkH + 1, tz, BLOCK.SPRUCE_LEAVES);
+        put(tx, th + trunkH + 2, tz, BLOCK.SPRUCE_LEAVES);
+        for (let dy = 1; dy <= trunkH; dy++) chunk.set(tx, th + dy, tz, BLOCK.SPRUCE_LOG);
       } else {
-        // Ель: узкая коническая крона
+        // Ель: узкая коническая крона. Верх ствола обязательно «одет» хвоей:
+        // кольцо r=1 на уровне макушки и шапка над ним — голых блоков не остаётся.
         const trunkH = 6 + ((rng() * 3) | 0);
         for (let dy = 2; dy <= trunkH + 1; dy++) {
           const left = trunkH + 1 - dy;
-          const r = left <= 1 ? 0 : left <= 3 ? 1 : 2;
+          const r = left <= 0 ? 0 : left <= 2 ? 1 : 2;
           for (let dx = -r; dx <= r; dx++) {
             for (let dz = -r; dz <= r; dz++) {
               if (Math.abs(dx) + Math.abs(dz) > r + 1) continue;
@@ -664,6 +904,14 @@ export class World {
       }
       put(tx, top + 1, tz, BLOCK.SPRUCE_LEAVES);
       put(tx, top + 2, tz, BLOCK.SPRUCE_LEAVES);
+      // Кольцо хвои на уровне макушки — верхний бревенчатый блок не голый
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) {
+        if (Math.abs(dx) + Math.abs(dz) > 1 && rng() < 0.5) continue;
+        put(tx + dx, top, tz + dz, BLOCK.SPRUCE_LEAVES);
+      }
+      // Хвоя над второй колонной ствола — иначе её верх остаётся голым блоком
+      put(tx + 1, th + trunkH - 1, tz, BLOCK.SPRUCE_LEAVES);
+      put(tx + 1, th + trunkH, tz, BLOCK.SPRUCE_LEAVES);
       // Ствол 2×2 и торчащая макушка
       for (let dy = 1; dy <= trunkH; dy++) {
         chunk.set(tx, th + dy, tz, BLOCK.SPRUCE_LOG);
@@ -761,8 +1009,9 @@ export class World {
         }
       }
     }
-    // Свет факела выходит за пределы чанка — обновляем соседние меши.
-    if (isTorch(previous) || isTorch(id)) {
+    // Свет факела и светящихся растений выходит за пределы чанка — обновляем
+    // соседние меши, чтобы запечённый свет не остался устаревшим.
+    if (isTorch(previous) || isTorch(id) || BLOCKS[previous]?.emissive || BLOCKS[id]?.emissive) {
       for (let dz = -1; dz <= 1; dz++) {
         for (let dx = -1; dx <= 1; dx++) {
           if (dx || dz) this.markDirty(cx + dx, cz + dz);
@@ -774,7 +1023,60 @@ export class World {
     if (lx === S - 1) this.markDirty(cx + 1, cz);
     if (lz === 0) this.markDirty(cx, cz - 1);
     if (lz === S - 1) this.markDirty(cx, cz + 1);
+    // Вода: в освободившуюся клетку (и к её соседям) может затечь вода из океана,
+    // озера или упавшего сверху потока — ставим их в очередь на проверку.
+    if (previous !== BLOCK.AIR && id !== BLOCK.WATER) {
+      this.scheduleWater(wx, wy, wz, 0);
+      this.scheduleWater(wx + 1, wy, wz, 0);
+      this.scheduleWater(wx - 1, wy, wz, 0);
+      this.scheduleWater(wx, wy, wz + 1, 0);
+      this.scheduleWater(wx, wy, wz - 1, 0);
+      this.scheduleWater(wx, wy - 1, wz, 0);
+    }
     return true;
+  }
+
+  /** Клетка ждёт проверки на затекание воды (с лимитом «дальности» по горизонтали) */
+  scheduleWater(x, y, z, hops = 0) {
+    if (this.waterQueue.length > 6000) return;
+    const key = `${x},${y},${z}`;
+    const prev = this.waterQueued.get(key);
+    if (prev !== undefined && prev <= hops) return;
+    this.waterQueued.set(key, hops);
+    this.waterQueue.push({ x, y, z, hops });
+  }
+
+  /**
+   * Растекание воды. Клетка заполняется, если сверху или сбоку есть вода:
+   * выкопанная в океане яма заполняется, поток льётся вниз и растекается
+   * в стороны на конечное число клеток (иначе он бежал бы бесконечно).
+   * Вызывается из игрового цикла, обрабатывает до maxCells клеток за кадр.
+   */
+  updateWater(maxCells = 48) {
+    if (!this.waterQueue.length) return;
+    const MAX_HOPS = 14;
+    let processed = 0;
+    while (processed < maxCells && this.waterQueue.length) {
+      const { x, y, z, hops } = this.waterQueue.shift();
+      this.waterQueued.delete(`${x},${y},${z}`);
+      if (y < 0 || y >= H) continue;
+      if (this.getBlock(x, y, z) !== BLOCK.AIR) continue;
+      const above = y + 1 < H ? this.getBlock(x, y + 1, z) : BLOCK.AIR;
+      const fromSide = this.getBlock(x + 1, y, z) === BLOCK.WATER || this.getBlock(x - 1, y, z) === BLOCK.WATER
+        || this.getBlock(x, y, z + 1) === BLOCK.WATER || this.getBlock(x, y, z - 1) === BLOCK.WATER;
+      if (above !== BLOCK.WATER && !fromSide) continue;
+      if (this.setBlock(x, y, z, BLOCK.WATER)) {
+        processed++;
+        // Дальше вода течёт вниз без ограничений, в стороны — пока не иссякнет запас
+        this.scheduleWater(x, y - 1, z, 0);
+        if (hops < MAX_HOPS) {
+          this.scheduleWater(x + 1, y, z, hops + 1);
+          this.scheduleWater(x - 1, y, z, hops + 1);
+          this.scheduleWater(x, y, z + 1, hops + 1);
+          this.scheduleWater(x, y, z - 1, hops + 1);
+        }
+      }
+    }
   }
 
   markDirty(cx, cz) {

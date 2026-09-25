@@ -130,6 +130,32 @@ html, body {
   cursor: pointer;
 }
 
+/* Кнопка справочника в HUD: левее кнопки инвентаря */
+.icon-btn.guide-btn {
+  right: 120px;
+  font-size: 19px;
+}
+
+/* ---------- Справочник по игре ---------- */
+.guide-panel { max-width: 640px; }
+.guide-text {
+  text-align: left;
+  font-size: 14px;
+  line-height: 1.55;
+  color: #d4daea;
+  max-height: 52vh;
+  overflow-y: auto;
+  padding: 4px;
+  scrollbar-width: thin;
+}
+.guide-section { margin-bottom: 14px; }
+.guide-section h3 {
+  margin: 6px 0 4px;
+  font-size: 15px;
+  color: #9be064;
+}
+.guide-section b { color: #9be064; }
+
 /* ---------- Сенсорное управление ---------- */
 #touch-controls { position: fixed; inset: 0; z-index: 12; pointer-events: none; }
 #look-zone { position: absolute; right: 0; top: 0; width: 55%; height: 100%; pointer-events: none; }

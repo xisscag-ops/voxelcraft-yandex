@@ -124,6 +124,7 @@ export class Input {
       if (e.code === 'Escape') this.handlers.onPause?.();
       if (e.code === 'KeyE') this.handlers.onToggleInventory?.();
       if (e.code === 'KeyI') this.handlers.onToggleInventory?.();
+      if (e.code === 'KeyH') this.handlers.onGuide?.();
       if (e.code === 'F1') e.preventDefault();
       if (e.code.startsWith('Digit')) {
         const n = Number(e.code.slice(5));

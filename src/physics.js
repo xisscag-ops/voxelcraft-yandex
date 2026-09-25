@@ -1,6 +1,6 @@
 // Физика игрока: AABB против вокселей, ходьба, прыжки, плавание, полёт
 import { CONFIG } from './config.js';
-import { isSolid, isLiquid, isSlab, blockBounds } from './blocks.js';
+import { BLOCK, isSolid, isLiquid, isSlab, blockBounds } from './blocks.js';
 
 const HW = CONFIG.PLAYER_WIDTH / 2;
 const PH = CONFIG.PLAYER_HEIGHT;
@@ -194,10 +194,20 @@ export class Player {
       this._move(dt);
     } else {
       const sp = this.sneaking ? CONFIG.SNEAK_SPEED : (input.sprint ? CONFIG.SPRINT_SPEED : CONFIG.WALK_SPEED);
-      const accel = this.onGround ? 12 : 4;
+      // Лёд скользкий: разгон и торможение в разы слабее — персонаж заносит,
+      // а после отпускания клавиш он ещё катится по инерции.
+      const under = w.getBlock(Math.floor(this.pos.x), Math.floor(this.pos.y - 0.2), Math.floor(this.pos.z));
+      const icy = this.onGround && under === BLOCK.ICE;
+      const accel = this.onGround ? (icy ? 1.7 : 12) : 4;
       const targetX = mx * sp, targetZ = mz * sp;
       this.vel.x += (targetX - this.vel.x) * Math.min(1, accel * dt);
       this.vel.z += (targetZ - this.vel.z) * Math.min(1, accel * dt);
+      // На льду без ввода скорость гаснет медленно — катимся по инерции
+      if (icy && mlen < 0.05) {
+        const keep = Math.pow(0.45, dt);
+        this.vel.x *= keep;
+        this.vel.z *= keep;
+      }
       this.vel.y -= CONFIG.GRAVITY * dt;
       if (input.jump && this.onGround) {
         this.vel.y = CONFIG.JUMP_SPEED;

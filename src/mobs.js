@@ -1584,6 +1584,45 @@ export class MobManager {
     return this._addMob('zombie', x, y, z);
   }
 
+  /**
+   * Пещерный спавн: глубоко под землёй в темноте заводятся пауки и зомби
+   * в любое время суток — игроку в пещере нужен факел.
+   */
+  trySpawnCaveMob(player) {
+    const playerPos = player.pos || player;
+    if (this.difficulty === 'peaceful') return null;
+    const px = Math.floor(playerPos.x), pz = Math.floor(playerPos.z);
+    const surf = this.world.heightAt(px, pz);
+    if (playerPos.y > surf - 5) return null;      // игрок не под землёй
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const ang = Math.random() * Math.PI * 2;
+      const r = 10 + Math.random() * 16;
+      const x = Math.floor(playerPos.x + Math.sin(ang) * r);
+      const z = Math.floor(playerPos.z + Math.cos(ang) * r);
+      // Воздушный карман заметно ниже поверхности и неподалёку от игрока
+      const hh = this.world.heightAt(x, z);
+      const top = Math.min(hh - 6, Math.floor(playerPos.y + 8));
+      const bottom = Math.max(6, Math.floor(playerPos.y - 10));
+      if (top <= bottom) continue;
+      const y = Math.floor(bottom + Math.random() * (top - bottom));
+      if (this.world.getBlock(x, y, z) !== BLOCK.AIR) continue;
+      if (this.world.getBlock(x, y + 1, z) !== BLOCK.AIR) continue;
+      if (this.world.getBlock(x, y + 2, z) !== BLOCK.AIR) continue;
+      if (!isSolid(this.world.getBlock(x, y - 1, z))) continue;
+      if (this._isVisibleSpawn(x + 0.5, z + 0.5, player)) continue;
+      const type = Math.random() < 0.6 ? 'spider' : 'zombie';
+      if (this._count(type) >= (MOB_CAPS[type] || 4)) continue;
+      return this._addMob(type, x + 0.5, y + 0.5, z + 0.5);
+    }
+    return null;
+  }
+
+  /** Моб в пещере (поверхность значительно выше) — рассвет его не жжёт */
+  _underground(m) {
+    const h = this.world.heightAt(Math.floor(m.pos.x), Math.floor(m.pos.z));
+    return m.pos.y + 1 < h - 2;
+  }
+
   update(dt, player, active = true) {
     const playerPos = player.pos || player;
     // Спавн реже и только вне поля зрения (раз в 5-8 сек)
@@ -1605,8 +1644,9 @@ export class MobManager {
         m.updateDeath(dt);
         continue;
       }
-      // Рассвет сжигает ночную нечисть: зомби, пауков и криперов
-      if ((m.type === 'zombie' || m.type === 'spider' || m.type === 'creeper') && !this.night) {
+      // Рассвет сжигает ночную нечисть под открытым небом: зомби, пауков и криперов.
+      // В пещере темно и днём — там нечисть не сгорает.
+      if ((m.type === 'zombie' || m.type === 'spider' || m.type === 'creeper') && !this.night && !this._underground(m)) {
         m.burnT += dt;
         if (m.burnT <= dt * 1.5 && this.onSound) this.onSound('burn', 3, m.type);
         if (m.burnT > 1.6) {

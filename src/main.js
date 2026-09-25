@@ -4,7 +4,7 @@ import { CONFIG } from './config.js';
 import { BLOCK, BLOCKS, STARTER_PALETTE, BUILDER_PALETTE, breakKind, isSolid, isDecor, isTorch, isChest, isAnvil,
   isSlab, isFence, slabPair, slabFullBlock, blockBounds, isVariantBlock, wallTorchSide,
   WALL_TORCH_BY_SIDE, CHEST_BY_FRONT } from './blocks.js';
-import { ITEM, blockItem, blockIdOf, blockDropItem, breakTime, itemDamage, itemName, placeBlockId, isBlockItem, itemDef, foodValue } from './items.js';
+import { ITEM, blockItem, blockIdOf, blockDropItem, breakTime, itemDamage, itemName, placeBlockId, isBlockItem, itemDef, foodValue, isWideTool } from './items.js';
 import { Inventory, HOTBAR_SIZE } from './inventory.js';
 import { craft, needsTable, recipesFor, stationInfo } from './crafts.js';
 import { Furnace, serializeFurnaces, deserializeFurnaces } from './furnace.js';
@@ -13,6 +13,7 @@ import { InventoryUI, setFullToast } from './inventory-ui.js';
 import { itemIconCanvas, spritePixels } from './icons.js';
 import { buildAtlas, tileColor, tileTexture, CRACK_TILES } from './textures.js';
 import { World } from './world.js';
+import { hash3, makeRng } from './noise.js';
 import { migrateSave } from './save-migration.js';
 import { meshChunk, TORCH_LIGHT_RADIUS } from './mesher.js';
 import { MobManager } from './mobs.js';
@@ -31,6 +32,7 @@ import { UI } from './ui.js';
 import { I18n } from './i18n.js';
 import { Ysdk } from './ysdk.js';
 import { updateRunShake } from './camera-effects.js';
+import { PitDepthFX } from './postfx.js';
 import { createWorldRecord, emptyWorldProfile, normalizeWorldProfile, serializeWorldProfile } from './world-store.js';
 
 // ---------------------------------------------------------------- Инициализация
@@ -60,6 +62,7 @@ let difficulty = 'normal';       // 'peaceful' | 'easy' | 'normal' | 'hard'
 let inventory = new Inventory(CONFIG.INV_SIZE);
 let furnaceStates = new Map(); // координаты печи -> сохранённая плавильная камера
 let chestStates = new Map();   // координаты сундука -> содержимое (Inventory на 27 ячеек)
+let openedLoot = new Set();    // пещерные сундуки с лутом, которые уже открывали
 let hotbarIndex = 0;
 let saveData = null;
 let worldProfile = emptyWorldProfile();
@@ -81,35 +84,36 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 400);
 camera.rotation.order = 'YXZ';
 
-// Объёмный факел: прямоугольная рукоять из брусков, два слоя пламени,
+// Объёмный факел: компактная рукоять из брусков, два слоя пламени,
 // мягкий ореол и локальная лампа. Модель одна — и для пола, и для стены.
-const torchStemGeo = new THREE.BoxGeometry(0.11, 0.56, 0.11);
-const torchCollarGeo = new THREE.BoxGeometry(0.15, 0.09, 0.15);
-const torchOuterFlameGeo = new THREE.BoxGeometry(0.18, 0.22, 0.18);
-const torchInnerFlameGeo = new THREE.BoxGeometry(0.1, 0.13, 0.1);
+// Факел небольшой и тёплого жёлтого цвета (не оранжево-огненный).
+const torchStemGeo = new THREE.BoxGeometry(0.085, 0.44, 0.085);
+const torchCollarGeo = new THREE.BoxGeometry(0.115, 0.07, 0.115);
+const torchOuterFlameGeo = new THREE.BoxGeometry(0.13, 0.17, 0.13);
+const torchInnerFlameGeo = new THREE.BoxGeometry(0.075, 0.1, 0.075);
 const torchStemMat = new THREE.MeshBasicMaterial({ color: 0x744925 });
 const torchCollarMat = new THREE.MeshBasicMaterial({ color: 0xb8763a });
-const torchOuterFlameMat = new THREE.MeshBasicMaterial({ color: 0xff701b });
-const torchInnerFlameMat = new THREE.MeshBasicMaterial({ color: 0xffe17a });
+const torchOuterFlameMat = new THREE.MeshBasicMaterial({ color: 0xffc22e });
+const torchInnerFlameMat = new THREE.MeshBasicMaterial({ color: 0xfff3a0 });
 const torchGlowCanvas = document.createElement('canvas');
 torchGlowCanvas.width = torchGlowCanvas.height = 64;
 const glowCtx = torchGlowCanvas.getContext('2d');
 const glowGradient = glowCtx.createRadialGradient(32, 32, 2, 32, 32, 32);
-glowGradient.addColorStop(0, 'rgba(255, 239, 170, 0.95)');
-glowGradient.addColorStop(0.22, 'rgba(255, 151, 45, 0.6)');
-glowGradient.addColorStop(1, 'rgba(255, 110, 20, 0)');
+glowGradient.addColorStop(0, 'rgba(255, 244, 190, 0.95)');
+glowGradient.addColorStop(0.22, 'rgba(255, 196, 70, 0.6)');
+glowGradient.addColorStop(1, 'rgba(255, 170, 30, 0)');
 glowCtx.fillStyle = glowGradient;
 glowCtx.fillRect(0, 0, 64, 64);
 const torchGlowTexture = new THREE.CanvasTexture(torchGlowCanvas);
 torchGlowTexture.colorSpace = THREE.SRGBColorSpace;
 const torchGlowMat = new THREE.SpriteMaterial({
-  map: torchGlowTexture, color: 0xffa542, transparent: true, opacity: 0.62,
+  map: torchGlowTexture, color: 0xffc24d, transparent: true, opacity: 0.62,
   depthWrite: false, blending: THREE.AdditiveBlending,
 });
 const heldTorchStemMat = new THREE.MeshBasicMaterial({ color: 0x744925, transparent: true, depthTest: false, depthWrite: false });
 const heldTorchCollarMat = new THREE.MeshBasicMaterial({ color: 0xb8763a, transparent: true, depthTest: false, depthWrite: false });
-const heldTorchOuterMat = new THREE.MeshBasicMaterial({ color: 0xff701b, transparent: true, depthTest: false, depthWrite: false });
-const heldTorchInnerMat = new THREE.MeshBasicMaterial({ color: 0xffe17a, transparent: true, depthTest: false, depthWrite: false });
+const heldTorchOuterMat = new THREE.MeshBasicMaterial({ color: 0xffc22e, transparent: true, depthTest: false, depthWrite: false });
+const heldTorchInnerMat = new THREE.MeshBasicMaterial({ color: 0xfff3a0, transparent: true, depthTest: false, depthWrite: false });
 const heldTorchGlowMat = torchGlowMat.clone();
 heldTorchGlowMat.depthTest = false;
 heldTorchGlowMat.depthWrite = false;
@@ -135,24 +139,24 @@ const WALL_TORCH_YAW = { px: 0, nx: Math.PI, pz: -Math.PI / 2, nz: Math.PI / 2 }
 function buildTorchModel(mats, glowMat, withLight = true) {
   const group = new THREE.Group();
   const stem = new THREE.Mesh(torchStemGeo, mats.stem);
-  stem.position.y = 0.29;
+  stem.position.y = 0.22;
   const collar = new THREE.Mesh(torchCollarGeo, mats.collar);
-  collar.position.y = 0.6;
+  collar.position.y = 0.45;
   const flame = new THREE.Group();
-  flame.position.y = 0.65;
+  flame.position.y = 0.48;
   const outer = new THREE.Mesh(torchOuterFlameGeo, mats.outer);
-  outer.position.y = 0.1;
+  outer.position.y = 0.08;
   const inner = new THREE.Mesh(torchInnerFlameGeo, mats.inner);
-  inner.position.y = 0.12;
+  inner.position.y = 0.1;
   flame.add(outer, inner);
   const glow = new THREE.Sprite(glowMat);
-  glow.position.y = 0.75;
-  glow.scale.set(1.15, 1.15, 1);
+  glow.position.y = 0.55;
+  glow.scale.set(0.85, 0.85, 1);
   group.add(stem, collar, flame, glow);
   let light = null;
   if (withLight) {
-    light = new THREE.PointLight(0xffa347, 1.15, 8.5, 2);
-    light.position.y = 0.78;
+    light = new THREE.PointLight(0xffb740, 1.15, 8.5, 2);
+    light.position.y = 0.6;
     group.add(light);
   }
   return { group, flame, glow, light };
@@ -216,6 +220,29 @@ const waterMat = new THREE.MeshBasicMaterial({
   depthWrite: false, side: THREE.DoubleSide,
 });
 addHeldLight(waterMat);
+// Анимация воды: в шейдере текстура тайла воды медленно колышется (UV гуляет
+// внутри своего тайла атласа, не задевая соседние) и слегка переливается.
+const waterUniforms = { uTime: { value: 0 } };
+waterMat.onBeforeCompile = (shader) => {
+  Object.assign(shader.uniforms, waterUniforms);
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>', `#include <common>
+uniform float uTime;
+varying vec3 vHeldWorldPos;`)
+    .replace('#include <map_fragment>', `
+  {
+    vec2 t8 = vMapUv * 8.0;
+    vec2 tileBase = floor(t8) / 8.0;
+    vec2 local = fract(t8);
+    float wob = sin(uTime * 1.3 + vHeldWorldPos.x * 1.7 + vHeldWorldPos.z * 1.1)
+              + cos(uTime * 0.9 + vHeldWorldPos.z * 1.9 - vHeldWorldPos.x * 0.7);
+    vec2 wuv = tileBase + fract(local + wob * 0.045) / 8.0;
+    vec4 sampledDiffuseColor = texture2D(map, wuv);
+    float shimmer = 0.94 + 0.06 * sin(uTime * 2.1 + vHeldWorldPos.x * 2.3 + vHeldWorldPos.z * 1.7);
+    diffuseColor *= sampledDiffuseColor * shimmer;
+  }
+`);
+};
 
 const sky = new Sky(THREE, scene);
 sky.viewDistance = settings.viewDistance;
@@ -247,6 +274,13 @@ let shakeT = 0;                  // встряска камеры при уро�
 let decorBreakCd = 0;            // пауза между мгновенными срывами растений
 let zombieT = 6;
 let zombieWarned = false;
+let caveSpawnT = 10;             // таймер пещерного спавна (подземные мобы)
+// Подземный туман: кэш высоты поверхности под игроком и цвет глубинной дымки
+let surfCacheKey = '';
+let surfCacheH = 0;
+let undergroundF = 0;
+const caveFogColor = new THREE.Color(0x04050a);
+const bgColor = new THREE.Color();
 // Звуки мобов с затуханием по расстоянию
 mobManager.onSound = (kind, dist, type) => {
   const vol = 1 / (1 + dist * 0.35);
@@ -854,11 +888,15 @@ function showCrack(hit, progress) {
   crackMesh.material = crackMats[Math.max(0, Math.min(4, Math.floor(progress * 5)))];
 }
 
+// Эффект «заглянул в глубокий обрыв/карьер»: низ экрана темнеет и чуть плывёт
+const pitFX = new PitDepthFX(renderer);
+
 function resize() {
   const w = window.innerWidth, h = window.innerHeight;
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
+  pitFX.setSize(w * renderer.getPixelRatio(), h * renderer.getPixelRatio());
 }
 window.addEventListener('resize', resize);
 resize();
@@ -1201,6 +1239,34 @@ function breakDecor(hit) {
   }
 }
 
+/** Алмазный молот: вместе с целью выламывается область 3×3 в плоскости грани */
+function breakArea(hit) {
+  if (!isWideTool(heldItem())) return;
+  // Плоскость разлома перпендикулярна нормали грани, по которой кликнули
+  const axes = hit.ny !== 0 ? [[1, 0, 0], [0, 0, 1]]
+    : hit.nx !== 0 ? [[0, 1, 0], [0, 0, 1]]
+      : [[1, 0, 0], [0, 1, 0]];
+  let broke = 0;
+  for (let a = -1; a <= 1; a++) {
+    for (let b = -1; b <= 1; b++) {
+      if (!a && !b) continue;
+      const x = hit.x + axes[0][0] * a + axes[1][0] * b;
+      const y = hit.y + axes[0][1] * a + axes[1][1] * b;
+      const z = hit.z + axes[0][2] * a + axes[1][2] * b;
+      const id = world.getBlock(x, y, z);
+      if (!id || id === BLOCK.WATER || isDecor(id)) continue;
+      world.setBlock(x, y, z, BLOCK.AIR);
+      particles.burst(x, y, z, tileColor(BLOCKS[id].tiles[0]), 6);
+      if (isSurvival()) {
+        const drop = blockDropItem(id);
+        if (drop) items.spawn(x + 0.5, y + 0.5, z + 0.5, drop);
+      }
+      broke++;
+    }
+  }
+  if (broke) sfx.breakBlock('slow');
+}
+
 function doBreak(hit) {
   if (!hit) return;
   const id = world.getBlock(hit.x, hit.y, hit.z);
@@ -1209,6 +1275,7 @@ function doBreak(hit) {
   world.setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
   particles.burst(hit.x, hit.y, hit.z, tileColor(BLOCKS[id].tiles[0]), 16);
   sfx.breakBlock(breakKind(id));
+  breakArea(hit);
   // С листвы иногда падает яблоко
   if (id === BLOCK.LEAVES && Math.random() < 0.14) {
     items.spawn(hit.x + 0.5, hit.y + 0.8, hit.z + 0.5, 'apple');
@@ -1272,11 +1339,48 @@ function openFurnace(hit) {
   openInventory(2, { type: 'furnace', machine, key });
 }
 
+/** Лут пещерного сундука: детерминирован сидом мира и координатами блока */
+function fillLootChest(chest, x, y, z) {
+  const rng = makeRng(hash3(x, 977 + y, z, world.seed ^ 0x51ab) * 0x7fffffff);
+  const pool = [
+    [blockItem(BLOCK.TORCH), 3, 8, 3],
+    [ITEM.COAL, 2, 7, 3],
+    [ITEM.APPLE, 1, 3, 2],
+    [ITEM.BREAD, 1, 2, 2],
+    [ITEM.ARROW, 2, 6, 2],
+    [ITEM.STICK, 2, 5, 2],
+    [ITEM.RAW_IRON, 1, 3, 2],
+    [ITEM.IRON_INGOT, 1, 2, 1.4],
+    [ITEM.COOKED_MEAT, 1, 2, 1.4],
+    [blockItem(BLOCK.PLANKS), 2, 6, 1.4],
+    [ITEM.WHEAT, 1, 3, 1],
+    [ITEM.RAW_GOLD, 1, 2, 1],
+    [blockItem(BLOCK.GLOW_SHROOM), 1, 3, 1],
+    [ITEM.DIAMOND, 1, 1, 0.55],
+  ];
+  const rolls = 4 + ((rng() * 4) | 0);
+  for (let i = 0; i < rolls; i++) {
+    let total = 0;
+    for (const p of pool) total += p[3];
+    let pick = rng() * total;
+    let entry = pool[0];
+    for (const p of pool) { pick -= p[3]; if (pick <= 0) { entry = p; break; } }
+    const [key, min, max] = entry;
+    chest.add(key, min + ((rng() * (max - min + 1)) | 0));
+  }
+}
+
 function openChest(hit) {
   const key = `${hit.x},${hit.y},${hit.z}`;
   let chest = chestStates.get(key);
   if (!chest) {
     chest = createChest();
+    // Сундук, выращенный генератором пещер, при первом открытии выдаёт лут
+    if (world.lootChests?.has(key) && !openedLoot.has(key)) {
+      fillLootChest(chest, hit.x, hit.y, hit.z);
+      openedLoot.add(key);
+      ui.toast(i18n.t('loot_found'), 2400);
+    }
     chestStates.set(key, chest);
   }
   sfx.uiOk();
@@ -1492,6 +1596,7 @@ function buildSave() {
     edits: world.serializeEdits(),
     furnaces: serializeFurnaces(furnaceStates),
     chests: serializeChests(chestStates),
+    lootOpened: [...openedLoot],
     player: player.serialize(),
     time: sky.serialize(),
     blocksBuilt,
@@ -1870,16 +1975,22 @@ async function saveAndQuit() {
 }
 
 function showHints() {
-  if (input.isTouch) return;
-  ui.toast(i18n.t('hint_break'), 4000);
-  setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_place'), 3500), 4200);
-  setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_inventory'), 3500), 7800);
+  // Справочник — первая подсказка (клавиша H или кнопка на телефоне)
+  ui.toast(i18n.t('hint_guide'), 4200);
+  const at = (ms, key, dur) => setTimeout(() => state === 'game' && ui.toast(i18n.t(key), dur), ms);
+  if (input.isTouch) {
+    at(4600, 'hint_break', 4000);
+    return;
+  }
+  at(4600, 'hint_break', 4000);
+  at(8800, 'hint_place', 3500);
+  at(12400, 'hint_inventory', 3500);
   setTimeout(() => state === 'game'
-    && ui.toast(i18n.t(isCreative() ? 'hint_fly' : 'hint_table'), 3500), 11400);
-  setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_bow'), 4200), 15000);
-  setTimeout(() => state === 'game' && ui.toast(i18n.t('sneak_hint'), 4000), 18600);
-  setTimeout(() => state === 'game' && ui.toast(i18n.t('hint_eat'), 4200), 23000);
-  setTimeout(() => state === 'game' && ui.toast(i18n.t('esc_fullscreen'), 4500), 27500);
+    && ui.toast(i18n.t(isCreative() ? 'hint_fly' : 'hint_table'), 3500), 16000);
+  at(19600, 'hint_bow', 4200);
+  at(23200, 'sneak_hint', 4000);
+  at(27600, 'hint_eat', 4200);
+  at(32100, 'esc_fullscreen', 4500);
 }
 
 // ---------------------------------------------------------------- Награда за рекламу
@@ -1937,6 +2048,7 @@ async function startWorld(opts = {}) {
   };
   furnaceStates = data ? deserializeFurnaces(data.furnaces) : new Map();
   chestStates = data ? deserializeChests(data.chests) : new Map();
+  openedLoot = new Set(Array.isArray(data?.lootOpened) ? data.lootOpened : []);
   world.onBlockReplaced = (x, y, z, previous, id) => {
     if (previous === id) return;
     if (isChest(previous) && isChest(id)) return;
@@ -2298,11 +2410,49 @@ function showModeScreen() {
   ui.showScreen('mode-screen');
 }
 
+// ---------------------------------------------------------------- Справочник
+let guideReturn = 'menu';        // из какого состояния открыли справочник
+
+function openGuide() {
+  if (state === 'guide') { closeGuide(); return; }
+  if (state !== 'game' && state !== 'pause' && state !== 'menu') return;
+  guideReturn = state;
+  state = 'guide';
+  input.enabled = false;
+  input.keys.clear();
+  if (document.pointerLockElement) document.exitPointerLock?.();
+  if (guideReturn === 'game') {
+    music.setPlaying(false);
+    ysdk.gameplayStop();
+    saveGame();
+  }
+  ui.showScreen('guide-screen');
+}
+
+function closeGuide() {
+  if (state !== 'guide') return;
+  if (guideReturn === 'game') { resumeGame(); return; }
+  if (guideReturn === 'pause') { state = 'pause'; ui.showScreen('pause-screen'); return; }
+  state = 'menu';
+  ui.showScreen('menu-screen');
+}
+
 input.handlers.onPause = () => {
   if (state === 'inventory') { closeInventory(); return; }
+  if (state === 'guide') { closeGuide(); return; }
   if (state === 'game') pauseGame();
   else if (state === 'pause') resumeGame();
 };
+input.handlers.onGuide = () => {
+  if (state === 'game' || state === 'pause' || state === 'menu' || state === 'guide') {
+    sfx.uiClick();
+    openGuide();
+  }
+};
+ui.handlers.onGuide = () => {
+  if (state === 'game' || state === 'pause' || state === 'menu' || state === 'guide') openGuide();
+};
+ui.handlers.onGuideClose = () => closeGuide();
 input.handlers.onToggleInventory = () => toggleInventory();
 let flyHintT = 0;
 input.handlers.onToggleFly = () => {
@@ -2439,6 +2589,10 @@ function frame() {
     }
     processQueue(CONFIG.MAX_MESH_PER_FRAME);
 
+    // Вода растекается: ямы, выкопанные в океане, и русла заполняются
+    world.updateWater(48);
+    waterUniforms.uTime.value = now / 1000;
+
     // --- Выживание: предметы, опыт, еда, ночные зомби ---
     items.update(dt, world, player.pos);
     xpOrbs.update(dt, world, player.pos);
@@ -2457,6 +2611,15 @@ function frame() {
       }
     } else {
       zombieWarned = false;
+    }
+
+    // Пещерный спавн: глубоко под землёй в темноте заводятся пауки и зомби
+    caveSpawnT -= dt;
+    if (caveSpawnT <= 0) {
+      caveSpawnT = 9 + Math.random() * 8;
+      if (mobManager.trySpawnCaveMob(player)) {
+        ui.toast(i18n.t('cave_warn'), 3200);
+      }
     }
 
     // Удар по любому мобу под прицелом, включая птиц
@@ -2587,7 +2750,7 @@ function frame() {
     placeCooldown -= dt;
     if (!bowSel && input.placeHeld && placeCooldown <= 0 && hit) {
       doPlace(hit);
-      placeCooldown = 0.25;
+      placeCooldown = CONFIG.PLACE_COOLDOWN;
     }
 
     // Стрелы: полёт с гравитацией, попадания в блоки и мобов, подбор воткнутых
@@ -2599,6 +2762,21 @@ function frame() {
     camera.rotation.y = player.yaw;
     camera.rotation.x = player.pitch;
     camera.rotation.z = 0;
+    // Поле зрения шире и вбок, и вниз: при крутом взгляде вниз FOV плавно растёт
+    const downFov = Math.max(0, Math.min(1, (-player.pitch - 0.22) / 0.8));
+    const targetFov = 75 + downFov * 9;
+    if (Math.abs(camera.fov - targetFov) > 0.05) {
+      camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 6);
+      camera.updateProjectionMatrix();
+    }
+    // Эффект «заглянул в глубокий карьер/обрыв»: меряем, насколько глубоко под
+    // глазами дно — при взгляде вниз низ экрана чуть темнеет и размывается.
+    {
+      const ex = Math.floor(eye.x), ez = Math.floor(eye.z);
+      let hy = Math.floor(eye.y - 0.2), drop = 0;
+      while (drop < 46 && hy > 0 && !world.isSolidAt(ex, hy, ez)) { hy--; drop++; }
+      pitFX.update(player.pitch, drop, dt);
+    }
     // Беговая тряска начинается после двух секунд и мягко усиливается до предела.
     const isRunning = input.sprint && player.onGround && !player.flying && !player.inWater
       && (Math.abs(input.move.forward) + Math.abs(input.move.right) > 0.2);
@@ -2632,6 +2810,22 @@ function frame() {
 
     // Небо, свет, вода, погода
     sky.update(dt, player.pos);
+    // Под землёй дымка не бывает небесной: вдали тунель тонет в темноте,
+    // а не в серо-голубом фоне. Чем глубже игрок, тем ближе и чернее туман.
+    {
+      const bxp = Math.floor(player.pos.x), bzp = Math.floor(player.pos.z);
+      const sk = `${bxp},${bzp}`;
+      if (sk !== surfCacheKey) { surfCacheKey = sk; surfCacheH = world.heightAt(bxp, bzp); }
+      undergroundF = Math.max(0, Math.min(1, (surfCacheH - 5 - player.pos.y) / 9));
+      if (undergroundF > 0.01) {
+        caveFogColor.setHex(0x04050a);
+        scene.fog.color.lerp(caveFogColor, undergroundF * 0.94);
+        scene.fog.near += (5 - scene.fog.near) * undergroundF;
+        scene.fog.far += (30 - scene.fog.far) * undergroundF;
+        bgColor.copy(scene.fog.color);
+        scene.background = bgColor;
+      }
+    }
     weather.update(dt, player.pos, world, sky.lightLevel, {
       onFlash: (strike) => {
         particles.burst(strike.x, strike.y, strike.z, 0xb8dcff, 12);
@@ -2644,8 +2838,9 @@ function frame() {
     });
     sfx.setRainLevel(weather.wetness);
     const L = sky.lightLevel;
-    terrainMat.color.setScalar(0.28 + 0.72 * L);
-    waterMat.color.setScalar(0.3 + 0.7 * L);
+    // Ночью стало по-настоящему темно: ночная яркость больше не держится за 0.4
+    terrainMat.color.setScalar(0.06 + 0.94 * L);
+    waterMat.color.setScalar(0.09 + 0.91 * L);
     mobManager.setLight(L);
     mobManager.update(dt, player, true);
 
@@ -2676,8 +2871,9 @@ function frame() {
     camera.rotation.x = player.pitch;
     sky.update(dt * 0.3, player.pos);
     const L = sky.lightLevel;
-    terrainMat.color.setScalar(0.28 + 0.72 * L);
-    waterMat.color.setScalar(0.3 + 0.7 * L);
+    // Ночью стало по-настоящему темно: ночная яркость больше не держится за 0.4
+    terrainMat.color.setScalar(0.06 + 0.94 * L);
+    waterMat.color.setScalar(0.09 + 0.91 * L);
     mobManager.setLight(L);
     mobManager.update(dt * 0.5, player.pos, false);
     if (world) weather.update(dt * 0.5, player.pos, world, L, {});
@@ -2689,7 +2885,9 @@ function frame() {
   updateTorchVisuals(dt);
   updateHeldLight(now);
   updateHand(dt, sky.lightLevel ?? 1);
-  renderer.render(scene, camera);
+  // Рендер: при активном эффекте глубины сцена идёт через пост-обработку
+  if (pitFX.strength > 0 && state === 'game') pitFX.render(scene, camera);
+  else renderer.render(scene, camera);
 }
 
 window.addEventListener('keydown', (e) => {
