@@ -2,8 +2,9 @@
 // предмет «в руке» за курсором, каталог блоков (креатив) и список рецептов
 import { HOTBAR_SIZE } from './inventory.js';
 import { itemIconEl } from './icons.js';
-import { itemDef, itemName, maxStack } from './items.js';
+import { itemDef, itemName, itemDescription, maxStack } from './items.js';
 import { RECIPES, canCraft, ingredients, emptyGrid, gridResult, craftFromGrid, needsTable } from './crafts.js';
+import { SMELT_TIME, smeltResult } from './furnace.js';
 
 export class InventoryUI {
   constructor(i18n) {
@@ -18,15 +19,21 @@ export class InventoryUI {
     this.tab = 'craft';       // 'craft' | 'catalog'
     this.gridSize = 2;        // 2 — инвентарь, 3 — верстак
     this.grid = emptyGrid(2);
+    this.station = null;      // { type: 'furnace', machine }
+    this._furnaceSignature = '';
     this._paint = null;       // мазок зажатой кнопкой по клеткам (как в Minecraft)
     this.handlers = {
       onChange: null, onCraft: null, onPickCatalog: null, onLocked: null,
       onClose: null, onSelect: null, onSound: null, onQuickCraft: null,
+      onStationChange: null,
     };
     this._els = {
       screen: document.getElementById('inventory-screen'),
+      window: document.querySelector('#inventory-screen .inv-window'),
+      side: document.querySelector('#inventory-screen .inv-side'),
       grid: document.getElementById('inv-main-grid'),
       hotbar: document.getElementById('inv-hotbar-row'),
+      craftRow: document.getElementById('inv-craft-row'),
       craftGrid: document.getElementById('inv-craft-grid'),
       craftResult: document.getElementById('inv-craft-result'),
       craftTitle: document.getElementById('inv-craft-title'),
@@ -36,6 +43,15 @@ export class InventoryUI {
       tip: document.getElementById('inv-tip'),
       cursor: document.getElementById('cursor-item'),
       tabs: document.getElementById('inv-tabs'),
+      furnacePanel: document.getElementById('inv-furnace-panel'),
+      furnaceStatus: document.getElementById('furnace-status'),
+      furnaceBurn: document.getElementById('furnace-burn-fill'),
+      furnaceProgress: document.getElementById('furnace-progress-fill'),
+      furnaceSlots: {
+        input: document.getElementById('furnace-input-slot'),
+        fuel: document.getElementById('furnace-fuel-slot'),
+        output: document.getElementById('furnace-output-slot'),
+      },
     };
     this._bind();
   }
@@ -81,12 +97,14 @@ export class InventoryUI {
   isOpen() { return this.open_; }
 
   /** Открыть окно; mode — 'survival' | 'creative', gridSize — 2 (инвентарь) или 3 (верстак) */
-  show({ inv, mode, hotbarIndex, catalog, gridSize = 2, tab = null }) {
+  show({ inv, mode, hotbarIndex, catalog, gridSize = 2, tab = null, station = null }) {
     this.inv = inv;
     this.mode = mode;
     this.creative = mode === 'creative';
     this.hotbarIndex = hotbarIndex || 0;
     this.catalog = catalog || [];
+    this.station = station;
+    this._furnaceSignature = '';
     this.open_ = true;
     this.carry = null;
     this.setGridSize(gridSize, true);
@@ -101,6 +119,8 @@ export class InventoryUI {
     this.stashCarry();
     this.dumpGrid();
     this.open_ = false;
+    this.station = null;
+    this._furnaceSignature = '';
     this._els.screen?.classList.add('hidden');
     this._els.cursor?.classList.add('hidden');
   }
@@ -154,13 +174,20 @@ export class InventoryUI {
   render() {
     if (!this.inv) return;
     const els = this._els;
+    const furnaceOpen = this.station?.type === 'furnace';
+    els.window?.classList.toggle('furnace-open', furnaceOpen);
+    els.side?.classList.toggle('hidden', furnaceOpen);
+    els.craftRow?.classList.toggle('hidden', furnaceOpen);
+    els.furnacePanel?.classList.toggle('hidden', !furnaceOpen);
     if (els.modeLabel) {
-      els.modeLabel.textContent = this.i18n.t(this.creative ? 'mode_creative' : 'mode_survival');
+      els.modeLabel.textContent = furnaceOpen
+        ? this.i18n.t('furnace_title')
+        : this.i18n.t(this.creative ? 'mode_creative' : 'mode_survival');
     }
     if (els.tip) {
-      els.tip.textContent = this.tab === 'catalog'
-        ? this.i18n.t('catalog_hint')
-        : this.i18n.t('craft_hint');
+      els.tip.textContent = furnaceOpen
+        ? this.i18n.t('furnace_ui_hint')
+        : this.tab === 'catalog' ? this.i18n.t('catalog_hint') : this.i18n.t('craft_hint');
     }
     // Вкладки: каталог есть только в креативе
     els.tabs?.querySelectorAll('.inv-tab').forEach((btn) => {
@@ -172,7 +199,107 @@ export class InventoryUI {
     this._renderGrid(els.grid, 9, 36);
     this._renderGrid(els.hotbar, 0, 9);
     this._renderSide();
+    this._renderFurnace(true);
     this._renderCursor();
+  }
+
+  /** Обновить интерфейс печи без перерисовки всего инвентаря. */
+  updateStation(dt) {
+    if (!this.open_ || this.station?.type !== 'furnace') return;
+    this.station.machine.update(dt);
+    this._renderFurnace(false);
+  }
+
+  _renderFurnace(forceSlots = false) {
+    const machine = this.station?.type === 'furnace' ? this.station.machine : null;
+    if (!machine) return;
+    const slots = ['input', 'fuel', 'output'];
+    const signature = slots.map((name) => {
+      const s = machine.getSlot(name);
+      return s ? `${name}:${s.key}:${s.count}` : `${name}:-`;
+    }).join('|');
+    if (forceSlots || signature !== this._furnaceSignature) {
+      this._furnaceSignature = signature;
+      for (const name of slots) {
+        const el = this._els.furnaceSlots[name];
+        if (!el) continue;
+        const stack = machine.getSlot(name);
+        el.innerHTML = '';
+        el.classList.toggle('has-item', !!stack);
+        if (stack) {
+          const icon = itemIconEl(stack.key, 42);
+          if (icon) el.appendChild(icon);
+          if (stack.count > 1) {
+            const count = document.createElement('span');
+            count.className = 'islot-count';
+            count.textContent = String(stack.count);
+            el.appendChild(count);
+          }
+          el.title = `${itemName(stack.key, this.i18n.lang)} ×${stack.count}\n${itemDescription(stack.key, this.i18n.lang)}`;
+        } else {
+          el.title = this.i18n.t(name === 'input' ? 'furnace_slot_input' : name === 'fuel' ? 'furnace_slot_fuel' : 'furnace_slot_output');
+        }
+        el.onpointerdown = (e) => this._onFurnaceSlot(e, name);
+        el.oncontextmenu = (e) => e.preventDefault();
+      }
+    }
+    const burn = this._els.furnaceBurn;
+    if (burn) {
+      const pct = machine.burnTotal > 0 ? Math.max(0, Math.min(1, machine.burnRemaining / machine.burnTotal)) : 0;
+      burn.style.height = `${pct * 100}%`;
+    }
+    const progress = this._els.furnaceProgress;
+    if (progress) {
+      const pct = Math.max(0, Math.min(1, machine.cookProgress / SMELT_TIME));
+      progress.style.width = `${pct * 100}%`;
+    }
+    if (this._els.furnaceStatus) {
+      const input = machine.getSlot('input');
+      const output = machine.getSlot('output');
+      const result = input && smeltResult(input.key);
+      const outputBlocked = result && output && (output.key !== result || output.count >= maxStack(result));
+      const statusKey = !input ? 'furnace_add_input'
+        : outputBlocked ? 'furnace_output_full'
+          : machine.burnRemaining > 0 || machine.getSlot('fuel') ? 'furnace_smelting'
+            : 'furnace_add_fuel';
+      this._els.furnaceStatus.textContent = this.i18n.t(statusKey);
+    }
+  }
+
+  _onFurnaceSlot(e, name) {
+    e.preventDefault();
+    e.stopPropagation();
+    const machine = this.station?.machine;
+    if (!machine) return;
+    if (name === 'output') {
+      const output = machine.getSlot('output');
+      if (!output) return;
+      if (!this.carry) {
+        const amount = e.button === 2 ? Math.ceil(output.count / 2) : output.count;
+        this.carry = machine.takeOutput(amount);
+        this.handlers.onSound?.('pickup');
+      } else if (this.carry.key === output.key) {
+        const room = maxStack(output.key) - this.carry.count;
+        const amount = Math.min(room, e.button === 2 ? 1 : room);
+        if (amount > 0) {
+          const taken = machine.takeOutput(amount);
+          if (taken) this.carry.count += taken.count;
+          this.handlers.onSound?.('pickup');
+        }
+      }
+    } else {
+      if (this.carry && !machine.accepts(name, this.carry.key)) return;
+      const container = {
+        get: () => machine.getSlot(name),
+        setStack: (_index, stack) => machine.setStack(name, stack),
+        clearSlot: () => machine.clearSlot(name),
+      };
+      this._mutate(container, 0, e.button === 2);
+    }
+    this._paint = null;
+    this.render();
+    this.handlers.onChange?.();
+    this.handlers.onStationChange?.();
   }
 
   /** Сетка крафта и слот результата */
@@ -188,6 +315,7 @@ export class InventoryUI {
       slot.dataset.index = String(i);
       const s = this.grid[i];
       if (s) {
+        slot.title = `${itemName(s.key, this.i18n.lang)} ×${s.count}\n${itemDescription(s.key, this.i18n.lang)}`;
         const icon = itemIconEl(s.key, 36);
         if (icon) slot.appendChild(icon);
         if (s.count > 1) {
@@ -206,8 +334,10 @@ export class InventoryUI {
     const out = els.craftResult;
     if (!out) return;
     out.innerHTML = '';
+    out.title = '';
     out.classList.toggle('ready', !!res);
     if (res) {
+      out.title = `${itemName(res.out.key, this.i18n.lang)} ×${res.out.count}\n${itemDescription(res.out.key, this.i18n.lang)}`;
       const icon = itemIconEl(res.out.key, 40);
       if (icon) out.appendChild(icon);
       if (res.out.count > 1) {
@@ -259,6 +389,7 @@ export class InventoryUI {
       if (i < HOTBAR_SIZE && i === this.hotbarIndex) slot.classList.add('selected');
       const stack = this.inv.get(i);
       if (stack) {
+        slot.title = `${itemName(stack.key, this.i18n.lang)} ×${stack.count}\n${itemDescription(stack.key, this.i18n.lang)}`;
         const icon = itemIconEl(stack.key, 40);
         if (icon) slot.appendChild(icon);
         const def = itemDef(stack.key);
@@ -286,7 +417,7 @@ export class InventoryUI {
       for (const entry of this.catalog) {
         const cell = document.createElement('div');
         cell.className = 'cat-item' + (entry.locked ? ' locked' : '');
-        cell.title = itemName(entry.key, this.i18n.lang);
+        cell.title = `${itemName(entry.key, this.i18n.lang)}\n${itemDescription(entry.key, this.i18n.lang)}`;
         const icon = itemIconEl(entry.key, 40);
         if (icon) cell.appendChild(icon);
         if (entry.locked) {
@@ -320,12 +451,26 @@ export class InventoryUI {
       name.className = 'recipe-name';
       name.textContent = `${itemName(recipe.out.key, this.i18n.lang)} ×${recipe.out.count}`
         + (needsTable(recipe) ? ' · ' + this.i18n.t('need_table_short') : '');
+      name.title = itemDescription(recipe.out.key, this.i18n.lang);
+      const desc = document.createElement('div');
+      desc.className = 'recipe-desc';
+      desc.textContent = itemDescription(recipe.out.key, this.i18n.lang);
       const ing = document.createElement('div');
       ing.className = 'recipe-ing';
-      ing.textContent = ingredients(this.inv, recipe)
-        .map((x) => `${itemName(x.key, this.i18n.lang)} ${x.have}/${x.need}`)
-        .join(' · ');
-      info.append(name, ing);
+      for (const x of ingredients(this.inv, recipe)) {
+        const material = document.createElement('span');
+        material.className = 'recipe-material' + (x.ok ? ' enough' : '');
+        material.title = `${itemName(x.key, this.i18n.lang)} — ${itemDescription(x.key, this.i18n.lang)}`;
+        const ingredientIcon = itemIconEl(x.key, 18);
+        if (ingredientIcon) material.appendChild(ingredientIcon);
+        const label = document.createElement('span');
+        label.textContent = `${itemName(x.key, this.i18n.lang)} ${x.have}/${x.need}`;
+        material.appendChild(label);
+        ing.appendChild(material);
+      }
+      row.title = `${itemDescription(recipe.out.key, this.i18n.lang)}\n${this.i18n.t('craft_ingredients')}: `
+        + ingredients(this.inv, recipe).map((x) => `${itemName(x.key, this.i18n.lang)} ${x.have}/${x.need}`).join(', ');
+      info.append(name, desc, ing);
       row.appendChild(info);
       row.addEventListener('pointerdown', (e) => {
         e.preventDefault();
@@ -341,10 +486,12 @@ export class InventoryUI {
     if (!this.carry) {
       cur.classList.add('hidden');
       cur.innerHTML = '';
+      cur.title = '';
       return;
     }
     cur.classList.remove('hidden');
     cur.innerHTML = '';
+    cur.title = `${itemName(this.carry.key, this.i18n.lang)} ×${this.carry.count}\n${itemDescription(this.carry.key, this.i18n.lang)}`;
     const icon = itemIconEl(this.carry.key, 40);
     if (icon) cur.appendChild(icon);
     const cnt = document.createElement('span');

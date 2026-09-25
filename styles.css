@@ -440,8 +440,9 @@ img, canvas { -webkit-user-drag: none; user-drag: none; }
 .recipe.ok { border-color: #59c437; background: rgba(89, 196, 55, 0.18); }
 .recipe.ok:hover { background: rgba(89, 196, 55, 0.32); }
 .recipe:not(.ok) { opacity: 0.6; }
-.recipe-info { min-width: 0; }
+.recipe-info { min-width: 0; flex: 1; }
 .recipe-name { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.recipe-desc { margin-top: 2px; color: #c1c9d9; font-size: 10px; line-height: 1.25; }
 .recipe-ing { font-size: 10px; color: #aab4cc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cat-item {
   position: relative;
@@ -592,3 +593,114 @@ img, canvas { -webkit-user-drag: none; user-drag: none; }
 
 #inv-craft-grid .slot-icon { width: 36px; height: 36px; }
 .inv-tab .hidden { display: none !important; }
+
+
+/* ================= Плавильная печь ================= */
+.inv-window.furnace-open {
+  width: min(650px, 96vw);
+  min-height: 310px;
+}
+.inv-window.furnace-open .inv-main { width: 100%; min-height: 0; overflow-y: auto; }
+.furnace-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 16px;
+  min-height: 190px;
+  padding: 18px clamp(12px, 4vw, 34px);
+  border: 1px solid rgba(255, 187, 91, 0.32);
+  border-radius: 10px;
+  background:
+    radial-gradient(ellipse at 28% 50%, rgba(227, 102, 40, 0.12), transparent 55%),
+    linear-gradient(145deg, rgba(35, 29, 37, 0.95), rgba(14, 18, 32, 0.92));
+  box-shadow: inset 0 1px 16px rgba(0, 0, 0, 0.34), 0 5px 22px rgba(0, 0, 0, 0.2);
+}
+.furnace-panel.hidden { display: none !important; }
+.furnace-layout {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) 76px minmax(80px, 0.8fr);
+  align-items: center;
+  gap: clamp(8px, 2vw, 20px);
+}
+.furnace-unit { display: flex; flex-direction: column; align-items: center; gap: 7px; }
+.furnace-label, .furnace-sub-label {
+  color: #e7d9ca;
+  font: 700 11px/1.2 'Segoe UI', sans-serif;
+  letter-spacing: 0.8px;
+  text-align: center;
+  text-transform: uppercase;
+}
+.furnace-label { color: #ffca83; }
+.furnace-sub-label { color: #aab4cc; font-size: 10px; }
+.furnace-slot.islot {
+  width: 60px;
+  height: 60px;
+  max-width: none;
+  background: rgba(6, 9, 19, 0.84);
+  border-color: rgba(255, 224, 190, 0.28);
+  box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.45), 0 2px 7px rgba(0, 0, 0, 0.22);
+}
+.furnace-slot.islot:hover { border-color: #ffca83; }
+.furnace-slot .slot-icon { width: 42px; height: 42px; }
+.furnace-slot.output-slot { border-color: rgba(155, 224, 100, 0.42); }
+.furnace-slot.output-slot.has-item { box-shadow: 0 0 15px rgba(155, 224, 100, 0.28); }
+.furnace-fuel-row { display: flex; align-items: center; gap: 7px; }
+.furnace-fuel-icon { font-size: 19px; line-height: 1; filter: drop-shadow(0 0 5px rgba(255, 139, 42, 0.55)); }
+.furnace-burn-meter {
+  position: relative;
+  width: 8px;
+  height: 46px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.24);
+  border-radius: 4px;
+  background: rgba(0,0,0,0.55);
+}
+#furnace-burn-fill {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 0;
+  background: linear-gradient(0deg, #ef5b25, #ffd35a);
+  box-shadow: 0 0 8px rgba(255, 132, 35, 0.7);
+  transition: height 0.15s linear;
+}
+.furnace-process { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.furnace-arrow {
+  color: #e5c89d;
+  font-size: 35px;
+  line-height: 1;
+  text-shadow: 0 0 12px rgba(255, 145, 58, 0.4);
+}
+.furnace-progress {
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.22);
+  border-radius: 6px;
+  background: rgba(0,0,0,0.52);
+}
+#furnace-progress-fill {
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #ff9e3d, #ffe078);
+  box-shadow: 0 0 10px rgba(255, 151, 56, 0.7);
+  transition: width 0.12s linear;
+}
+.furnace-status { min-height: 17px; color: #f2d7b2; font-size: 12px; text-align: center; }
+.furnace-help { color: #98a4bd; font-size: 10px; line-height: 1.4; text-align: center; }
+
+@media (max-width: 520px) {
+  .inv-window.furnace-open { min-height: 275px; padding: 10px; }
+  .furnace-panel { gap: 12px; padding: 12px 8px; }
+  .furnace-layout { grid-template-columns: minmax(92px, 1fr) 48px minmax(62px, 0.8fr); gap: 5px; }
+  .furnace-slot.islot { width: 52px; height: 52px; }
+  .furnace-slot .slot-icon { width: 38px; height: 38px; }
+  .furnace-fuel-row { gap: 4px; }
+  .furnace-fuel-icon { font-size: 15px; }
+  .furnace-burn-meter { height: 40px; width: 6px; }
+  .furnace-arrow { font-size: 27px; }
+  .furnace-status { font-size: 11px; }
+}

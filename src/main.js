@@ -5,6 +5,7 @@ import { BLOCK, BLOCKS, STARTER_PALETTE, BUILDER_PALETTE, breakKind, isSolid, is
 import { ITEM, blockItem, blockIdOf, blockDropItem, breakTime, itemDamage, itemName, placeBlockId, isBlockItem, itemDef, foodValue } from './items.js';
 import { Inventory, HOTBAR_SIZE } from './inventory.js';
 import { craft, needsTable } from './crafts.js';
+import { Furnace, serializeFurnaces, deserializeFurnaces } from './furnace.js';
 import { InventoryUI, setFullToast } from './inventory-ui.js';
 import { itemIconCanvas } from './icons.js';
 import { buildAtlas, tileColor, tileTexture, CRACK_TILES } from './textures.js';
@@ -47,6 +48,7 @@ let world = null;
 let player = null;
 let mode = 'creative';           // 'survival' | 'creative'
 let inventory = new Inventory(CONFIG.INV_SIZE);
+let furnaceStates = new Map(); // координаты печи -> сохранённая плавильная камера
 let hotbarIndex = 0;
 let saveData = null;
 let sessionStart = 0;
@@ -101,17 +103,17 @@ let eatFullT = 0;                // пауза между подсказками
 let attackCd = 0;
 let shakeT = 0;                  // встряска камеры при уроне
 let decorBreakCd = 0;            // пауза между мгновенными срывами растений
-let gloomT = 6;
-let gloomWarned = false;
+let zombieT = 6;
+let zombieWarned = false;
 // Звуки мобов с затуханием по расстоянию
 mobManager.onSound = (kind, dist, type) => {
   const vol = 1 / (1 + dist * 0.35);
   if (kind === 'hurt') sfx.mobHurt(type);
-  else if (kind === 'growl') sfx.gloomGrowl(vol);
+  else if (kind === 'growl') sfx.zombieGroan(vol);
   else if (kind === 'hop') sfx.mobHop(vol);
   else if (kind === 'bleat') sfx.bleat(vol);
   else if (kind === 'chirp') sfx.chirp(vol);
-  else if (kind === 'gloom') sfx.gloom(vol);
+  else if (kind === 'zombie') sfx.zombieAmbient(vol);
   else if (kind === 'die') sfx.mobDie();
   else if (kind === 'burn') sfx.burn();
   else if (kind === 'hiss') sfx.hiss();
@@ -137,7 +139,7 @@ scene.add(highlight);
 scene.add(camera);
 const hand = new THREE.Mesh(
   new THREE.BoxGeometry(0.16, 0.16, 0.55),
-  new THREE.MeshBasicMaterial({ color: 0xd9a27a, depthTest: false, depthWrite: false }),
+  new THREE.MeshBasicMaterial({ color: 0xd9a27a, transparent: true, opacity: 1, depthTest: false, depthWrite: false }),
 );
 hand.renderOrder = 999;
 const handPivot = new THREE.Group();
@@ -159,6 +161,7 @@ function swingHand(power = 1) {
 // В руке показывается выбранный предмет: блок — объёмным кубиком с текстурой атласа,
 // инструменты/палка/яблоко — плоской пиксель-арт иконкой.
 const heldGroup = new THREE.Group();
+heldGroup.renderOrder = 2000;
 handPivot.add(heldGroup);
 let heldKey = null;          // какой предмет сейчас в руке
 let _tileMats = null;
@@ -170,7 +173,10 @@ function tileMaterial(idx) {
       map: tileTexture(THREE, idx),
       depthTest: false,
       depthWrite: false,
+      // Оставляем в прозрачном render-pass: высокий renderOrder рисует блок поверх воды,
+      // а alphaTest сохраняет непрозрачные пиксели текстуры без цветного наложения.
       transparent: true,
+      opacity: 1,
       alphaTest: 0.5,
     }));
   }
@@ -187,7 +193,7 @@ function spriteMaterial(key) {
     tex.generateMipmaps = false;
     tex.colorSpace = THREE.SRGBColorSpace;
     SPRITE_MATS.set(key, new THREE.MeshBasicMaterial({
-      map: tex, transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide,
+      map: tex, transparent: true, opacity: 1, depthTest: false, depthWrite: false, side: THREE.DoubleSide,
     }));
   }
   return SPRITE_MATS.get(key);
@@ -199,12 +205,12 @@ const heldGeo = {
 };
 
 // Материалы объёмных моделей предметов (инструменты, палка, яблоко).
-// depthTest выключен — предмет в руке всегда рисуется поверх мира.
+// Прозрачный render-pass с большим renderOrder рисует их после воды и мира.
 const ITEM_MATS = new Map();
 function itemMat(color) {
   const key = color >>> 0;
   if (!ITEM_MATS.has(key)) {
-    const m = new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false });
+    const m = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1, depthTest: false, depthWrite: false });
     m.userData.baseColor = color;
     ITEM_MATS.set(key, m);
   }
@@ -316,7 +322,7 @@ function buildHeldMesh(key) {
     mesh.position.set(0.04, -0.02, -0.3);
     mesh.userData.isSprite = true;
   }
-  mesh.renderOrder = 1000;
+  mesh.renderOrder = 2000;
   return mesh;
 }
 
@@ -345,7 +351,7 @@ const bowMats = {
   wrap: bowMaterial(0x3a2a12),
 };
 function bowMaterial(color) {
-  const m = new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false });
+  const m = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 1, depthTest: false, depthWrite: false });
   m.userData.baseColor = color;
   return m;
 }
@@ -401,7 +407,13 @@ const nockedArrow = buildArrowModel(1.18, arrowMaterials());
 nockedArrow.rotation.y = Math.PI;
 nockedArrow.visible = false;
 nockedArrow.traverse((o) => {
-  if (o.isMesh) { o.material.depthTest = false; o.material.depthWrite = false; }
+  if (o.isMesh) {
+    o.material.transparent = true;
+    o.material.opacity = 1;
+    o.material.depthTest = false;
+    o.material.depthWrite = false;
+    o.material.needsUpdate = true;
+  }
 });
 bowPivot.add(nockedArrow);
 bowPivot.visible = false;
@@ -677,7 +689,7 @@ function pickTarget() {
   return raycastVoxel(world, eye.x, eye.y, eye.z, d.x, d.y, d.z, CONFIG.REACH);
 }
 
-// Ближайший моб под прицелом (птиц бить нельзя)
+// Ближайший моб под прицелом (включая птиц)
 function findMobTarget() {
   const eye = player.eyePos();
   const d = player.lookDir();
@@ -870,33 +882,14 @@ function tryEat() {
   ui.toast(i18n.t('eat_ok'), 1600);
 }
 
-function handleFurnaceUse(hit) {
-  // печка: если есть руда + уголь — выплавляем слиток, иначе подсказка
-  if (isCreative()) {
-    ui.toast(i18n.t('furnace_hint'), 2000);
-    sfx.uiClick();
-    return;
+function openFurnace(hit) {
+  const key = `${hit.x},${hit.y},${hit.z}`;
+  let machine = furnaceStates.get(key);
+  if (!machine) {
+    machine = new Furnace();
+    furnaceStates.set(key, machine);
   }
-  if (inventory.has(ITEM.RAW_IRON) && inventory.has(ITEM.COAL)) {
-    inventory.remove(ITEM.RAW_IRON, 1);
-    inventory.remove(ITEM.COAL, 1);
-    inventory.add(ITEM.IRON_INGOT, 1);
-    refreshHotbar();
-    sfx.craft();
-    particles.burst(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5, [240, 160, 40], 12);
-    ui.toast('Железный слиток выплавлен!', 1800);
-  } else if (inventory.has(ITEM.RAW_GOLD) && inventory.has(ITEM.COAL)) {
-    inventory.remove(ITEM.RAW_GOLD, 1);
-    inventory.remove(ITEM.COAL, 1);
-    inventory.add(ITEM.GOLD_INGOT, 1);
-    refreshHotbar();
-    sfx.craft();
-    particles.burst(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5, [232, 196, 76], 12);
-    ui.toast('Золотой слиток выплавлен!', 1800);
-  } else {
-    ui.toast(i18n.t('furnace_hint'), 2200);
-    sfx.uiClick();
-  }
+  openInventory(2, { type: 'furnace', machine, key });
 }
 
 function doPlace(hit) {
@@ -908,7 +901,7 @@ function doPlace(hit) {
     return;
   }
   if (hit.id === BLOCK.FURNACE) {
-    handleFurnaceUse(hit);
+    openFurnace(hit);
     return;
   }
   // Прицел на траве/цветке — ставим блок на её место
@@ -957,6 +950,7 @@ function buildSave() {
     hotbarIndex,
     seed: world.seed,
     edits: world.serializeEdits(),
+    furnaces: serializeFurnaces(furnaceStates),
     player: player.serialize(),
     time: sky.serialize(),
     blocksBuilt,
@@ -982,7 +976,7 @@ function attachPlayerEvents() {
     if (!isSurvival()) return;             // в креативе игрок бессмертен
     const dx = player.pos.x - mob.pos.x, dz = player.pos.z - mob.pos.z;
     const dl = Math.hypot(dx, dz) || 1;
-    if (player.hurt(mob.type === 'gloom' ? 3 : 2)) {
+    if (player.hurt(2)) {
       player.vel.x = (dx / dl) * 5;
       player.vel.z = (dz / dl) * 5;
       player.vel.y = 3;
@@ -1031,14 +1025,14 @@ function attachPlayerEvents() {
 
   mobManager.onDeath = (mob) => {
     sfx.mobDie();
-    const color = mob.type === 'gloom' ? 0x2a2140
+    const color = mob.type === 'zombie' ? 0x4f9b43
       : mob.type === 'creeper' ? 0x6cc24a
         : mob.type === 'spider' ? 0x111111
           : mob.type === 'wolf' ? 0xd6d2ca
             : mob.type === 'fish' ? 0xb8ccd8 : 0xd03232;
     particles.burst(mob.pos.x, mob.pos.y + mob.centerY(), mob.pos.z, color, 16);
     // Опыт с монстра: вылетают светящиеся шарики
-    const xpMap = { gloom: 7, spider: 5, creeper: 6, wolf: 4, fish: 1, bunny: 2, sheep: 2, slime: 3, bird: 1 };
+    const xpMap = { zombie: 5, spider: 5, creeper: 6, wolf: 4, fish: 1, bunny: 2, sheep: 2, slime: 3, bird: 1 };
     const xp = xpMap[mob.type] || 3;
     xpOrbs.spawn(mob.pos.x, mob.pos.y + 0.6, mob.pos.z, xp);
     sfx.pickup();
@@ -1206,6 +1200,7 @@ async function startWorld(opts = {}) {
     : (opts.mode === 'survival' ? 'survival' : 'creative');
 
   world = new World(seed);
+  furnaceStates = data ? deserializeFurnaces(data.furnaces) : new Map();
   player = new Player(world);
   mobManager.clear();
   items.clear();
@@ -1297,7 +1292,7 @@ async function startWorld(opts = {}) {
 }
 
 // ---------------------------------------------------------------- Инвентарь: окно
-function openInventory(gridSize = 2) {
+function openInventory(gridSize = 2, station = null) {
   if (state !== 'game' || !world) return;
   if (gridSize !== invUI.gridSize) invUI.setGridSize(gridSize);
   state = 'inventory';
@@ -1307,7 +1302,7 @@ function openInventory(gridSize = 2) {
   input.mouse.right = false;
   ysdk.gameplayStop();
   if (document.pointerLockElement) document.exitPointerLock?.();
-  invUI.show({ inv: inventory, mode, hotbarIndex, catalog: catalogEntries(), gridSize });
+  invUI.show({ inv: inventory, mode, hotbarIndex, catalog: catalogEntries(), gridSize, station });
   ui.showScreen('inventory-screen');
   ui.setTouchVisible(false);
   sfx.uiClick();
@@ -1330,6 +1325,7 @@ function closeInventory() {
   refreshHotbar();
   ysdk.gameplayStart();
   sfx.uiClick();
+  saveGame();
 }
 
 function toggleInventory() {
@@ -1346,6 +1342,7 @@ function refreshCatalog() {
 }
 
 invUI.handlers.onChange = () => refreshHotbar();
+invUI.handlers.onStationChange = () => saveGame();
 invUI.handlers.onClose = () => closeInventory();
 invUI.handlers.onSelect = (i) => {
   selectHotbar(i);
@@ -1539,11 +1536,20 @@ window.addEventListener('orientationchange', checkOrientation);
 window.addEventListener('resize', checkOrientation);
 
 // Автосохранение
-setInterval(() => { if (state === 'game') saveGame(); }, CONFIG.AUTO_SAVE_SEC * 1000);
+setInterval(() => { if (state === 'game' || state === 'inventory') saveGame(); }, CONFIG.AUTO_SAVE_SEC * 1000);
 
 // ---------------------------------------------------------------- Главный цикл
 let lastT = performance.now();
 let fpsEma = 60;
+
+function updateFurnaceMachines(dt) {
+  const openMachine = state === 'inventory' && invUI.station?.type === 'furnace'
+    ? invUI.station.machine : null;
+  for (const machine of furnaceStates.values()) {
+    if (machine !== openMachine) machine.update(dt);
+  }
+  invUI.updateStation(dt);
+}
 
 function frame() {
   requestAnimationFrame(frame);
@@ -1552,6 +1558,8 @@ function frame() {
   lastT = now;
   dt = Math.min(dt, 0.05);
   fpsEma = fpsEma * 0.95 + (1 / Math.max(dt, 0.001)) * 0.05;
+
+  if (world && player && (state === 'game' || state === 'inventory')) updateFurnaceMachines(dt);
 
   if (world && player && (state === 'game')) {
     input.update();
@@ -1582,27 +1590,27 @@ function frame() {
     }
     processQueue(CONFIG.MAX_MESH_PER_FRAME);
 
-    // --- Выживание: предметы, опыт, еда, ночные Хмари ---
+    // --- Выживание: предметы, опыт, еда, ночные зомби ---
     items.update(dt, world, player.pos);
     xpOrbs.update(dt, world, player.pos);
     if (input.consumePress('KeyF')) tryEat();
 
     mobManager.setNight(sky.lightLevel < 0.32);
     if (sky.lightLevel < 0.32) {
-      gloomT -= dt;
-      if (gloomT <= 0) {
-        gloomT = 8 + Math.random() * 9;
-        const spawned = mobManager.trySpawnGloom(player);
-        if (spawned && !gloomWarned) {
-          gloomWarned = true;
-          ui.toast(i18n.t('gloom_warn'), 3200);
+      zombieT -= dt;
+      if (zombieT <= 0) {
+        zombieT = 8 + Math.random() * 9;
+        const spawned = mobManager.trySpawnZombie(player);
+        if (spawned && !zombieWarned) {
+          zombieWarned = true;
+          ui.toast(i18n.t('zombie_warn'), 3200);
         }
       }
     } else {
-      gloomWarned = false;
+      zombieWarned = false;
     }
 
-    // Удар по мобу (ЛКМ): можно бить всех, кроме птиц
+    // Удар по любому мобу под прицелом, включая птиц
     let mobTarget = null;
     if (input.breakHeld) {
       mobTarget = findMobTarget();
@@ -1703,8 +1711,10 @@ function frame() {
       crackMesh.visible = false;
     }
 
+    // ПКМ по интерактивному блоку важнее лука: даже с луком можно открыть верстак/печь.
+    const interactiveTarget = hit && (hit.id === BLOCK.TABLE || hit.id === BLOCK.FURNACE);
     // Лук: удержание ПКМ (или кнопки на тач-экране) натягивает тетиву, отпускание — выстрел
-    const bowSel = isBowSelected();
+    const bowSel = isBowSelected() && !interactiveTarget;
     if (bowSel && input.placeHeld) {
       if (!bowCharging) {
         bowCharging = true;
@@ -1714,7 +1724,7 @@ function frame() {
       bowCharge = Math.min(1, bowCharge + dt / BOW_CHARGE_TIME);
     } else if (bowCharging) {
       bowCharging = false;
-      fireBow(bowCharge);
+      if (bowSel) fireBow(bowCharge);
       bowCharge = 0;
     }
 

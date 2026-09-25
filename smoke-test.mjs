@@ -2,14 +2,15 @@
 import { World } from './src/world.js';
 import { meshChunk } from './src/mesher.js';
 import { raycastVoxel } from './src/raycast.js';
-import { isSolid, isOpaque, isDecor, BLOCK } from './src/blocks.js';
+import { isSolid, isOpaque, isDecor, BLOCK, BLOCKS } from './src/blocks.js';
 import { Inventory } from './src/inventory.js';
 import {
   RECIPES, craft, canCraft, validateRecipes, emptyGrid, matchRecipe, gridResult,
   craftFromGrid, needsTable, recipeGridSize,
 } from './src/crafts.js';
-import { ITEM, itemDef, foodValue, isFood, blockItem, blockDropItem, breakTime, itemDamage, maxStack, placeBlockId, toolKind } from './src/items.js';
+import { ITEM, itemDef, itemDescription, foodValue, isFood, blockItem, blockDropItem, breakTime, itemDamage, maxStack, placeBlockId, toolKind } from './src/items.js';
 import { CONFIG } from './src/config.js';
+import { Furnace, serializeFurnaces, deserializeFurnaces, fuelDuration, smeltResult } from './src/furnace.js';
 import { STRINGS } from './src/i18n.js';
 
 // Заглушка THREE — достаточно для toGeometry
@@ -52,6 +53,19 @@ check('heightAt in bounds', (() => {
     if (h < 3 || h > 58) return false;
   }
   return true;
+})());
+check('geology: deterministic quarry and rift depressions', (() => {
+  const geology = new World(4242);
+  const quarry = geology.featureAt(71, -841);
+  const rift = geology.featureAt(-1000, -107);
+  const quarryY = geology.heightAt(71, -841);
+  const riftY = geology.heightAt(-1000, -107);
+  const quarryFloor = geology.getBlock(71, quarryY, -841);
+  const riftFloor = geology.getBlock(-1000, riftY, -107);
+  return quarry?.type === 'quarry' && rift?.type === 'rift'
+    && quarryY < geology.baseHeightAt(71, -841)
+    && riftY < geology.baseHeightAt(-1000, -107)
+    && [BLOCK.STONE, BLOCK.GRAVEL].includes(quarryFloor) && riftFloor === BLOCK.STONE;
 })());
 
 // Блоки: get/set и правки
@@ -211,7 +225,34 @@ check('decor meshed as cross quads', (() => {
 // Декор непроходим и не непрозрачен
 check('decor is walk-through', isDecor(15) && !isSolid(15) && !isOpaque(15));
 
-// ---- Предметы и дроп с блоков ----
+// ---- Предметы, описания и плавка ----
+check('предметы и блоки имеют описания на русском и английском', (() => {
+  const allBlocks = BLOCKS.slice(1).filter((block) => block.id !== BLOCK.WATER);
+  return allBlocks.every((block) => itemDescription(blockItem(block.id), 'ru') && itemDescription(blockItem(block.id), 'en'))
+    && Object.values(ITEM).every((key) => itemDescription(key, 'ru') && itemDescription(key, 'en'))
+    && itemDescription(blockItem(BLOCK.FURNACE), 'ru').toLowerCase().includes('печ')
+    && itemDescription(blockItem(BLOCK.FURNACE), 'en').toLowerCase().includes('smelt');
+})());
+check('печь знает рецепты и топливо', smeltResult(ITEM.RAW_IRON) === ITEM.IRON_INGOT
+  && smeltResult(blockItem(BLOCK.SAND)) === blockItem(BLOCK.GLASS)
+  && fuelDuration(ITEM.COAL) > 0);
+check('печь не принимает неподходящие предметы', (() => {
+  const f = new Furnace();
+  return !f.setStack('input', { key: ITEM.STICK, count: 1 })
+    && !f.setStack('fuel', { key: ITEM.APPLE, count: 1 });
+})());
+check('печь переплавляет руду и сериализует состояние', (() => {
+  const f = new Furnace();
+  f.setStack('input', { key: ITEM.RAW_IRON, count: 1 });
+  f.setStack('fuel', { key: ITEM.COAL, count: 1 });
+  for (let i = 0; i < 45; i++) f.update(0.1);
+  const map = new Map([['4,25,-8', f]]);
+  const restored = deserializeFurnaces(serializeFurnaces(map)).get('4,25,-8');
+  return restored?.getSlot('output')?.key === ITEM.IRON_INGOT
+    && restored.getSlot('output')?.count === 1 && restored.getSlot('input') === null;
+})());
+
+// ---- Дроп с блоков ----
 check('трава падает землёй', blockDropItem(BLOCK.GRASS) === blockItem(BLOCK.DIRT));
 check('камень падает булыжником', blockDropItem(BLOCK.STONE) === blockItem(BLOCK.COBBLE));
 check('стекло не даёт ничего', blockDropItem(BLOCK.GLASS) === null);
@@ -471,8 +512,29 @@ check('лук не стакается', maxStack(ITEM.BOW) === 1);
   check('взгляд моба горизонтальный', Math.abs(fwd.y) < 1e-6);
 
   check('кап мобов', mobs.MOB_CAPS.spider === 3 && mobs.MOB_CAPS.creeper === 2);
-  check('ночные мобы враждебны', ['gloom', 'spider', 'creeper'].every((t) => mobs.HOSTILE.has(t)));
+  check('ночные мобы враждебны', ['zombie', 'spider', 'creeper'].every((t) => mobs.HOSTILE.has(t)));
   check('рыба и волк — не враждебные', !mobs.HOSTILE.has('fish') && !mobs.HOSTILE.has('wolf'));
+  check('птицу можно поразить, пока она жива', (() => {
+    const bird = new mobs.Mob(flat, mobs.makeMobVisuals('bird'), 'bird', 0.5, 36, 0.5);
+    const targetable = bird.hittable();
+    bird.hurt(1);
+    return targetable && bird.dying === 0 && !bird.hittable();
+  })());
+  check('зомби — наземный моб с моделью гуманоида', (() => {
+    const v = mobs.makeMobVisuals('zombie');
+    const zombie = new mobs.Mob(flat, v, 'zombie', 0.5, 31, 0.5);
+    zombie.heading = 0;
+    zombie.update(0.5, { x: 10.5, y: 31, z: 0.5 });
+    return v.legs.length === 2 && v.arms.length === 2
+      && zombie.pos.x > 0.8 && Math.abs(zombie.pos.y - 31) < 0.01;
+  })());
+  check('зомби атакует игрока на расстоянии удара', (() => {
+    const zombie = new mobs.Mob(flat, mobs.makeMobVisuals('zombie'), 'zombie', 0.5, 31, 0.5);
+    let attacks = 0;
+    zombie.onAttack = () => attacks++;
+    zombie.update(1 / 60, { x: 1.5, y: 31, z: 0.5 });
+    return attacks === 1 && zombie.lungeT > 0;
+  })());
 
   // Анимации: походка, взгляд, хвост, мигание, выпад
   const animMob = (type, opts = {}) => {
@@ -608,6 +670,11 @@ check('btn-home + lightning in markup', html.includes('id="btn-home"') && html.i
 check('разметка: выбор режима, инвентарь, рюкзак', html.includes('id="mode-screen"')
   && html.includes('id="inventory-screen"') && html.includes('id="btn-bag"')
   && html.includes('id="cursor-item"') && html.includes('id="inv-hotbar-row"'));
+check('печь: разметка содержит три слота и панель плавки', html.includes('id="inv-furnace-panel"')
+  && html.includes('data-furnace-slot="input"') && html.includes('data-furnace-slot="fuel"')
+  && html.includes('data-furnace-slot="output"'));
+const css = await (await import('node:fs/promises')).readFile(new URL('./styles.css', import.meta.url), 'utf8');
+check('печь: панель имеет стили', css.includes('.furnace-layout') && css.includes('#furnace-progress-fill'));
 
 console.log(failed === 0 ? '\nВсе проверки пройдены' : `\nПровалено проверок: ${failed}`);
 process.exit(failed ? 1 : 0);

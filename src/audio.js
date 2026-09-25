@@ -238,7 +238,7 @@ export class Sfx {
     } else if (type === 'slime') {
       this._burst({ freq: 260, dur: 0.18, gain: 0.22, pitchDrop: 0.35, q: 3 });
       setTimeout(() => this._burst({ freq: 900, dur: 0.09, gain: 0.16, type: 'bandpass', q: 2 }), 90);
-    } else if (type === 'gloom') {
+    } else if (type === 'zombie') {
       this._burst({ freq: 620, dur: 0.3, gain: 0.16, type: 'bandpass', q: 8, pitchDrop: 0.5 });
     } else {
       this._tone({ freq: 900, dur: 0.1, gain: 0.1, type: 'triangle', slide: 300 });
@@ -249,7 +249,7 @@ export class Sfx {
     this._burst({ freq: 380, dur: 0.25, gain: 0.25, type: 'bandpass', q: 2, pitchDrop: 0.6 });
   }
 
-  gloomGrowl(vol = 1) {
+  zombieGroan(vol = 1) {
     // Низкое рычание: дрожащий низкий тон + шумовой хрип
     if (!this.enabled || !this._ensure() || this.ctx.state === 'suspended') return;
     const t0 = this.ctx.currentTime;
@@ -324,8 +324,8 @@ export class Sfx {
     this._burst({ freq: 3200, dur: 0.09, gain: 0.1, type: 'bandpass', q: 1.2, pitchDrop: 0.6 });
   }
 
-  gloom(vol = 1) {
-    // Шёпот Хмари
+  zombieAmbient(vol = 1) {
+    // Хрип зомби
     this._burst({ freq: 300, dur: 0.45, gain: 0.1 * vol, type: 'bandpass', q: 7 });
   }
 

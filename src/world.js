@@ -12,6 +12,7 @@ const ROCK_H = 44;        // выше — голый камень
 const PEAK_H = 51;        // выше — снежные вершины
 const H = CONFIG.WORLD_HEIGHT;
 const SEA = CONFIG.SEA_LEVEL;
+const FEATURE_CELL = 160;       // глобальная сетка для карьер и разломов
 
 function idx(x, y, z) {
   return (y * S + z) * S + x;
@@ -78,34 +79,105 @@ export class World {
   // Снежная колонка
   isCold(wx, wz) { return this.temperatureAt(wx, wz) > COLD_T; }
 
-  // Высота поверхности в колонке
-  heightAt(wx, wz) {
+  // Базовая высота поверхности без геологических особенностей.
+  baseHeightAt(wx, wz) {
     const seed = this.seed;
     const cont = fbm2d(wx * 0.006, wz * 0.006, seed, 4);           // континентальность
     const hills = fbm2d(wx * 0.03, wz * 0.03, seed + 991, 3);      // холмы
     const mt = fbm2d(wx * 0.0022, wz * 0.0022, seed + 77, 2);      // горные массивы
     const ridgeN = fbm2d(wx * 0.0048 + 13, wz * 0.0048 - 27, seed + 505, 3);
-    // tanh расширяет «кучу» значений около 0.5 — рельеф контрастнее
     const c = Math.tanh((cont - 0.5) * 5);
     let h = SEA + 3 + c * 18 + (hills - 0.5) * 12;
-    const mountain = Math.max(0, mt - 0.46) / 0.54;                 // 0..1
+    const mountain = Math.max(0, mt - 0.46) / 0.54;
     h += Math.pow(mountain, 1.5) * 30;
-    // Гребни: 1-|2n-1| даёт острые скалистые хребты в горах
     const ridge = 1 - Math.abs(ridgeN * 2 - 1);
     h += ridge * ridge * mountain * 16;
     return Math.max(3, Math.min(H - 3, Math.round(h)));
+  }
+
+  /**
+   * Детерминированная геологическая особенность рядом с колонкой.
+   * Карьеры формируют уступчатые выемки, а разломы — длинные узкие ущелья.
+   */
+  featureAt(wx, wz) {
+    const gx0 = Math.floor(wx / FEATURE_CELL);
+    const gz0 = Math.floor(wz / FEATURE_CELL);
+    let best = null;
+    for (let gz = gz0 - 1; gz <= gz0 + 1; gz++) {
+      for (let gx = gx0 - 1; gx <= gx0 + 1; gx++) {
+        const roll = hash3(gx, 137, gz, this.seed);
+        const type = roll < 0.22 ? 'quarry' : roll < 0.42 ? 'rift' : null;
+        if (!type) continue;
+        const fx = (gx + 0.25 + hash3(gx, 211, gz, this.seed) * 0.5) * FEATURE_CELL;
+        const fz = (gz + 0.25 + hash3(gx, 307, gz, this.seed) * 0.5) * FEATURE_CELL;
+        const dx = wx - fx, dz = wz - fz;
+        let feature;
+
+        if (type === 'quarry') {
+          const rx = 11 + hash3(gx, 401, gz, this.seed) * 8;
+          const rz = 10 + hash3(gx, 503, gz, this.seed) * 7;
+          const depth = 9 + hash3(gx, 601, gz, this.seed) * 9;
+          // Неровный край и ступени вместо идеально круглой воронки.
+          const rim = Math.sin(dx * 0.37 + gx) * Math.sin(dz * 0.31 + gz) * 0.035;
+          const radius = Math.hypot(dx / rx, dz / rz) + rim;
+          if (radius >= 1) continue;
+          const cut = Math.floor(((1 - radius) * depth) / 3) * 3;
+          if (cut < 3) continue;
+          feature = { type, cut, radius, rx, rz, depth, x: fx, z: fz };
+        } else {
+          const angle = hash3(gx, 701, gz, this.seed) * Math.PI * 2;
+          const along = dx * Math.cos(angle) + dz * Math.sin(angle);
+          const across = -dx * Math.sin(angle) + dz * Math.cos(angle);
+          const halfLength = 44 + hash3(gx, 809, gz, this.seed) * 24;
+          if (Math.abs(along) >= halfLength) continue;
+          const phase = hash3(gx, 907, gz, this.seed) * Math.PI * 2;
+          const bend = Math.sin(along * 0.052 + phase) * 2.4
+            + Math.sin(along * 0.13 - phase) * 0.7;
+          const width = 3.2 + hash3(gx, 1009, gz, this.seed) * 2.7;
+          const acrossDist = Math.abs(across - bend);
+          const radius = acrossDist / width;
+          if (radius >= 1) continue;
+          const depth = 19 + hash3(gx, 1103, gz, this.seed) * 17;
+          // Обрывчатые стенки с несколькими каменными террасами по краям.
+          const cut = Math.floor((depth * Math.pow(1 - radius, 0.42)) / 2) * 2;
+          if (cut < 2) continue;
+          feature = { type, cut, radius, width, depth, along, halfLength, x: fx, z: fz };
+        }
+        if (!best || feature.cut > best.cut) best = feature;
+      }
+    }
+    return best;
+  }
+
+  heightAt(wx, wz) {
+    const base = this.baseHeightAt(wx, wz);
+    if (base <= SEA + 4) return base;
+    const feature = this.featureAt(wx, wz);
+    if (!feature) return base;
+    const cut = Math.min(feature.cut, base - (SEA + 4));
+    return cut >= 2 ? base - cut : base;
   }
 
   generateChunk(chunk) {
     const cx = chunk.cx, cz = chunk.cz;
     const ox = cx * S, oz = cz * S;
     const seed = this.seed;
+    const terrainHeight = new Int16Array(S * S);
 
     // Рельеф и биомы
     for (let z = 0; z < S; z++) {
       for (let x = 0; x < S; x++) {
         const wx = ox + x, wz = oz + z;
-        const h = this.heightAt(wx, wz);
+        const baseH = this.baseHeightAt(wx, wz);
+        let feature = baseH > SEA + 4 ? this.featureAt(wx, wz) : null;
+        if (feature) {
+          const safeCut = Math.min(feature.cut, baseH - (SEA + 4));
+          if (safeCut < 2) feature = null;
+          else feature.cut = safeCut;
+        }
+        const h = baseH - (feature?.cut || 0);
+        terrainHeight[z * S + x] = h;
+        const excavated = !!(feature && feature.cut >= 3);
         const cold = this.temperatureAt(wx, wz) > COLD_T;    // снежные зоны редкие
         const dry = !cold && !this.isRocky(h) && this.dryAt(wx, wz) > DRY_T;   // пустыни
         const rocky = this.isRocky(h);                        // высокогорье — голый камень
@@ -115,14 +187,20 @@ export class World {
             // В холодных зонах вода сверху затянута льдом
             b = y <= SEA ? ((cold && y === SEA) ? BLOCK.ICE : BLOCK.WATER) : BLOCK.AIR;
           } else if (y === h) {
-            if (h <= SEA + 2) b = BLOCK.SAND;                // пляжи
+            if (excavated) {
+              // В карьере и разломе на поверхность выходят коренные породы.
+              b = h < 7 ? BLOCK.SLATE
+                : feature.type === 'quarry' && hash3(wx, y, wz, seed + 3300) < 0.07 ? BLOCK.GRAVEL
+                  : BLOCK.STONE;
+            } else if (h <= SEA + 2) b = BLOCK.SAND;         // пляжи
             else if (h >= PEAK_H) b = BLOCK.SNOW;            // снежные вершины
             else if (rocky) b = BLOCK.STONE;
             else if (cold) b = BLOCK.SNOW;
             else if (dry) b = BLOCK.SAND;
             else b = BLOCK.GRASS;
           } else if (y >= h - 3) {
-            if (h <= SEA + 2) b = BLOCK.SAND;
+            if (excavated) b = y < 5 ? BLOCK.SLATE : BLOCK.STONE;
+            else if (h <= SEA + 2) b = BLOCK.SAND;
             else if (h >= PEAK_H) b = BLOCK.SNOW;
             else if (rocky) b = BLOCK.STONE;
             else if (dry) b = BLOCK.SANDSTONE;
@@ -135,34 +213,53 @@ export class World {
       }
     }
 
-    // Пещеры-тоннели: извилистые ходы по полям шума.
-    // Курс (где ход проходит) задаёт 2D-шум, высоту — отдельное поле с более высокой
-    // частотой: получаются трубы, которые петляют и по горизонтали, и по вертикали.
+    // Тоннели образуют связанные меандрирующие системы, а не случайные вертикальные полости.
+    // Контурные 2D-поля задают трассы, низкочастотная деформация и отдельные поля высоты
+    // изгибают их в пространстве. Вариативный радиус формирует неровные стены и ответвления.
     const rngCave = makeRng(hash3(cx, 5, cz, seed) * 0x7fffffff);
     const carvedTop = new Int16Array(S * S);
     for (let z = 0; z < S; z++) {
       for (let x = 0; x < S; x++) {
         const wx = ox + x, wz = oz + z;
-        const h = this.heightAt(wx, wz);
-        const yTop = h - 4 - ((rngCave() * 3) | 0);   // над пещерой остаётся 3–5 блоков породы
-        if (yTop < 7) continue;
-        const t1 = fbm2d(wx * 0.031, wz * 0.031, seed + 404, 3);
-        const t2 = fbm2d(wx * 0.014 + 11, wz * 0.014 - 6, seed + 707, 3);
-        const t3 = fbm2d(wx * 0.019 - 23, wz * 0.019 + 17, seed + 808, 3);
-        const branches = [
-          [t1, 0.62, 0.10, 1.1, 1.6],      // частые узкие ходы
-          [t2, 0.595, 0.16, 1.3, 2.4],     // редкие широкие
-          [t3, 0.645, 0.26, 1.0, 1.4],     // тонкие верхние
+        const h = terrainHeight[z * S + x];
+        const yTop = h - 4 - ((rngCave() * 3) | 0);
+        if (yTop < 8) continue;
+
+        const warpX = (fbm2d(wx * 0.012, wz * 0.012, seed + 1211, 3) - 0.5) * 9;
+        const warpZ = (fbm2d(wx * 0.012 + 19, wz * 0.012 - 31, seed + 1319, 3) - 0.5) * 9;
+        const px = wx + warpX, pz = wz + warpZ;
+        const detail = fbm2d(wx * 0.075 + 7, wz * 0.075 - 13, seed + 1433, 2);
+        const verticalLimit = Math.max(7, Math.min(43, yTop - 3));
+        const paths = [
+          {
+            n: fbm2d(px * 0.024, pz * 0.024, seed + 404, 4), threshold: 0.072,
+            center: 6 + fbm2d(wx * 0.011 + 5, wz * 0.011 - 8, seed + 909, 3) * (verticalLimit - 6),
+            radius: 1.55, variation: 1.25,
+          },
+          {
+            n: fbm2d(px * 0.041 + 11, pz * 0.041 - 6, seed + 707, 3), threshold: 0.052,
+            center: 7 + fbm2d(wx * 0.017 - 17, wz * 0.017 + 9, seed + 1511, 3) * (verticalLimit - 7),
+            radius: 1.05, variation: 1.15,
+          },
+          {
+            n: fbm2d((wx - warpZ) * 0.018 - 23, (wz + warpX) * 0.018 + 17, seed + 808, 3), threshold: 0.045,
+            center: 8 + fbm2d(wx * 0.008 + 33, wz * 0.008 - 25, seed + 1613, 2) * (verticalLimit - 8),
+            radius: 1.8, variation: 1.45,
+          },
         ];
-        for (const [n, thr, yFreq, r0, rk] of branches) {
-          if (n < thr) continue;
-          const k = (n - thr) / (1 - thr);
-          const meander = fbm2d(wx * yFreq + 5, wz * yFreq - 8, seed + 909, 3);
-          const centerY = Math.round(4 + meander * (yTop - 5));
-          const rad = r0 + k * rk + rngCave() * 0.6;
-          const y0 = Math.max(3, Math.round(centerY - rad));
-          const y1 = Math.min(yTop, Math.round(centerY + rad));
+        for (const path of paths) {
+          const distance = Math.abs(path.n - 0.5);
+          if (distance >= path.threshold) continue;
+          const strength = 1 - distance / path.threshold;
+          const radius = path.radius + strength * path.variation + (detail - 0.5) * 0.55;
+          const centerY = path.center + (detail - 0.5) * 1.4;
+          const y0 = Math.max(3, Math.floor(centerY - radius));
+          const y1 = Math.min(yTop, Math.ceil(centerY + radius));
           for (let y = y0; y <= y1; y++) {
+            const vertical = (y - centerY) / Math.max(0.7, radius);
+            // Мягко сужаем ход к потолку и полу; небольшая шумовая рябь делает стену естественной.
+            const wallNoise = (fbm2d(wx * 0.12 + y * 0.021, wz * 0.12 - y * 0.017, seed + 1717, 2) - 0.5) * 0.18;
+            if (vertical * vertical > 1 + wallNoise) continue;
             const was = chunk.get(x, y, z);
             if (was === BLOCK.AIR || was === BLOCK.WATER || was === BLOCK.ICE) continue;
             chunk.set(x, y, z, BLOCK.AIR);
@@ -175,15 +272,31 @@ export class World {
     // Подземные залы: крупные каверны по трёхмерному шуму.
     // Шум считаем на сетке 2×2×2 и растягиваем — иначе генерация чанка станет заметно дороже.
     {
-      const CY0 = 5, CY1 = 34, STEP = 2;
+      const CY0 = 5, CY1 = 41, STEP = 2;
       const gn = S / STEP + 1;
       const gyn = Math.floor((CY1 - CY0) / STEP) + 1;
       const grid = new Float32Array(gn * gyn * gn);
+      const warpX = new Float32Array(gn * gn), warpZ = new Float32Array(gn * gn);
+      for (let iz = 0; iz < gn; iz++) {
+        for (let ix = 0; ix < gn; ix++) {
+          const wx = ox + ix * STEP, wz = oz + iz * STEP;
+          const i = iz * gn + ix;
+          warpX[i] = (fbm2d(wx * 0.017, wz * 0.017, seed + 1823, 3) - 0.5) * 8;
+          warpZ[i] = (fbm2d(wx * 0.017 + 27, wz * 0.017 - 41, seed + 1931, 3) - 0.5) * 8;
+        }
+      }
       for (let iz = 0; iz < gn; iz++) {
         for (let iy = 0; iy < gyn; iy++) {
           for (let ix = 0; ix < gn; ix++) {
             const wx = ox + ix * STEP, wy = CY0 + iy * STEP, wz = oz + iz * STEP;
-            grid[(iz * gyn + iy) * gn + ix] = fbm3d(wx * 0.036, wy * 0.075, wz * 0.036, seed + 1500, 3);
+            const warpIndex = iz * gn + ix;
+            grid[(iz * gyn + iy) * gn + ix] = fbm3d(
+              (wx + warpX[warpIndex]) * 0.035,
+              wy * 0.067,
+              (wz + warpZ[warpIndex]) * 0.035,
+              seed + 1500,
+              3,
+            );
           }
         }
       }
@@ -205,7 +318,7 @@ export class World {
       for (let z = 0; z < S; z++) {
         for (let x = 0; x < S; x++) {
           const wx = ox + x, wz = oz + z;
-          const h = this.heightAt(wx, wz);
+          const h = terrainHeight[z * S + x];
           const yTop = Math.min(CY1, h - 6 - ((rngCave() * 3) | 0));
           for (let y = CY0; y <= yTop; y++) {
             const b = chunk.get(x, y, z);
@@ -232,7 +345,7 @@ export class World {
         for (let x = 0; x < S; x++) {
           const top = carvedTop[z * S + x];
           if (top < 4) continue;
-          const h = this.heightAt(ox + x, oz + z);
+          const h = terrainHeight[z * S + x];
           if (h <= SEA + 2) continue;                    // пляжи и дно не вскрываем
           const depth = h - 1 - top;                     // сколько породы над полостью
           if (depth < 2 || depth > 8) continue;
@@ -247,7 +360,7 @@ export class World {
       for (const [dx, dz] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
         const x = bestX + dx, z = bestZ + dz;
         if (x < 0 || z < 0 || x >= S || z >= S) continue;
-        const h = this.heightAt(ox + x, oz + z);
+        const h = terrainHeight[z * S + x];
         for (let y = top + 1; y < h; y++) {
           const b = chunk.get(x, y, z);
           if (b === BLOCK.WATER || b === BLOCK.ICE) break;
@@ -275,7 +388,7 @@ export class World {
     for (let z = 0; z < S; z++) {
       for (let x = 0; x < S; x++) {
         if (rngCave() >= 0.004) continue;
-        const h = this.heightAt(ox + x, oz + z);
+        const h = terrainHeight[z * S + x];
         if (h <= SEA + 3) continue;
         const depth = 8 + ((rngCave() * 10) | 0);
         for (let y = h - 1; y > h - depth; y--) {
@@ -362,7 +475,7 @@ export class World {
     for (let t = 0; t < treeCount; t++) {
       const tx = 3 + ((rng() * (S - 6)) | 0);
       const tz = 3 + ((rng() * (S - 6)) | 0);
-      const th = this.heightAt(ox + tx, oz + tz);
+      const th = terrainHeight[tz * S + tx];
       if (th <= SEA + 1 || th > 44) continue;
       const surface = chunk.get(tx, th, tz);
       if (surface !== BLOCK.GRASS && surface !== BLOCK.SNOW) continue;
@@ -421,7 +534,7 @@ export class World {
     for (let i = 0; i < 3; i++) {
       const tx = 1 + ((rng() * (S - 2)) | 0);
       const tz = 1 + ((rng() * (S - 2)) | 0);
-      const th = this.heightAt(ox + tx, oz + tz);
+      const th = terrainHeight[tz * S + tx];
       if (th <= SEA + 1 || th > 40) continue;
       if (!this.isDry(ox + tx, oz + tz, th)) continue;
       if (chunk.get(tx, th, tz) !== BLOCK.SAND) continue;
@@ -435,7 +548,7 @@ export class World {
     for (let z = 0; z < S; z++) {
       for (let x = 0; x < S; x++) {
         const wx = ox + x, wz = oz + z;
-        const h = this.heightAt(wx, wz);
+        const h = terrainHeight[z * S + x];
         if (h <= SEA + 1 || h >= H - 1) continue;
         if (chunk.get(x, h, z) !== BLOCK.GRASS) continue;
         if (chunk.get(x, h + 1, z) !== BLOCK.AIR) continue;

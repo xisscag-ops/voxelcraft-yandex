@@ -158,13 +158,37 @@
           <span class="inv-tip" id="inv-tip"></span>
           <button id="btn-inv-close" class="inv-close" aria-label="Закрыть">✕</button>
         </div>
-        <div class="craft-row">
+        <div class="craft-row" id="inv-craft-row">
           <div class="craft-block">
             <div class="craft-title" id="inv-craft-title">Крафт 2×2</div>
             <div class="craft-grid size2" id="inv-craft-grid"></div>
           </div>
           <div class="craft-arrow">➜</div>
           <div class="islot craft-result" id="inv-craft-result"></div>
+        </div>
+        <div class="furnace-panel hidden" id="inv-furnace-panel">
+          <div class="furnace-layout">
+            <div class="furnace-unit">
+              <div class="furnace-label" data-i18n="furnace_input">Сырьё</div>
+              <div class="islot furnace-slot" id="furnace-input-slot" data-furnace-slot="input"></div>
+              <div class="furnace-fuel-row">
+                <span class="furnace-fuel-icon" aria-hidden="true">🔥</span>
+                <div class="furnace-burn-meter"><div id="furnace-burn-fill"></div></div>
+                <div class="islot furnace-slot fuel-slot" id="furnace-fuel-slot" data-furnace-slot="fuel"></div>
+              </div>
+              <div class="furnace-sub-label" data-i18n="furnace_fuel">Топливо</div>
+            </div>
+            <div class="furnace-process">
+              <div class="furnace-arrow" aria-hidden="true">➜</div>
+              <div class="furnace-progress"><div id="furnace-progress-fill"></div></div>
+            </div>
+            <div class="furnace-unit">
+              <div class="furnace-label" data-i18n="furnace_output">Результат</div>
+              <div class="islot furnace-slot output-slot" id="furnace-output-slot" data-furnace-slot="output"></div>
+            </div>
+          </div>
+          <div class="furnace-status" id="furnace-status" role="status" aria-live="polite">Положите сырьё и топливо</div>
+          <div class="furnace-help" data-i18n="furnace_controls">Перетаскивайте предметы из инвентаря. ЛКМ — стопка, ПКМ — половина/один предмет.</div>
         </div>
         <div class="inv-grid" id="inv-main-grid"></div>
         <div class="inv-grid inv-hotbar" id="inv-hotbar-row"></div>

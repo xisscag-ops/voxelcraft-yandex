@@ -112,11 +112,70 @@ export const ITEMS = {
   },
 };
 
+const BLOCK_DETAILS = {
+  [BLOCK.GRASS]: { ru: 'Верхний слой земли на равнинах. Подходит для строительства и озеленения.', en: 'The grassy surface layer. Useful for building and landscaping.' },
+  [BLOCK.DIRT]: { ru: 'Мягкая порода для простых построек; из неё растёт трава.', en: 'Soft soil for simple builds; grass can grow on it.' },
+  [BLOCK.STONE]: { ru: 'Прочная порода. Добывайте киркой; выпадает булыжник.', en: 'A sturdy rock. Mine with a pickaxe; drops cobblestone.' },
+  [BLOCK.COBBLE]: { ru: 'Булыжник для прочных стен, печки и каменных инструментов.', en: 'A sturdy building block, also used for furnaces and stone tools.' },
+  [BLOCK.SAND]: { ru: 'Песок пляжей и пустынь. Переплавляется в стекло.', en: 'Beach and desert sand. Smelt it in a furnace to make glass.' },
+  [BLOCK.LOG]: { ru: 'Бревно дерева. Перерабатывается в доски; годится на топливо.', en: 'Tree trunk. Craft it into planks or use it as fuel.' },
+  [BLOCK.PLANKS]: { ru: 'Деревянные доски для построек, верстака и инструментов.', en: 'Wooden boards for building, crafting tables and tools.' },
+  [BLOCK.LEAVES]: { ru: 'Листва дерева. Быстро ломается; иногда даёт яблоко.', en: 'Tree foliage. Breaks quickly and may drop an apple.' },
+  [BLOCK.GLASS]: { ru: 'Прозрачный декоративный блок. Получается из песка в печи.', en: 'A transparent decorative block, smelted from sand.' },
+  [BLOCK.BRICK]: { ru: 'Декоративный прочный блок для стен и построек.', en: 'A sturdy decorative block for walls and builds.' },
+  [BLOCK.GLOW]: { ru: 'Светящийся блок — осветите им пещеру или постройку.', en: 'A glowing block for lighting caves and builds.' },
+  [BLOCK.SNOW]: { ru: 'Снежный блок из холодных биомов; лёгкий строительный материал.', en: 'A snow block from cold biomes; a lightweight building material.' },
+  [BLOCK.SLATE]: { ru: 'Тёмная порода глубин. Очень прочная и медленно добывается.', en: 'A dark deep-rock block. Very sturdy and slow to mine.' },
+  [BLOCK.TALL_GRASS]: { ru: 'Декоративная трава. Иногда даёт пшеницу при сборе.', en: 'Decorative grass. May yield wheat when gathered.' },
+  [BLOCK.FLOWER_RED]: { ru: 'Красный цветок для украшения участка.', en: 'A red flower for decorating your surroundings.' },
+  [BLOCK.FLOWER_YELLOW]: { ru: 'Жёлтый цветок для украшения участка.', en: 'A yellow flower for decorating your surroundings.' },
+  [BLOCK.FERN]: { ru: 'Папоротник — декоративное растение для леса и сада.', en: 'A fern, useful for decorating forests and gardens.' },
+  [BLOCK.CLOVER]: { ru: 'Низкий декоративный клевер.', en: 'A low decorative clover plant.' },
+  [BLOCK.TABLE]: { ru: 'Верстак открывает сетку крафта 3×3. Поставьте и нажмите ПКМ.', en: 'Opens the 3×3 crafting grid. Place it and right-click.' },
+  [BLOCK.COAL_ORE]: { ru: 'Руда для добычи угля. Каменная кирка помогает быстрее.', en: 'Coal-bearing rock. A stone pickaxe mines it faster.' },
+  [BLOCK.IRON_ORE]: { ru: 'Железная руда. Выплавьте её с углём, чтобы получить слиток.', en: 'Iron ore. Smelt it with coal to produce an ingot.' },
+  [BLOCK.GOLD_ORE]: { ru: 'Золотая руда. Выплавьте её с углём, чтобы получить слиток.', en: 'Gold ore. Smelt it with coal to produce an ingot.' },
+  [BLOCK.DIAMOND_ORE]: { ru: 'Редкая алмазная руда. Добывается каменной киркой.', en: 'Rare diamond ore. Mine it with a stone pickaxe.' },
+  [BLOCK.GRAVEL]: { ru: 'Рыхлый гравий из подземных отложений.', en: 'Loose gravel found in underground deposits.' },
+  [BLOCK.SANDSTONE]: { ru: 'Сплошной песчаник пустынь.', en: 'Solid sandstone from desert regions.' },
+  [BLOCK.ICE]: { ru: 'Лёд из холодных биомов. Скользкий и полупрозрачный.', en: 'Ice from cold biomes. Slippery and translucent.' },
+  [BLOCK.MOSSY]: { ru: 'Камень, покрытый мхом; часто встречается в пещерах.', en: 'Moss-covered stone often found in caves.' },
+  [BLOCK.BIRCH_LOG]: { ru: 'Светлое берёзовое бревно. Перерабатывается в доски.', en: 'Pale birch wood. Can be crafted into planks.' },
+  [BLOCK.BIRCH_LEAVES]: { ru: 'Берёзовая листва для природного декора.', en: 'Birch foliage for natural-looking decoration.' },
+  [BLOCK.SPRUCE_LOG]: { ru: 'Еловое бревно. Подходит для построек и как топливо.', en: 'Spruce wood for building or use as fuel.' },
+  [BLOCK.SPRUCE_LEAVES]: { ru: 'Еловая хвоя для декора и крыш.', en: 'Spruce needles for decoration and roofs.' },
+  [BLOCK.CACTUS]: { ru: 'Кактус пустыни. Высокое декоративное растение.', en: 'A tall decorative plant from the desert.' },
+  [BLOCK.OBSIDIAN]: { ru: 'Очень твёрдый тёмный блок для прочных построек.', en: 'An exceptionally hard dark block for durable builds.' },
+  [BLOCK.SLAB]: { ru: 'Полублок высотой в половину обычного блока.', en: 'A half-height building slab.' },
+  [BLOCK.TORCH]: { ru: 'Светильник для освещения тёмных мест.', en: 'A small light source for dark places.' },
+  [BLOCK.FURNACE]: { ru: 'Печь для переплавки руды и песка. Положите сырьё и топливо, затем нажмите ПКМ.', en: 'Smelts ore and sand. Add an ingredient and fuel, then right-click.' },
+};
+
+const ITEM_DETAILS = {
+  [ITEM.STICK]: { ru: 'Материал для рукоятей инструментов, лука и стрел.', en: 'A crafting material for tool handles, bows and arrows.' },
+  [ITEM.APPLE]: { ru: 'Еда: восстановит до 4 единиц здоровья. Удерживайте ЛКМ или нажмите F.', en: 'Food: restores up to 4 health. Hold left mouse or press F to eat.' },
+  [ITEM.BOW]: { ru: 'Дальнее оружие. Удерживайте ПКМ, чтобы натянуть тетиву, затем отпустите.', en: 'Ranged weapon. Hold right mouse to draw, then release to fire.' },
+  [ITEM.ARROW]: { ru: 'Боеприпас для лука. Можно подобрать после попадания в блок.', en: 'Ammunition for the bow. Can be picked up after hitting a block.' },
+  [ITEM.WOOD_PICKAXE]: { ru: 'Ускоряет добычу камня и руд. Урон по мобу: 1.', en: 'Speeds up mining stone and ore. Mob damage: 1.' },
+  [ITEM.WOOD_AXE]: { ru: 'Ускоряет добычу брёвен и деревянных блоков. Урон по мобу: 1.', en: 'Speeds up mining logs and wooden blocks. Mob damage: 1.' },
+  [ITEM.WOOD_SWORD]: { ru: 'Оружие ближнего боя. Урон по мобу: 2.', en: 'A melee weapon. Mob damage: 2.' },
+  [ITEM.STONE_PICKAXE]: { ru: 'Быстрее деревянной кирки добывает камень и руды. Урон: 1.', en: 'Mines stone and ore faster than a wooden pickaxe. Damage: 1.' },
+  [ITEM.STONE_SWORD]: { ru: 'Прочный меч для ближнего боя. Урон по мобу: 3.', en: 'A sturdy melee weapon. Mob damage: 3.' },
+  [ITEM.COAL]: { ru: 'Топливо для печи. Одной порции хватает примерно на две плавки.', en: 'Furnace fuel. One piece lasts for about two smelts.' },
+  [ITEM.RAW_IRON]: { ru: 'Сырьё из железной руды. Переплавьте в печи, чтобы получить слиток.', en: 'Raw ore from iron deposits. Smelt it in a furnace to make an ingot.' },
+  [ITEM.RAW_GOLD]: { ru: 'Сырьё из золотой руды. Переплавьте в печи, чтобы получить слиток.', en: 'Raw ore from gold deposits. Smelt it in a furnace to make an ingot.' },
+  [ITEM.DIAMOND]: { ru: 'Редкий драгоценный материал из алмазной руды.', en: 'A rare gem recovered from diamond ore.' },
+  [ITEM.BREAD]: { ru: 'Еда: восстановит до 6 единиц здоровья. Удерживайте ЛКМ или нажмите F.', en: 'Food: restores up to 6 health. Hold left mouse or press F to eat.' },
+  [ITEM.WHEAT]: { ru: 'Соберите три пшеницы и скрафтите хлеб.', en: 'Combine three wheat to craft bread.' },
+  [ITEM.IRON_INGOT]: { ru: 'Готовый железный слиток после плавки руды.', en: 'An iron ingot produced by smelting raw iron.' },
+  [ITEM.GOLD_INGOT]: { ru: 'Готовый золотой слиток после плавки руды.', en: 'A gold ingot produced by smelting raw gold.' },
+  [ITEM.XP]: { ru: 'Опыт, который дают мобы. Подойдите к светящемуся шару, чтобы собрать.', en: 'Experience dropped by mobs. Walk close to a glowing orb to collect it.' },
+};
+
 const _defCache = new Map();
 
-/** Описание предмета или null, если такого предмета нет */
 /**
- * Сытость предмета: сколько сердец здоровья он восстанавливает.
+ * Сытость предмета: сколько единиц здоровья он восстанавливает.
  * 0 — предмет несъедобный.
  */
 export function foodValue(key) {
@@ -171,6 +230,16 @@ export function itemName(key, lang = 'ru') {
     return BLOCK_NAMES[lang]?.[d.block] || BLOCK_NAMES.ru[d.block] || '';
   }
   return d.name?.[lang] || d.name?.ru || key;
+}
+
+/** Краткое назначение предмета/блока для подсказок и меню крафта */
+export function itemDescription(key, lang = 'ru') {
+  const d = itemDef(key);
+  if (!d) return '';
+  if (d.kind === 'block') {
+    return BLOCK_DETAILS[d.block]?.[lang] || BLOCK_DETAILS[d.block]?.ru || '';
+  }
+  return ITEM_DETAILS[key]?.[lang] || ITEM_DETAILS[key]?.ru || '';
 }
 
 /** Можно ли поставить предмет как блок и какой id получится */
