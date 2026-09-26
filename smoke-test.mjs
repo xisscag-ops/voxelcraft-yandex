@@ -25,6 +25,7 @@ import { heldLightVertex, heldLightFragment, waterFragment, waterShaderHook,
 import { CAVE_FOG_NEAR, CAVE_FOG_FAR, CAVE_FOG_COLOR, CAVE_OPEN_CAP,
   caveFogTarget, stepCaveFog } from './src/fog.js';
 import { CONFIG } from './src/config.js';
+import { PitDepthFX } from './src/postfx.js';
 import { Furnace, serializeFurnaces, deserializeFurnaces, fuelDuration, smeltResult } from './src/furnace.js';
 import { STRINGS } from './src/i18n.js';
 import * as gun from './src/gun.js';
@@ -1675,6 +1676,47 @@ check('сундук: разметка и стили панели', html.includes
   check('в пещерах появились высокие залы', halls > 20, 'столбцов-залов ' + halls);
   check('на поверхности есть валуны', boulders > 40, 'колонок с глыбами ' + boulders);
   check('встречаются высокие скалы-пальцы', spires > 3, 'скал ' + spires + ' на ' + chunks + ' чанков');
+}
+
+// ---- Пост-эффект «заглянул в глубокий карьер»: гамма кадра и радиус размытия ----
+{
+  const fx = new PitDepthFX({});
+  const mat = fx.scene.children[0].material;
+  const frag = mat.fragmentShader;
+  // Все униформы, объявленные в шейдере, должны быть в словаре uniforms:
+  // пропущенную uResolution GLSL заменит на (0,0) → деление радиуса на 0 → NaN
+  const declared = [...frag.matchAll(/^\s*uniform\s+\w+\s+(\w+);/gm)].map((m) => m[1]);
+  check('карьер: все униформы шейдера есть в словаре uniforms',
+    declared.length >= 4 && declared.every((n) => n in mat.uniforms), declared.join(','));
+  // Буфер сцены — линейное рабочее пространство, а на канвас пост-шейдер пишет sRGB
+  // (тот же OETF, что и встроенные материалы). Иначе проход «карьера» рисовал мир
+  // заметно темнее обычного рендера — «крутит экспозицию» при взгляде вниз с высоты.
+  check('карьер: буфер сцены не в sRGB (линейное рабочее пространство)',
+    fx.rt.texture.colorSpace !== THREEReal.SRGBColorSpace, fx.rt.texture.colorSpace);
+  check('карьер: пост-шейдер переводит линейный цвет в sRGB перед выводом (OETF)',
+    frag.includes('12.92') && frag.includes('0.0031308') && frag.includes('0.41666'));
+  // Радиус размытия в пикселях, а не в UV: прежние mask*2.6 в UV-единицах — это
+  // до 2.6 ширины экрана, clamp растягивал низ кадра в «полупрозрачную сферу»,
+  // внутрь которой втягивался предмет в руках.
+  check('карьер: радиус размытия считается в пикселях через uResolution',
+    frag.includes('uniform vec2 uResolution;') && /radiusPx\s*\/\s*uResolution/.test(frag));
+  check('карьер: в коде шейдера не осталось UV-радиуса 2.6',
+    !frag.replace(/\/\/[^\n]*/g, '').includes('2.6'));
+  fx.setSize(1568, 770);
+  check('карьер: setSize обновляет разрешение и aspect',
+    mat.uniforms.uResolution.value.x === 1568 && mat.uniforms.uResolution.value.y === 770
+    && Math.abs(mat.uniforms.uAspect.value - 1568 / 770) < 1e-9);
+  fx.update(0, 0, 1 / 60);
+  check('карьер: на поверхности эффект выключен', fx.strength === 0);
+  let s = 0;
+  for (let i = 0; i < 120; i++) s = fx.update(-1.2, 40, 1 / 60);
+  check('карьер: взгляд вниз с высоты плавно поднимает эффект до максимума', s > 0.9, s.toFixed(3));
+  for (let i = 0; i < 180; i++) s = fx.update(0, 40, 1 / 60);
+  check('карьер: взгляд горизонтально — эффект полностью гаснет', s === 0, s.toExponential(2));
+  const shallow = new PitDepthFX({});
+  let sh = 0;
+  for (let i = 0; i < 240; i++) sh = shallow.update(-1.5, 4, 1 / 60);
+  check('карьер: неглубокая яма (<5 блоков) эффект не включает', sh === 0, sh.toFixed(3));
 }
 
 console.log(failed === 0 ? '\nВсе проверки пройдены' : `\nПровалено проверок: ${failed}`);
