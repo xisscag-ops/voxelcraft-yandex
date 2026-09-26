@@ -1,5 +1,6 @@
 // Мир: чанки-колонны, генерация рельефа, деревья, правки игрока
-import { BLOCK, BLOCKS, isDecor, isSolid, isTorch, torchSupport } from './blocks.js';
+import { BLOCK, BLOCKS, isDecor, isSolid, isTorch, torchSupport, WALL_TORCH_BY_SIDE,
+  CHEST_BY_FRONT } from './blocks.js';
 import { fbm2d, value2d, makeRng, hash3 } from './noise.js';
 import { CONFIG } from './config.js';
 
@@ -13,6 +14,10 @@ const PEAK_H = 58;        // выше — снежные вершины
 const H = CONFIG.WORLD_HEIGHT;
 const SEA = CONFIG.SEA_LEVEL;
 const FEATURE_CELL = 160;       // глобальная сетка для карьер и разломов
+const VILLAGE_CELL = 384;       // глобальная сетка деревень (одна на ~384×384)
+const VILLAGE_RADIUS = 34;      // радиус застройки: дома, колодец, дорожки
+// Направления «лицом»: шаг по миру для каждой стороны
+const FACE_STEP = { px: [1, 0], nx: [-1, 0], pz: [0, 1], nz: [0, -1] };
 // Пещеры-«черви»: ходы стартуют в чанках вокруг и вырезаются там, где проходят
 const CAVE_ORIGIN_R = 5;        // из скольких чанков вокруг может прийти ход
 const CAVE_MAX_REACH = 96;      // максимальная длина хода (с ветками) от точки старта
@@ -94,6 +99,7 @@ export class World {
     this.chunks = new Map();          // "cx,cz" -> Chunk
     this.edits = new Map();           // "x,y,z" -> id (правки игрока, сохраняются)
     this.lootChests = new Set();      // "x,y,z" — сундуки с лутом, сгенерированные в пещерах
+    this.villageCache = new Map();    // "gx,gz" -> план деревни или null (детерминировано)
     this.waterQueue = [];             // клетки, которым предстоит проверка на затекание воды
     this.waterQueued = new Map();     // дедупликация очереди: ключ -> минимальный запас «шагов»
     this.onUnsupportedDecor = null;   // (x,y,z,id) — растение/факел лишились опоры
@@ -400,6 +406,341 @@ export class World {
     if (cut < 2 && rim < 2) return base;
     // Вал кратера не должен пробивать потолок мира
     return Math.max(3, Math.min(H - 3, base - cut + rim));
+  }
+
+  /**
+   * Деревня в ячейке глобальной сетки (или null). Решение и центр — чистые
+   * функции сида, поэтому деревни одинаковы в любом чанке и после загрузки.
+   * Деревни селятся на ровных полях: не в горах, не в песках и не в снегах.
+   */
+  villageAt(gx, gz) {
+    const seed = this.seed;
+    if (hash3(gx, 7331, gz, seed) >= 0.55) return null;      // не в каждой ячейке
+    const cx = Math.floor((gx + 0.25 + hash3(gx, 7411, gz, seed) * 0.5) * VILLAGE_CELL);
+    const cz = Math.floor((gz + 0.25 + hash3(gx, 7477, gz, seed) * 0.5) * VILLAGE_CELL);
+    const h = this.heightAt(cx, cz);
+    if (h <= SEA + 2 || h >= ROCK_H - 4) return null;        // вода/пляж и голые горы
+    if (this.isCold(cx, cz)) return null;                    // снежные зоны без деревень
+    if (this.isDry(cx, cz, h)) return null;                  // пустыня
+    if (this.plainsAt(cx, cz) < 0.28) return null;           // только поля и луга
+    // Место должно быть ровным: дома не должны стоять на склоне обрыва
+    let lo = h, hi = h;
+    for (const [dx, dz] of [[0, 0], [12, 0], [-12, 0], [0, 12], [0, -12]]) {
+      if (!dx && !dz) continue;
+      const hh = this.heightAt(cx + dx, cz + dz);
+      if (hh < lo) lo = hh;
+      if (hh > hi) hi = hh;
+    }
+    if (hi - lo > 7) return null;
+    return { x: cx, z: cz };
+  }
+
+  /**
+   * План деревни: центральный колодец, 3–5 домов фасадами к нему, лампы
+   * и дорожка. Дома осевые (фасад — одна из четырёх сторон), с двухскатной
+   * крышей из полублоков, окнами, дверью, факелом и иногда сундуком/станком.
+   */
+  villageLayoutAt(gx, gz) {
+    const key = gx + ',' + gz;
+    if (this.villageCache.has(key)) return this.villageCache.get(key);
+    let layout = null;
+    const center = this.villageAt(gx, gz);
+    if (center) {
+      const rng = makeRng(hash3(gx, 7501, gz, this.seed) * 0x7fffffff);
+      const houses = [];
+      const want = 3 + ((rng() * 3) | 0);                    // 3..5 домов
+      for (let guard = 0; houses.length < want && guard < 60; guard++) {
+        const ang = (houses.length / want) * Math.PI * 2 + rng() * 1.1;
+        const r = 12 + rng() * 8;
+        const hx = Math.round(center.x + Math.cos(ang) * r);
+        const hz = Math.round(center.z + Math.sin(ang) * r);
+        if (houses.some((o) => Math.abs(o.x - hx) + Math.abs(o.z - hz) < 10)) continue;
+        const w = 5 + ((rng() & 1) | 0) * 2;                 // 5 или 7
+        const d = 5 + ((rng() & 1) | 0) * 2;                 // 5 или 7
+        const ddx = center.x - hx, ddz = center.z - hz;
+        const face = Math.abs(ddx) > Math.abs(ddz) ? (ddx > 0 ? 'px' : 'nx') : (ddz > 0 ? 'pz' : 'nz');
+        const [fx, fz] = FACE_STEP[face];
+        const halfW = (w - 1) >> 1, halfD = (d - 1) >> 1;
+        // Пол — по самой высокой точке фундамента: дом садится на верхний
+        // край склона, а с низкой стороны булыжный цоколь заполняет провал.
+        let floorY = -Infinity;
+        const ext = Math.max(halfW, halfD);
+        for (const [ox, oz] of [[0, 0], [ext, ext], [ext, -ext], [-ext, ext], [-ext, -ext]]) {
+          const hy = this.heightAt(hx + ox, hz + oz);
+          if (hy > floorY) floorY = hy;
+        }
+        const roll = rng();
+        const birch = roll < 0.3;
+        houses.push({
+          x: hx, z: hz, w, d, face, floorY,
+          wall: birch ? BLOCK.BIRCH_PLANKS : BLOCK.PLANKS,
+          corner: birch ? BLOCK.BIRCH_LOG : BLOCK.LOG,
+          roof: roll < 0.45 ? BLOCK.COBBLE_SLAB : BLOCK.PLANK_SLAB,
+          chest: rng() < 0.45,
+          station: rng() < 0.3 ? (rng() < 0.5 ? BLOCK.TABLE : BLOCK.FURNACE) : 0,
+          door: { x: hx + fx * (halfD + 1), z: hz + fz * (halfD + 1) },
+        });
+      }
+      // Колодец в центре и пара ламп-столбиков вдоль дорожек
+      const well = { x: center.x, z: center.z, y: this.heightAt(center.x, center.z) };
+      const lamps = [];
+      for (let i = 0; i < 2; i++) {
+        const ang = rng() * Math.PI * 2;
+        const lx = Math.round(center.x + Math.cos(ang) * (5 + rng() * 4));
+        const lz = Math.round(center.z + Math.sin(ang) * (5 + rng() * 4));
+        if (houses.some((o) => Math.abs(o.x - lx) < 5 && Math.abs(o.z - lz) < 5)) continue;
+        lamps.push({ x: lx, z: lz, y: this.heightAt(lx, lz) });
+      }
+      layout = { key, x: center.x, z: center.z, houses, well, lamps };
+    }
+    this.villageCache.set(key, layout ?? null);
+    return layout;
+  }
+
+  /** Деревни рядом с точкой (для спавна жителей): [{key, x, z, spots}] */
+  villagesNear(wx, wz) {
+    const out = [];
+    const gx0 = Math.floor(wx / VILLAGE_CELL), gz0 = Math.floor(wz / VILLAGE_CELL);
+    for (let gz = gz0 - 1; gz <= gz0 + 1; gz++) {
+      for (let gx = gx0 - 1; gx <= gx0 + 1; gx++) {
+        const lay = this.villageLayoutAt(gx, gz);
+        if (!lay) continue;
+        if (Math.hypot(lay.x - wx, lay.z - wz) > VILLAGE_RADIUS + 70) continue;
+        const spots = [];
+        for (const h of lay.houses) spots.push({ x: h.door.x + 0.5, y: h.floorY + 0.1, z: h.door.z + 0.5 });
+        // Жители собираются у колодца, но не в самой чаше с водой
+        spots.push({ x: lay.well.x + 2.5, y: lay.well.y + 1.1, z: lay.well.z + 0.5 });
+        spots.push({ x: lay.well.x - 1.5, y: lay.well.y + 1.1, z: lay.well.z + 2.5 });
+        out.push({ key: lay.key, x: lay.x, z: lay.z, spots });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Печать деревни в чанк. Дорожки, дома, колодец и лампы ставятся только
+   * внутри своего чанка; план общий, поэтому постройки стыкуются на границах.
+   * Возвращает маску занятых колонок: в них не сажаем деревья и валуны.
+   */
+  stampVillages(chunk, terrainHeight) {
+    const cx = chunk.cx, cz = chunk.cz;
+    const ox = cx * S, oz = cz * S;
+    const mask = new Uint8Array(S * S);
+    const gx0 = Math.floor((ox - VILLAGE_RADIUS) / VILLAGE_CELL);
+    const gz0 = Math.floor((oz - VILLAGE_RADIUS) / VILLAGE_CELL);
+    const gx1 = Math.floor((ox + S + VILLAGE_RADIUS) / VILLAGE_CELL);
+    const gz1 = Math.floor((oz + S + VILLAGE_RADIUS) / VILLAGE_CELL);
+    const put = (wx, wy, wz, id, onlyAir = false) => {
+      const lx = wx - ox, lz = wz - oz;
+      if (lx < 0 || lz < 0 || lx >= S || lz >= S || wy < 1 || wy >= H - 1) return;
+      if (onlyAir && chunk.get(lx, wy, lz) !== BLOCK.AIR) return;
+      chunk.set(lx, wy, lz, id);
+    };
+    const mark = (wx, wz) => {
+      const lx = wx - ox, lz = wz - oz;
+      if (lx >= 0 && lz >= 0 && lx < S && lz < S) mask[lz * S + lx] = 1;
+    };
+    let any = false;
+    for (let gz = gz0; gz <= gz1; gz++) {
+      for (let gx = gx0; gx <= gx1; gx++) {
+        const lay = this.villageLayoutAt(gx, gz);
+        if (!lay) continue;
+        if (this.stampVillage(chunk, lay, put, mark)) any = true;
+      }
+    }
+    return any ? mask : null;
+  }
+
+  /** Печать одной деревни; возвращает true, если задела чанк */
+  stampVillage(chunk, lay, put, mark) {
+    let touched = false;
+    const { x: cx, z: cz, houses, well, lamps } = lay;
+    // Колонки построек: дорожки их не роют и не переасыпают гравием
+    const reserved = new Set();
+    const reserve = (wx, wz) => reserved.add(wx + ',' + wz);
+
+    // ---- Дома ----
+    for (const h of houses) {
+      const { x: hx, z: hz, face, floorY } = h;
+      const halfW = (h.w - 1) >> 1, halfD = (h.d - 1) >> 1;
+      const ax = face === 'pz' || face === 'nz';            // фасад вдоль x
+      const sgn = face === 'px' || face === 'pz' ? 1 : -1;
+      // Локальные координаты дома: a — вдоль фасада, b — вглубь (перед +)
+      const toWorld = (a, b) => ax ? [hx + a, hz + sgn * b] : [hx + sgn * b, hz + a];
+      const roofTop = floorY + 3 + halfD + 1;
+
+      // Расчистка площадки: дом вырезает себе место в склоне
+      for (let a = -halfW - 1; a <= halfW + 1; a++) {
+        for (let b = -halfD - 1; b <= halfD + 2; b++) {
+          const [wx, wz] = toWorld(a, b);
+          mark(wx, wz);
+          reserve(wx, wz);
+          const porch = b > halfD && Math.abs(a) <= 1;      // крыльцо перед дверью
+          for (let y = floorY; y <= roofTop + 2; y++) {
+            if (Math.abs(a) > halfW || Math.abs(b) > halfD) {
+              // За контуром чистим под крышей-свесом; крыльцо — целиком,
+              // чтобы дверь не упиралась в склон
+              if (!porch && y < floorY + 3) continue;
+              if (porch && y > floorY + 2) continue;
+            }
+            put(wx, y, wz, BLOCK.AIR);
+          }
+          // Под крыльцом — булыжная ступенька до уровня пола
+          if (porch) {
+            put(wx, floorY - 1, wz, BLOCK.COBBLE);
+            for (let y = floorY - 2; y >= floorY - 6; y--) {
+              const lx = wx - chunk.cx * S, lz = wz - chunk.cz * S;
+              if (lx < 0 || lz < 0 || lx >= S || lz >= S || y < 1) break;
+              const cur = chunk.get(lx, y, lz);
+              if (isSolid(cur) || cur === BLOCK.WATER) break;
+              chunk.set(lx, y, lz, BLOCK.COBBLE);
+            }
+          }
+        }
+      }
+      // Пол и цоколь: плита пола и булыжная засыпка до грунта
+      for (let a = -halfW; a <= halfW; a++) {
+        for (let b = -halfD; b <= halfD; b++) {
+          const [wx, wz] = toWorld(a, b);
+          put(wx, floorY - 1, wz, BLOCK.COBBLE);
+          for (let y = floorY - 2; y >= floorY - 10; y--) {
+            const lx = wx - chunk.cx * S, lz = wz - chunk.cz * S;
+            if (lx < 0 || lz < 0 || lx >= S || lz >= S || y < 1) break;
+            const cur = chunk.get(lx, y, lz);
+            if (isSolid(cur) || cur === BLOCK.WATER) break;
+            chunk.set(lx, y, lz, BLOCK.COBBLE);
+          }
+        }
+      }
+      // Стены три высотой: углы — бревенчатые, простенки — доски,
+      // в фасадной стене дверной проем, по бокам и у двери — окна-стёкла
+      for (let a = -halfW; a <= halfW; a++) {
+        for (let b = -halfD; b <= halfD; b++) {
+          const isCorner = Math.abs(a) === halfW && Math.abs(b) === halfD;
+          const isWall = Math.abs(a) === halfW || Math.abs(b) === halfD;
+          if (!isWall) continue;
+          const [wx, wz] = toWorld(a, b);
+          const front = b === halfD;
+          const side = Math.abs(a) === halfW;
+          for (let y = floorY; y <= floorY + 2; y++) {
+            // дверной проём 1×2 в центре фасада
+            if (front && a === 0 && y <= floorY + 1) continue;
+            let id = isCorner ? h.corner : h.wall;
+            if (!isCorner && y === floorY + 1) {
+              if (front && Math.abs(a) === Math.min(2, halfW)) id = BLOCK.GLASS;
+              else if (side && b === 0) id = BLOCK.GLASS;
+              else if (!front && !side && b === -halfD && Math.abs(a) === Math.min(2, halfW)) id = BLOCK.GLASS;
+            }
+            put(wx, y, wz, id);
+          }
+        }
+      }
+      // Фронтоны боковых стен: треугольник под коньком крыши
+      for (const a of [-halfW, halfW]) {
+        for (let b = -halfD; b <= halfD; b++) {
+          const [wx, wz] = toWorld(a, b);
+          const top = floorY + 3 + (halfD - Math.abs(b));
+          for (let y = floorY + 3; y <= top; y++) put(wx, y, wz, h.wall, true);
+        }
+      }
+      // Двухскатная крыша из полублоков со свесом в один блок
+      for (let b = -halfD - 1; b <= halfD + 1; b++) {
+        const slabY = floorY + 3 + (halfD + 1 - Math.abs(b));
+        for (let a = -halfW - 1; a <= halfW + 1; a++) {
+          const [wx, wz] = toWorld(a, b);
+          put(wx, slabY, wz, h.roof);
+        }
+      }
+      // Интерьер: факел у задней стены, иногда станок, иногда сундук с лутом
+      {
+        const [tx, tz] = toWorld(halfW - 1, 0);   // у боковой стены, не в кладовой
+        put(tx, floorY, tz, BLOCK.TORCH);
+        if (h.station) {
+          const [sx, sz] = toWorld(-halfW + 1, -halfD + 1);
+          put(sx, floorY, sz, h.station);
+        }
+        if (h.chest) {
+          const [bx2, bz2] = toWorld(0, -halfD + 1);
+          put(bx2, floorY, bz2, CHEST_BY_FRONT[face]);
+          this.lootChests.add(`${bx2},${floorY},${bz2}`);
+          // Второй сундук рядом — кладовая побогаче (редко)
+          if ((h.x + h.z) % 3 === 0) {
+            const [sx, sz] = toWorld(1, -halfD + 1);
+            put(sx, floorY, sz, CHEST_BY_FRONT[face]);
+            this.lootChests.add(`${sx},${floorY},${sz}`);
+          }
+        }
+      }
+      touched = true;
+    }
+
+    // ---- Колодец: булыжное кольцо, вода, столбики и крыша ----
+    {
+      const wy = well.y;
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          const wx = well.x + dx, wz = well.z + dz;
+          mark(wx, wz);
+          reserve(wx, wz);
+          for (let y = wy + 1; y <= wy + 5; y++) put(wx, y, wz, BLOCK.AIR);
+          if (dx === 0 && dz === 0) {
+            put(wx, wy, wz, BLOCK.WATER);
+          } else {
+            put(wx, wy + 1, wz, BLOCK.COBBLE);
+            if (Math.abs(dx) === 1 && Math.abs(dz) === 1) {
+              put(wx, wy + 2, wz, BLOCK.FENCE);
+              put(wx, wy + 3, wz, BLOCK.FENCE);
+            }
+          }
+          put(wx, wy + 4, wz, BLOCK.PLANK_SLAB);
+        }
+      }
+      touched = true;
+    }
+
+    // ---- Лампы: два забора столбиком и факел наверху ----
+    for (const l of lamps) {
+      mark(l.x, l.z);
+      reserve(l.x, l.z);
+      for (let y = l.y + 1; y <= l.y + 3; y++) put(l.x, y, l.z, BLOCK.AIR);
+      put(l.x, l.y + 1, l.z, BLOCK.FENCE);
+      put(l.x, l.y + 2, l.z, BLOCK.FENCE);
+      put(l.x, l.y + 3, l.z, BLOCK.TORCH);
+      touched = true;
+    }
+
+    // ---- Дорожки от дверей к колодцу: гравий по верху грунта ----
+    for (const h of houses) {
+      let px = h.door.x, pz = h.door.z;
+      for (let step = 0; step < 56; step++) {
+        mark(px, pz);
+        if (reserved.has(px + ',' + pz)) {
+          // чужая постройка — дорога её обходит стороной, не роет под собой
+        } else {
+          // Верхний грунт колонки → гравий, декор над ним сносим
+          const th = this.heightAt(px, pz);
+          for (let y = Math.min(H - 2, th + 6); y >= Math.max(3, th - 10); y--) {
+            const lx = px - chunk.cx * S, lz = pz - chunk.cz * S;
+            if (lx < 0 || lz < 0 || lx >= S || lz >= S || y < 1) break;
+            const b = chunk.get(lx, y, lz);
+            if (b === BLOCK.WATER || b === BLOCK.ICE) break;
+            if (isDecor(b) || isTorch(b)) { chunk.set(lx, y, lz, BLOCK.AIR); continue; }
+            if (!isSolid(b)) continue;
+            if (b === BLOCK.GRASS || b === BLOCK.DIRT || b === BLOCK.SAND || b === BLOCK.SNOW
+              || b === BLOCK.SNOWY_SAND) {
+              chunk.set(lx, y, lz, BLOCK.GRAVEL);
+            }
+            break;
+          }
+        }
+        if (px === lay.x && pz === lay.z) break;
+        if (Math.abs(lay.x - px) >= Math.abs(lay.z - pz) && px !== lay.x) px += Math.sign(lay.x - px);
+        else if (pz !== lay.z) pz += Math.sign(lay.z - pz);
+        else if (px !== lay.x) px += Math.sign(lay.x - px);
+      }
+      touched = true;
+    }
+    return touched;
   }
 
   /**
@@ -845,13 +1186,17 @@ export class World {
     // лестницу входа, чтобы в больших пещерах не оставалось отвесных провалов.
     if (entX >= 0) alignCaveFloors(chunk, terrainHeight, 1, { x: entX, z: entZ });
 
-    // Сундуки с лутом в глубоких гротах: редко, на сухом полу, подальше от входа
+    // Заброшенные шахты с сундуками: короткий штрек глубоко под землёй.
+    // Деревянные рамы-опоры (стойки из брёвен и балка из досок) держат свод,
+    // на стойках — настенные факелы, в тупике ждёт сундук с лутом, а рядом
+    // иногда стоит пустая печка и лежит второй сундук.
     {
       const rngChest = makeRng(hash3(cx, 71, cz, seed) * 0x7fffffff);
-      if (rngChest() < 0.42) {
+      if (rngChest() < 0.5) {
+        const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
         for (let attempt = 0; attempt < 10; attempt++) {
-          const x = 2 + ((rngChest() * (S - 4)) | 0);
-          const z = 2 + ((rngChest() * (S - 4)) | 0);
+          const x = 4 + ((rngChest() * (S - 8)) | 0);
+          const z = 4 + ((rngChest() * (S - 8)) | 0);
           const yMax = Math.min(CAVE_TOP, terrainHeight[z * S + x] - CAVE_CRUST - 4);
           if (yMax < 10) continue;
           const y = 8 + ((rngChest() * (yMax - 8)) | 0);
@@ -859,11 +1204,92 @@ export class World {
           if (chunk.get(x, y + 1, z) !== BLOCK.AIR) continue;
           const floor = chunk.get(x, y - 1, z);
           if (floor !== BLOCK.STONE && floor !== BLOCK.SLATE && floor !== BLOCK.MOSSY) continue;
-          const faceRoll = rngChest();
-          const facing = faceRoll < 0.25 ? BLOCK.CHEST : faceRoll < 0.5 ? BLOCK.CHEST_NZ
-            : faceRoll < 0.75 ? BLOCK.CHEST_PX : BLOCK.CHEST_NX;
-          chunk.set(x, y, z, facing);
-          this.lootChests.add(`${ox + x},${y},${oz + z}`);
+          const dir = DIRS[(rngChest() * DIRS.length) | 0];
+          const len = 6 + ((rngChest() * 5) | 0);    // длина штрека 6..10
+          // Перпендикуляр: по одну и другую сторону штрека
+          const pxd = -dir[1], pzd = dir[0];
+          // Проект хода: на каждой клетке ищем пол в пределах 3 блоков ниже
+          const cells = [];
+          let ok = true;
+          for (let i = 0; i < len; i++) {
+            const cx2 = x + dir[0] * i, cz2 = z + dir[1] * i;
+            if (cx2 < 2 || cz2 < 2 || cx2 >= S - 2 || cz2 >= S - 2) { ok = false; break; }
+            let fy = -1;
+            for (let dy = 1; dy <= 3; dy++) {
+              const b = chunk.get(cx2, y - dy, cz2);
+              if (b === BLOCK.WATER || b === BLOCK.ICE) break;
+              if (isSolid(b)) { fy = y - dy + 1; break; }
+            }
+            if (fy < 0) { ok = false; break; }       // пол не найден — пропасть
+            cells.push([cx2, fy, cz2]);
+          }
+          if (!ok || cells.length < 5) continue;
+          // Строим штрек: расчищаем проход в рост, кладём пол там, где он
+          // просел (доски поверх камня), ставим рамы-опоры и факелы
+          const ROCK = new Set([BLOCK.STONE, BLOCK.SLATE, BLOCK.MOSSY, BLOCK.GRAVEL,
+            BLOCK.COBBLE, BLOCK.DIRT, BLOCK.COAL_ORE, BLOCK.IRON_ORE, BLOCK.GOLD_ORE,
+            BLOCK.DIAMOND_ORE, BLOCK.PLANKS, BLOCK.LOG]);
+          const clear = (px, py, pz) => {
+            const b = chunk.get(px, py, pz);
+            if (b === BLOCK.WATER || b === BLOCK.ICE) return;
+            chunk.set(px, py, pz, BLOCK.AIR);
+          };
+          for (let i = 0; i < cells.length; i++) {
+            const [px, fy, pz] = cells[i];
+            // Пол: если клетка пола не твёрдая или ниже пусто — настил из досок
+            const under = chunk.get(px, fy - 1, pz);
+            if (!isSolid(under) || !ROCK.has(under)) {
+              chunk.set(px, fy - 1, pz, BLOCK.PLANKS);
+            }
+            clear(px, fy, pz);
+            clear(px, fy + 1, pz);
+            clear(px, fy + 2, pz);
+            // Рама-опора каждые 3 клетки: стойки по бокам и балка сверху
+            if (i % 3 === 1) {
+              for (const s of [-1, 1]) {
+                const px2 = px + pxd * s, pz2 = pz + pzd * s;
+                for (let dy = 0; dy < 3; dy++) {
+                  const cur = chunk.get(px2, fy + dy, pz2);
+                  if (!ROCK.has(cur) && cur !== BLOCK.AIR) continue;
+                  chunk.set(px2, fy + dy, pz2, BLOCK.LOG);
+                }
+              }
+              for (const s of [-1, 0, 1]) {
+                const px2 = px + pxd * s, pz2 = pz + pzd * s;
+                const cur = chunk.get(px2, fy + 3, pz2);
+                if (!ROCK.has(cur) && cur !== BLOCK.AIR) continue;
+                chunk.set(px2, fy + 3, pz2, BLOCK.PLANKS);
+              }
+              // Настенный факел на стойке, стороны чередуются
+              const side = ((i / 3) | 0) % 2 === 0 ? 1 : -1;
+              const wallId = WALL_TORCH_BY_SIDE[
+                pxd !== 0 ? (side > 0 ? 'px' : 'nx') : (side > 0 ? 'pz' : 'nz')];
+              if (chunk.get(px, fy + 1, pz) === BLOCK.AIR
+                && chunk.get(px + pxd * side, fy + 1, pz + pzd * side) === BLOCK.LOG) {
+                chunk.set(px, fy + 1, pz, wallId);
+              }
+            }
+          }
+          // Тупик штрека: сундук лицом к проходу, иногда печка или второй сундук
+          const [ex, ey, ez] = cells[cells.length - 1];
+          const chestId = dir[0] === 1 ? BLOCK.CHEST_NX : dir[0] === -1 ? BLOCK.CHEST_PX
+            : dir[1] === 1 ? BLOCK.CHEST_NZ : BLOCK.CHEST;
+          chunk.set(ex, ey, ez, chestId);
+          this.lootChests.add(`${ox + ex},${ey},${oz + ez}`);
+          const sideX = ex - dir[0] + pxd, sideZ = ez - dir[1] + pzd;
+          const sideFloor = cells[cells.length - 2];
+          if (rngChest() < 0.5 && sideFloor) {
+            const sy = sideFloor[1];
+            const below = chunk.get(sideX, sy - 1, sideZ);
+            if (chunk.get(sideX, sy, sideZ) === BLOCK.AIR && isSolid(below)) {
+              if (rngChest() < 0.45) {
+                chunk.set(sideX, sy, sideZ, BLOCK.FURNACE);
+              } else {
+                chunk.set(sideX, sy, sideZ, chestId);
+                this.lootChests.add(`${ox + sideX},${sy},${oz + sideZ}`);
+              }
+            }
+          }
           break;
         }
       }
@@ -922,6 +1348,11 @@ export class World {
       }
     }
 
+    // Деревни: дома вокруг колодца с дорожками и лампами. Печатаются до
+    // деревьев, валунов и травы — у тех проверка маски, и на площадке
+    // деревни ни крона, ни валун, ни букет не помешают постройкам.
+    const villageMask = this.stampVillages(chunk, terrainHeight);
+
     // Скальные выходы высокогорья: валуны и скалы-пальцы. Живут только на голом
     // камне высоких гор — на лугах, в лесу, в снежных зонах и на пляжах глыб
     // больше нет: там они выглядели случайными каменными нашлёпками среди травы.
@@ -932,6 +1363,7 @@ export class World {
       for (let r = 0; r < rocks; r++) {
         const rx = 3 + ((rngRock() * (S - 6)) | 0);
         const rz = 3 + ((rngRock() * (S - 6)) | 0);
+        if (villageMask && villageMask[rz * S + rx]) continue;   // не на площадке деревни
         const baseH = terrainHeight[rz * S + rx];
         if (baseH < ROCK_H) continue;                         // только скальное высокогорье
         const spire = rngRock() < 0.34;                       // скала-палец
@@ -983,6 +1415,7 @@ export class World {
       const tz = 3 + ((rng() * (S - 6)) | 0);
       const th = terrainHeight[tz * S + tx];
       if (th <= SEA + 1 || th > ROCK_H) continue;
+      if (villageMask && villageMask[tz * S + tx]) continue;     // деревья не сквозь дома
       const surface = chunk.get(tx, th, tz);
       if (surface !== BLOCK.GRASS && surface !== BLOCK.SNOW) continue;
       // Порода — по биому (см. treeSpeciesAt). В полях-лугах берёзовые рощи
@@ -1215,6 +1648,7 @@ export class World {
         const wx = ox + x, wz = oz + z;
         const h = terrainHeight[z * S + x];
         if (h <= SEA + 1 || h >= H - 1) continue;
+        if (villageMask && villageMask[z * S + x]) continue;     // не на дорожках деревни
         if (chunk.get(x, h, z) !== BLOCK.GRASS) continue;
         if (chunk.get(x, h + 1, z) !== BLOCK.AIR) continue;
         const meadow = this.plainsAt(wx, wz) > 0.55 && this.hillCountryAt(wx, wz) < 0.4;
@@ -1237,6 +1671,7 @@ export class World {
         const wx = ox + x, wz = oz + z;
         const h = terrainHeight[z * S + x];
         if (h <= SEA + 1 || h >= H - 1) continue;
+        if (villageMask && villageMask[z * S + x]) continue;     // не на площадке деревни
         if (chunk.get(x, h, z) !== BLOCK.GRASS) continue;
         if (chunk.get(x, h + 1, z) !== BLOCK.AIR) continue;
         const species = this.treeSpeciesAt(wx, wz, h);

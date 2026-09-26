@@ -503,6 +503,14 @@ function pushShapeFace(builder, world, quad, lightAt, wx, y, wz, def, cell) {
   const uAxis = quad.a.findIndex((c) => c !== 0);
   const vAxis = quad.b.findIndex((c) => c !== 0);
   const ua = quad.a[uAxis], va = quad.b[vAxis];
+  // Обход грани по кольцу (a+b, −a+b, −a−b, +a−b) даёт фронт по вектору a×b.
+  // Если он смотрит против нормали — разворачиваем обход треугольников,
+  // иначе с «лицевой» стороны грань отсекается и блок прозрачный
+  // (так полублоки и заборы были пустыми сверху и с двух боков).
+  const crossX = quad.a[1] * quad.b[2] - quad.a[2] * quad.b[1];
+  const crossY = quad.a[2] * quad.b[0] - quad.a[0] * quad.b[2];
+  const crossZ = quad.a[0] * quad.b[1] - quad.a[1] * quad.b[0];
+  const backWound = crossX * n[0] + crossY * n[1] + crossZ * n[2] < 0;
   const cornerAOs = [];
   const vi = [];
   const ring = [[1, 1], [-1, 1], [-1, -1], [1, -1]];
@@ -532,9 +540,15 @@ function pushShapeFace(builder, world, quad, lightAt, wx, y, wz, def, cell) {
     vi.push(builder.vertex([wx + p[0], y + p[1], wz + p[2]], u, v, shade, emissive ? 0 : k * lightAt.torch));
   }
   const flip = cornerAOs[0] + cornerAOs[2] > cornerAOs[1] + cornerAOs[3];
-  builder.idx.push(...(flip
+  const order = flip
     ? [vi[1], vi[2], vi[3], vi[1], vi[3], vi[0]]
-    : [vi[0], vi[1], vi[2], vi[0], vi[2], vi[3]]));
+    : [vi[0], vi[1], vi[2], vi[0], vi[2], vi[3]];
+  if (backWound) {
+    // Разворот обхода: треугольники те же, но фронт смотрит по нормали грани
+    builder.idx.push(order[0], order[2], order[1], order[3], order[5], order[4]);
+  } else {
+    builder.idx.push(...order);
+  }
 }
 
 /**

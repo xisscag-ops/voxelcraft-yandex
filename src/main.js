@@ -25,7 +25,8 @@ import { ItemDrops, XpOrbs } from './items.js';
 import { Arrows, buildArrowModel, arrowMaterials } from './projectiles.js';
 import { Eating } from './eating.js';
 import { PISTOL_PARTS, PISTOL_FLASH_PARTS, PISTOL_FLASH_Z, PISTOL_STATS,
-  PISTOL_VIEW_SCALE, PISTOL_ARM_PARTS, GUN_POSE_HIP, GUN_POSE_ADS } from './gun.js';
+  PISTOL_VIEW_SCALE, PISTOL_ARM_PARTS, PISTOL_SLIDE_PARTS, PISTOL_SLIDE_TRAVEL,
+  GUN_POSE_HIP, GUN_POSE_ADS } from './gun.js';
 import { Sky } from './sky.js';
 import { Sfx } from './audio.js';
 import { Music } from './music.js';
@@ -243,6 +244,8 @@ let gunAim = 0;                  // 0..1 — плавный заход в при
 let gunAimWant = false;          // игрок держит ПКМ с пистолетом и целится
 let heldPistol = null;           // модель пистолета в руке (для позы прицеливания)
 let heldGunArm = null;           // предплечье пистолета: в прицеле оно уходит за кадр
+let heldGunSlide = null;         // подвижный затвор модели пистолета
+let gunSlideT = 99;              // время от выстрела: по нему ездит затвор (0.18 с цикл)
 // Позы GUN_POSE_HIP / GUN_POSE_ADS приходят из src/gun.js: они считаются из
 // точки хвата рукояти, поэтому кисть всегда сжимает рукоять, а не локоть.
 
@@ -271,6 +274,7 @@ mobManager.onSound = (kind, dist, type) => {
   else if (kind === 'growl') sfx.zombieGroan(vol);
   else if (kind === 'hop') sfx.mobHop(vol);
   else if (kind === 'bleat') sfx.bleat(vol);
+  else if (kind === 'huh') sfx.huh(vol);
   else if (kind === 'chirp') sfx.chirp(vol);
   else if (kind === 'zombie') sfx.zombieAmbient(vol);
   else if (kind === 'die') sfx.mobDie();
@@ -285,6 +289,9 @@ mobManager.onSound = (kind, dist, type) => {
 // Счётчик построенных блоков (лидерборд Яндекса)
 let blocksBuilt = 0;
 let cricketsT = 3;
+// Открытые деревни: тост «Деревня найдена!» показываем один раз на деревню
+let villageScanT = 2;
+let seenVillages = new Set();
 
 // Контур выбранного блока
 const highlight = new THREE.LineSegments(
@@ -566,6 +573,10 @@ function buildPistolModel() {
   // камеру и закрывала бы весь низ экрана, поэтому там она прячется.
   const arm = new THREE.Group();
   arm.name = 'gunArm';
+  // Затвор — своей подвижной группой: при выстреле откатывается назад
+  // и возвращается пружиной (ход задаёт updateHand через gunSlideT).
+  const slide = new THREE.Group();
+  slide.name = 'gunSlide';
   for (const p of PISTOL_PARTS) {
     const part = boxPart(p.w, p.h, p.d, p.color, p.x || 0, p.y || 0, p.z || 0);
     part.name = p.name;
@@ -573,8 +584,11 @@ function buildPistolModel() {
     if (p.rotY) part.rotation.y = p.rotY;
     if (p.rotZ) part.rotation.z = p.rotZ;
     if (p.emissive) part.material.userData.emissive = true;   // огни прицела не темнеют
-    (PISTOL_ARM_PARTS.includes(p.name) ? arm : g).add(part);
+    if (PISTOL_ARM_PARTS.includes(p.name)) arm.add(part);
+    else if (PISTOL_SLIDE_PARTS.includes(p.name)) slide.add(part);
+    else g.add(part);
   }
+  g.add(slide);
   const flash = new THREE.Group();
   flash.name = 'muzzleFlash';
   flash.position.set(0, 0.02, PISTOL_FLASH_Z);
@@ -746,6 +760,7 @@ function updateHeldItem() {
   gunMuzzleFlash = null;
   heldPistol = null;
   heldGunArm = null;
+  heldGunSlide = null;
   if (!key) return;
   // блоки в креативе бесконечны — в руке всё равно показываем кубик
   const mesh = buildHeldMesh(key);
@@ -755,6 +770,7 @@ function updateHeldItem() {
     if (mesh.userData.isPistol) {
       heldPistol = mesh;
       heldGunArm = mesh.getObjectByName('gunArm') || null;
+      heldGunSlide = mesh.getObjectByName('gunSlide') || null;
     }
   }
 }
@@ -974,6 +990,13 @@ function updateHand(dt, light) {
     handPivot.position.z += 0.11 * k;
     handPivot.position.y += 0.045 * k;
     handPivot.rotation.x -= 0.3 * k;
+  }
+  // Затвор: от выстрела откатывается назад и возвращается пружиной (полный
+  // цикл 0.18 с). Окно выброса уезжает назад — виден латунный патронник.
+  if (heldGunSlide) {
+    gunSlideT += dt;
+    const ph = Math.min(1, gunSlideT / 0.18);
+    heldGunSlide.position.z = ph < 1 ? Math.sin(ph * Math.PI) * PISTOL_SLIDE_TRAVEL : 0;
   }
   if (gunFlashT > 0) gunFlashT = Math.max(0, gunFlashT - dt);
   if (gunMuzzleFlash) {
@@ -1301,7 +1324,7 @@ function onArrowHitMob(mob, arrow, dir) {
   sfx.hitMob();
   particles.burst(mob.pos.x, mob.pos.y + mob.centerY(), mob.pos.z, 0xd03232, 12);
   mob.knockback(dir.x, dir.z, killed ? 4.4 : 3.4);
-  if (!killed && (mob.type === 'bunny' || mob.type === 'sheep' || mob.type === 'fish')) {
+  if (!killed && (mob.type === 'bunny' || mob.type === 'sheep' || mob.type === 'fish' || mob.type === 'villager')) {
     mob.fleeFrom(player.pos, 4);
   }
   // Птицы пугаются и улетают
@@ -1401,6 +1424,7 @@ function firePistol() {
   );
   gunKick = 1;
   gunFlashT = GUN_FLASH_TIME;
+  gunSlideT = 0;      // затвор поехал назад (анимация в updateHand)
   // Огонь из ствола: пистолет держится правее и ниже линии взгляда, поэтому
   // сноп искр и дымок вылетают из точки у дула, а не из центра экрана.
   // В прицеле ствол стоит на оси взгляда — смещение почти гаснет.
@@ -1411,6 +1435,13 @@ function firePistol() {
   const my = eye.y + d.y * 0.55 - 0.13 * (1 - gunAim * 0.8);
   const mz = eye.z + d.z * 0.55 + rz * off;
   particles.flame(mx, my, mz, d.x, d.y, d.z);
+  // Выброс стрелянной гильзы: латунный блик летит вправо-вверх и падает
+  const bx = eye.x + d.x * 0.36 + rx * off * 0.7;
+  const by = eye.y + d.y * 0.36 - 0.1 * (1 - gunAim * 0.8);
+  const bz = eye.z + d.z * 0.36 + rz * off * 0.7;
+  particles.spawn(bx, by, bz,
+    rx * 1.7 + d.x * 0.5, 2.3 + Math.random() * 0.7, rz * 1.7 + d.z * 0.5,
+    [214, 168, 82], 0.5 + Math.random() * 0.2);
   sfx.pistolShot();
 }
 
@@ -1423,8 +1454,8 @@ function hitMob(m) {
   particles.burst(m.pos.x, m.pos.y + m.centerY(), m.pos.z, 0xd03232, 12);
   const kx = m.pos.x - player.pos.x, kz = m.pos.z - player.pos.z;
   m.knockback(kx, kz, 4.2);
-  // Зайцы и овцы убегают
-  if (m.type === 'bunny' || m.type === 'sheep') m.fleeFrom(player.pos);
+  // Зайцы, овцы и деревенские жители убегают
+  if (m.type === 'bunny' || m.type === 'sheep' || m.type === 'villager') m.fleeFrom(player.pos);
 }
 
 // Трава, цветы, папоротник, клевер срываются мгновенно: сухой треск, горсть частиц,
@@ -1939,6 +1970,9 @@ function mobDrops(type) {
     case 'slime':
       roll(0.6, ITEM.STICK, 1, 1);
       break;
+    case 'villager':
+      roll(0.4, ITEM.WHEAT, 1, 1);   // уронил зерно из кармана
+      break;
     default:
       break;
   }
@@ -2252,6 +2286,8 @@ async function startWorld(opts = {}) {
   runBob = 0;
 
   world = new World(seed);
+  seenVillages = new Set();          // тосты «Деревня найдена!» — заново для нового мира
+  villageScanT = 2;
   world.onUnsupportedDecor = (x, y, z, id) => {
     particles.burst(x + 0.5, y + 0.15, z + 0.5, tileColor(BLOCKS[id].tiles[0]), 8);
     sfx.grassRustle();
@@ -3091,6 +3127,21 @@ function frame() {
     waterMat.color.setScalar(0.09 + 0.91 * L);
     mobManager.setLight(L);
     mobManager.update(dt, player, true);
+
+    // Обнаружение деревни: подошёл ближе ~40 блоков к центру — тост и звук
+    villageScanT -= dt;
+    if (villageScanT <= 0) {
+      villageScanT = 2;
+      for (const v of world.villagesNear(player.pos.x, player.pos.z)) {
+        if (seenVillages.has(v.key)) continue;
+        const dx = v.x - player.pos.x, dz = v.z - player.pos.z;
+        if (dx * dx + dz * dz < 40 * 40) {
+          seenVillages.add(v.key);
+          ui.toast(`🏘️ ${i18n.t('village_found')}`, 3200);
+          sfx.reward();
+        }
+      }
+    }
 
     // Сверчки по ночам в ясную погоду
     cricketsT -= dt;

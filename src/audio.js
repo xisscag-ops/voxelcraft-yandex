@@ -191,6 +191,14 @@ export class Sfx {
     this._tone({ freq: 1850, dur: 0.07, gain: 0.035 * vol, type: 'sine', slide: 650 });
     setTimeout(() => this._tone({ freq: 2100, dur: 0.05, gain: 0.03 * vol, type: 'sine', slide: 400 }), 90);
   }
+  huh(vol = 1) {
+    // Задумчивое деревенское «х-м-м»: пара низких носовых звука со спадом
+    const f = 150 + Math.random() * 40;
+    this._tone({ freq: f, dur: 0.12, gain: 0.055 * vol, type: 'sawtooth', slide: -35 });
+    if (Math.random() < 0.6) {
+      setTimeout(() => this._tone({ freq: f * 0.82, dur: 0.16, gain: 0.05 * vol, type: 'sawtooth', slide: -30 }), 170);
+    }
+  }
 
   // ---- Погода и амбиент ----
   startRainLoop() {
