@@ -397,6 +397,15 @@ export class UI {
     el.textContent = '🏹 ×' + n;
   }
 
+  /** Счётчик патронов в HUD (в креативе и без патронов скрыт) */
+  setBullets(n, mode = 'survival') {
+    const el = document.getElementById('bullets');
+    if (!el) return;
+    if (n <= 0 || mode === 'creative') { el.classList.add('hidden'); return; }
+    el.classList.remove('hidden');
+    el.textContent = '🔫 ×' + n;
+  }
+
   setApples(n, mode = 'survival') {
     const el = document.getElementById('apples');
     if (!el) return;

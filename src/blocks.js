@@ -123,8 +123,9 @@ export const BLOCKS = [
   { id: 48, name: 'chest_px', solid: true, tiles: [53, 53, 54, 55], front: 'px', break: 'default', tool: 'wood', interactive: 'chest', chest: true, variant: true },
   { id: 49, name: 'chest_nx', solid: true, tiles: [53, 53, 54, 55], front: 'nx', break: 'default', tool: 'wood', interactive: 'chest', chest: true, variant: true },
   { id: 50, name: 'birch_planks', solid: true, tiles: [56, 56, 56], break: 'default', tool: 'wood' },
-  // Забор: твёрдый, но занимает только середину клетки (столбик) — через него видно
-  { id: 51, name: 'fence', solid: true, tiles: [57, 57, 57], break: 'default', tool: 'wood', shape: 'fence', fence: true },
+  // Забор: твёрдый, но занимает только середину клетки (столбик с перекладинами)
+  { id: 51, name: 'fence', solid: true, tiles: [57, 57, 57], break: 'default', tool: 'wood', shape: 'fence', fence: true,
+    fenceTiles: { post: 64, rail: 65 } },
   // Наковальня: станция для инструментов выше каменных
   { id: 52, name: 'anvil', solid: true, tiles: [58, 58, 59, 60], front: 'pz', break: 'slow', tool: 'stone', interactive: 'anvil', anvil: true },
   // Заснеженный песок: песчаный пляж холодных зон со снежной коркой

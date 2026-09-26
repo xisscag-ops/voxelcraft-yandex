@@ -21,6 +21,7 @@ import { spriteNames } from './src/icons.js';
 import { CONFIG } from './src/config.js';
 import { Furnace, serializeFurnaces, deserializeFurnaces, fuelDuration, smeltResult } from './src/furnace.js';
 import { STRINGS } from './src/i18n.js';
+import * as gun from './src/gun.js';
 
 // Заглушка THREE — достаточно для toGeometry
 const calls = { geom: 0, verts: 0, idx: 0 };
@@ -564,8 +565,8 @@ check('инвентарь полон → лишнее не влезает', (() 
 
 // ---- Крафт ----
 check('рецепты без ошибок', validateRecipes().length === 0, validateRecipes().join('; '));
-check('40 рецептов (берёзовые доски, забор, наковальня, металлические инструменты, алмазный молот)',
-  RECIPES.length === 40, 'их ' + RECIPES.length);
+check('42 рецепта (берёзовые доски, забор, наковальня, металлические инструменты, алмазный молот, пистолет и патроны)',
+  RECIPES.length === 42, 'их ' + RECIPES.length);
 function craftWith(input, id) {
   const i = new Inventory(CONFIG.INV_SIZE);
   for (const [k, n] of Object.entries(input)) i.add(k, n);
@@ -754,6 +755,66 @@ check('лук не стакается', maxStack(ITEM.BOW) === 1);
   arrows3.shoot(0.5, 10, 0.5, 1, 0, 0, 20, 3, { onMob: (m) => { dyingHit = m; } });
   for (let i = 0; i < 120 && !dyingHit; i++) arrows3.update(1 / 60, wallWorld, [dying], null);
   check('в умирающего моба стрела не бьёт', dyingHit === null);
+}
+
+// ---- Пистолет и патроны ----
+check('пистолет и патроны есть в предметах', !!itemDef(ITEM.PISTOL) && !!itemDef(ITEM.BULLET));
+check('пистолет: 3 слитка + 2 доски + палка на верстаке', (() => {
+  const r = craftWith({ [ITEM.IRON_INGOT]: 3, [blockItem(BLOCK.PLANKS)]: 2, [ITEM.STICK]: 1 }, 'pistol');
+  return r.res === 'ok' && r.i.count(ITEM.PISTOL) === 1;
+})());
+check('патроны: слиток + уголь → 8 патронов (без верстака)', (() => {
+  const r = craftWith({ [ITEM.IRON_INGOT]: 1, [ITEM.COAL]: 1 }, 'bullets');
+  return r.res === 'ok' && r.i.count(ITEM.BULLET) === 8
+    && !needsTable(RECIPES.find((x) => x.id === 'bullets'));
+})());
+check('пистолет не стакается, патроны стакаются', maxStack(ITEM.PISTOL) === 1 && maxStack(ITEM.BULLET) === 64);
+check('пистолет и патрон описаны и нарисованы', (() => {
+  return ['ru', 'en'].every((l) => itemDescription(ITEM.PISTOL, l) && itemDescription(ITEM.BULLET, l))
+    && spriteNames().includes('pistol') && spriteNames().includes('bullet');
+})());
+
+check('модель пистолета: ствол вперёд, рукоять вниз, вспышка у дула', (() => {
+  const byName = (n) => gun.PISTOL_PARTS.find((p) => p.name === n);
+  const muzzle = byName('muzzle'), grip = byName('grip'), slide = byName('slide');
+  const frontZ = Math.min(...gun.PISTOL_PARTS.map((p) => (p.z || 0) - p.d / 2));
+  return !!muzzle && !!grip && !!slide
+    && muzzle.z - muzzle.d / 2 === frontZ          // дуло — самая передняя деталь
+    && grip.y < slide.y - 0.1                      // рукоять уходит вниз от затвора
+    && gun.PISTOL_FLASH_PARTS.length > 0
+    && gun.PISTOL_FLASH_Z <= muzzle.z        // вспышка начинается на дуле и уходит вперёд
+    && gun.PISTOL_FLASH_PARTS.every((p) => p.z <= 0);
+})());
+check('пистолет мощнее лука и стреляет быстрее', gun.PISTOL_STATS.damage >= 5
+  && gun.PISTOL_STATS.speed > 40 && gun.PISTOL_STATS.cooldown > 0);
+
+// ---- Пуля: летит прямо, гаснет в блоке, бьёт моба ----
+{
+  const proj = await import('./src/projectiles.js');
+  const scene = { add() {}, remove() {} };
+  const wallWorld = { getBlock: (x) => (x >= 3 ? 3 : 0) };
+  const bullets = new proj.Arrows(scene);
+  let bulletBlock = null, bulletStuck = 0;
+  bullets.shoot(0.5, 10, 0.5, 1, 0, 0, 62, 5,
+    { onBlock: (a) => { bulletBlock = a; }, onPickup: () => { bulletStuck++; } },
+    { kind: 'bullet', gravity: 4, stick: false });
+  for (let i = 0; i < 60 && !bulletBlock; i++) bullets.update(1 / 60, wallWorld, [], null);
+  check('пуля гаснет в блоке и не остаётся лежать', !!bulletBlock && bulletBlock.kind === 'bullet'
+    && bullets.list.length === 0);
+  const bullets2 = new proj.Arrows(scene);
+  let bulletMob = null, bulletDmg = 0;
+  const mob = { pos: { x: 2, y: 10, z: 0.5 }, dead: false, dying: -1 };
+  bullets2.shoot(0.5, 10, 0.5, 1, 0, 0, 62, 5,
+    { onMob: (m, a) => { bulletMob = m; bulletDmg = a.dmg; } },
+    { kind: 'bullet', gravity: 4, stick: false });
+  for (let i = 0; i < 60 && !bulletMob; i++) bullets2.update(1 / 60, wallWorld, [mob], null);
+  check('пуля попадает в моба с уроном 5', bulletMob === mob && bulletDmg === 5 && bullets2.list.length === 0);
+  check('пуля почти не падает на дистанции выстрела', (() => {
+    const b = new proj.Arrows(scene);
+    const a = b.shoot(0.5, 10, 0.5, 1, 0, 0, 62, 5, {}, { kind: 'bullet', gravity: 4, stick: false });
+    for (let i = 0; i < 10; i++) b.update(1 / 60, { getBlock: () => 0 }, [], null);
+    return a && Math.abs(a.group.position.y - 10) < 0.15;
+  })());
 }
 
 // ---- Мобы: направление движения, урон, анимация смерти ----
@@ -1181,8 +1242,8 @@ check('сундук: разметка и стили панели', html.includes
     const ingots = RECIPES.filter((r) => /^(iron|gold)_ingot$/.test(r.id));
     return ingots.length === 2 && ingots.every((r) => !r.station);
   })());
-  check('без наковальни доступен ровно 30 рецептов, с наковальней — 40',
-    recipesFor(null).length === 30 && recipesFor(anvilStation).length === 40,
+  check('без наковальни доступно ровно 32 рецепта, с наковальней — 42',
+    recipesFor(null).length === 32 && recipesFor(anvilStation).length === 42,
     recipesFor(null).length + '/' + recipesFor(anvilStation).length);
   check('сетка 3×3 на наковальне собирает алмазный меч', (() => {
     const g = emptyGrid(3);
@@ -1394,7 +1455,8 @@ check('сундук: разметка и стили панели', html.includes
   // Тексты интерфейса
   const both = ['ru', 'en'];
   const newKeys = ['anvil_title', 'anvil_craft_title', 'anvil_hint', 'anvil_recipes', 'need_anvil',
-    'need_anvil_short', 'anvil_open', 'sneak_hint', 'music', 'music_hint', 'dropped'];
+    'need_anvil_short', 'anvil_open', 'sneak_hint', 'music', 'music_hint', 'dropped',
+    'hint_pistol', 'no_bullets', 'bullet_pickup'];
   check('новые строки интерфейса есть в обоих языках',
     newKeys.every((k) => both.every((l) => typeof STRINGS[l][k] === 'string' && STRINGS[l][k].length > 0)),
     newKeys.filter((k) => !both.every((l) => STRINGS[l][k])).join(','));

@@ -521,27 +521,49 @@ export class World {
       }
     }
 
-    // Руды и гравий в каменных слоях
+    // Руды в каменных слоях. Жилы считаются от поверхности, а не от дна мира:
+    // уголь и железо лежат у самой поверхности (под слоем земли, в скалах и
+    // карьерах), поэтому первые факелы и инструменты не требуют долгих раскопок.
     const rngOre = makeRng(hash3(cx, 7, cz, seed) * 0x7fffffff);
+    const placeVein = (vx, vy, vz, ore, size, spread = 3) => {
+      for (let k = 0; k < size; k++) {
+        const px2 = vx + ((rngOre() * spread) | 0) - ((spread / 2) | 0);
+        const pz2 = vz + ((rngOre() * spread) | 0) - ((spread / 2) | 0);
+        const py2 = vy + ((rngOre() * spread) | 0) - ((spread / 2) | 0);
+        if (px2 < 0 || pz2 < 0 || px2 >= S || pz2 >= S || py2 < 1 || py2 >= H) continue;
+        if (chunk.get(px2, py2, pz2) === BLOCK.STONE) chunk.set(px2, py2, pz2, ore);
+      }
+    };
+    // [руда, сколько жил на чанк, блоков в жиле, мин. глубина, макс. глубина] —
+    // глубина отсчитывается вниз от поверхности, ближе к верху жилы встречаются чаще
     const veins = [
-      [BLOCK.COAL_ORE, 9, 6, 34],
-      [BLOCK.IRON_ORE, 6, 5, 28],
-      [BLOCK.GOLD_ORE, 3, 4, 18],
-      [BLOCK.DIAMOND_ORE, 2, 3, 12],
+      [BLOCK.COAL_ORE, 20, 12, 2, 18],
+      [BLOCK.IRON_ORE, 12, 9, 4, 30],
+      [BLOCK.GOLD_ORE, 4, 5, 16, 42],
+      [BLOCK.DIAMOND_ORE, 3, 4, 24, 54],
     ];
-    for (const [ore, tries, size, maxY] of veins) {
+    for (const [ore, tries, size, minDrop, maxDrop] of veins) {
       for (let i = 0; i < tries; i++) {
         const vx = (rngOre() * S) | 0;
         const vz = (rngOre() * S) | 0;
-        const vy = 4 + ((rngOre() * maxY) | 0);
-        if (chunk.get(vx, vy, vz) !== BLOCK.STONE) continue;
-        for (let k = 0; k < size; k++) {
-          const px2 = vx + ((rngOre() * 3) | 0) - 1;
-          const pz2 = vz + ((rngOre() * 3) | 0) - 1;
-          const py2 = vy + ((rngOre() * 3) | 0) - 1;
-          if (px2 < 0 || pz2 < 0 || px2 >= S || pz2 >= S) continue;
-          if (chunk.get(px2, py2, pz2) === BLOCK.STONE) chunk.set(px2, py2, pz2, ore);
-        }
+        const h = terrainHeight[vz * S + vx];
+        const t = rngOre();
+        const drop = minDrop + Math.round((maxDrop - minDrop) * t * t);
+        const vy = Math.max(4, h - 1 - drop);
+        placeVein(vx, vy, vz, ore, size);
+      }
+    }
+    // Выходы руды на поверхность: в скалах, уступах и карьерах порода видна
+    // снаружи, поэтому уголь и железо можно найти прямо в обрыве.
+    for (let z = 1; z < S - 1; z++) {
+      for (let x = 1; x < S - 1; x++) {
+        const h = terrainHeight[z * S + x];
+        if (h <= SEA) continue;                                  // под водой не надо
+        if (chunk.get(x, h, z) !== BLOCK.STONE) continue;        // только голая порода
+        if (chunk.get(x, h + 1, z) !== BLOCK.AIR) continue;
+        if (rngOre() > 0.11) continue;
+        const ore = rngOre() < 0.65 ? BLOCK.COAL_ORE : BLOCK.IRON_ORE;
+        placeVein(x, h - ((rngOre() * 3) | 0), z, ore, 6, 3);
       }
     }
     // Сталактиты и сталагмиты: сосульки из сланца под потолком и наросты на полу

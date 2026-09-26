@@ -18,6 +18,30 @@ export function arrowMaterials() {
   };
 }
 
+// ---- Модель пули: короткая латунная гильза с ярким трассером ----
+let _bulletMats = null;
+export function bulletMaterials() {
+  if (!_bulletMats) {
+    _bulletMats = {
+      case: new THREE.MeshBasicMaterial({ color: 0xd8b24a, transparent: true, opacity: 0.95 }),
+      tip: new THREE.MeshBasicMaterial({ color: 0xf2f6ff, transparent: true, opacity: 0.95 }),
+    };
+  }
+  return _bulletMats;
+}
+
+/**
+ * Пуля: начало координат — пятка, летит в +Z. Короткая, с белым носиком —
+ * на скорости читается как трассер и не мешает обзору.
+ */
+export function buildBulletModel(mats = null) {
+  const m = mats || bulletMaterials();
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.028, 0.16).translate(0, 0, 0.08), m.case));
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(0.034, 0.034, 0.06).translate(0, 0, 0.19), m.tip));
+  return g;
+}
+
 /**
  * Стрела: начало координат — пятка (хвост), сама стрела смотрит в +Z.
  * @param {number} scale масштаб модели
@@ -51,24 +75,30 @@ export class Arrows {
   /**
    * Выстрел.
    * @param {object} cb { onMob(mob, arrow), onBlock(arrow), onPickup(n) }
+   * @param {object} [opts] { kind: 'arrow'|'bullet', gravity, stick }
+   *   bullet летит почти прямо и исчезает при попадании в блок (его не подобрать)
    */
-  shoot(x, y, z, dx, dy, dz, speed, dmg, cb = {}) {
+  shoot(x, y, z, dx, dy, dz, speed, dmg, cb = {}, opts = {}) {
     if (this.list.length >= this.max) {
-      // Освобождаем самую старую летящую стрелу
+      // Освобождаем самый старый летящий снаряд
       const i = this.list.findIndex((a) => a.state === 'fly');
       if (i >= 0) this._remove(i);
       else return null;
     }
     const l = Math.hypot(dx, dy, dz) || 1;
-    const group = buildArrowModel();
+    const kind = opts.kind || 'arrow';
+    const group = kind === 'bullet' ? buildBulletModel() : buildArrowModel();
     group.position.set(x, y, z);
     this.scene.add(group);
     const arrow = {
       group,
+      kind,
       state: 'fly',
       dmg,
       t: 0,
       life: 22,                       // сколько стрела лежит воткнутой
+      gravity: opts.gravity ?? null,
+      stick: opts.stick !== false,
       vel: { x: (dx / l) * speed, y: (dy / l) * speed, z: (dz / l) * speed },
       cb,
     };
@@ -157,6 +187,13 @@ export class Arrows {
       }
 
       if (hitBlock) {
+        const cb = a.cb;
+        if (!a.stick) {
+          // Пуля гасит удар в блоке и исчезает
+          this._remove(i);
+          if (cb?.onBlock) cb.onBlock(a);
+          continue;
+        }
         // Стрела втыкается в блок и её можно подобрать
         _dir.set(vel.x, vel.y, vel.z).normalize();
         p.set(lx, ly, lz);
@@ -164,13 +201,12 @@ export class Arrows {
         a.state = 'stuck';
         a.pickup = true;
         a.vel.x = 0; a.vel.y = 0; a.vel.z = 0;
-        const cb = a.cb;
         if (cb?.onBlock) cb.onBlock(a);
         continue;
       }
 
       p.set(p.x + stepX, p.y + stepY, p.z + stepZ);
-      vel.y -= this.gravity * dt;
+      vel.y -= (a.gravity ?? this.gravity) * dt;
       const drag = Math.max(0, 1 - 0.25 * dt);
       vel.x *= drag; vel.z *= drag;
       this._aim(a);

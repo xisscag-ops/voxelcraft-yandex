@@ -119,6 +119,20 @@ export const RECIPES = [
     id: 'arrows', in: { [ITEM.STICK]: 1, [COBBLE]: 1 }, out: { key: ITEM.ARROW, count: 2 },
     patterns: [['AB']], keys: { A: ITEM.STICK, B: COBBLE },
   },
+  // Пистолет: железный затвор и ствол на деревянной рукояти
+  {
+    id: 'pistol', in: { [ITEM.IRON_INGOT]: 3, [PLANKS]: 2, [ITEM.STICK]: 1 },
+    out: { key: ITEM.PISTOL, count: 1 },
+    patterns: [['AAA', ' BB', ' C ']],
+    keys: { A: ITEM.IRON_INGOT, B: PLANKS, C: ITEM.STICK },
+  },
+  // Патроны: железная пуля в латунной гильзе, порох — из угля
+  {
+    id: 'bullets', in: { [ITEM.IRON_INGOT]: 1, [ITEM.COAL]: 1 },
+    out: { key: ITEM.BULLET, count: 8 },
+    patterns: [['A', 'B']],
+    keys: { A: ITEM.IRON_INGOT, B: ITEM.COAL },
+  },
   {
     id: 'glass', in: { [SAND]: 2 }, out: { key: blockItem(BLOCK.GLASS), count: 1 },
     patterns: [['AA']], keys: { A: SAND },

@@ -118,6 +118,26 @@ export class Sfx {
     this._burst({ freq: 260, dur: 0.1, gain: 0.14, type: 'lowpass', pitchDrop: 0.5 });
   }
 
+  /** Выстрел из пистолета: резкий хлопок и короткий металлический звон гильзы */
+  pistolShot() {
+    this._burst({ freq: 3200, dur: 0.16, gain: 0.5, type: 'lowpass', pitchDrop: 0.12 });
+    this._burst({ freq: 900, dur: 0.1, gain: 0.35, type: 'bandpass', q: 1.2, pitchDrop: 0.3 });
+    this._tone({ freq: 260, dur: 0.13, gain: 0.14, type: 'square', slide: -180 });
+    setTimeout(() => this._tone({ freq: 2400, dur: 0.07, gain: 0.05, type: 'triangle', slide: -700 }), 70);
+  }
+
+  /** Пустая обойма: сухой щелчок курка */
+  pistolEmpty() {
+    this._burst({ freq: 2600, dur: 0.04, gain: 0.18, type: 'bandpass', q: 2 });
+    this._tone({ freq: 320, dur: 0.05, gain: 0.07, type: 'square', slide: -80 });
+  }
+
+  /** Пуля ушла в блок: короткий щелчок с осыпью */
+  bulletHitBlock() {
+    this._burst({ freq: 1800, dur: 0.05, gain: 0.28, pitchDrop: 0.25 });
+    this._burst({ freq: 420, dur: 0.09, gain: 0.16, type: 'lowpass', pitchDrop: 0.4 });
+  }
+
   arrowPickup() {
     this._tone({ freq: 1050, dur: 0.05, gain: 0.07, type: 'square', slide: 180 });
   }
