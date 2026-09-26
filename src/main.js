@@ -24,7 +24,8 @@ import { Weather } from './weather.js';
 import { ItemDrops, XpOrbs } from './items.js';
 import { Arrows, buildArrowModel, arrowMaterials } from './projectiles.js';
 import { Eating } from './eating.js';
-import { PISTOL_PARTS, PISTOL_FLASH_PARTS, PISTOL_FLASH_Z, PISTOL_STATS } from './gun.js';
+import { PISTOL_PARTS, PISTOL_FLASH_PARTS, PISTOL_FLASH_Z, PISTOL_STATS,
+  PISTOL_VIEW_SCALE, PISTOL_ARM_PARTS, GUN_POSE_HIP, GUN_POSE_ADS } from './gun.js';
 import { Sky } from './sky.js';
 import { Sfx } from './audio.js';
 import { Music } from './music.js';
@@ -241,10 +242,9 @@ let gunMuzzleFlash = null;       // меш вспышки в модели, чт�
 let gunAim = 0;                  // 0..1 — плавный заход в прицел (ПКМ) обратно
 let gunAimWant = false;          // игрок держит ПКМ с пистолетом и целится
 let heldPistol = null;           // модель пистолета в руке (для позы прицеливания)
-// Поза пистолета: «у бедра» (обычная) и «прицеливание» (ствол по центру экрана)
-const GUN_POSE_HIP = { px: 0.09, py: -0.06, pz: -0.32, rx: 0.06, ry: 0.5, rz: 0.17 };
-const GUN_POSE_ADS = { px: 0, py: 0.001, pz: -0.14, rx: 0, ry: 0, rz: 0 };
-const HAND_POSE_ADS = { px: 0, py: -0.135, pz: -0.045, sx: 0.85, sy: 0.8, sz: 0.3, rx: -0.16 };
+let heldGunArm = null;           // предплечье пистолета: в прицеле оно уходит за кадр
+// Позы GUN_POSE_HIP / GUN_POSE_ADS приходят из src/gun.js: они считаются из
+// точки хвата рукояти, поэтому кисть всегда сжимает рукоять, а не локоть.
 
 // Еда: держим ЛКМ с едой в руке — персонаж жуёт (см. src/eating.js)
 const eat = new Eating();
@@ -562,6 +562,10 @@ function buildToolModel(kind, tier) {
  */
 function buildPistolModel() {
   const g = new THREE.Group();
+  // Предплечье и рукав — отдельной группой: в прицеле рука смотрит прямо в
+  // камеру и закрывала бы весь низ экрана, поэтому там она прячется.
+  const arm = new THREE.Group();
+  arm.name = 'gunArm';
   for (const p of PISTOL_PARTS) {
     const part = boxPart(p.w, p.h, p.d, p.color, p.x || 0, p.y || 0, p.z || 0);
     part.name = p.name;
@@ -569,7 +573,7 @@ function buildPistolModel() {
     if (p.rotY) part.rotation.y = p.rotY;
     if (p.rotZ) part.rotation.z = p.rotZ;
     if (p.emissive) part.material.userData.emissive = true;   // огни прицела не темнеют
-    g.add(part);
+    (PISTOL_ARM_PARTS.includes(p.name) ? arm : g).add(part);
   }
   const flash = new THREE.Group();
   flash.name = 'muzzleFlash';
@@ -705,7 +709,7 @@ function buildHeldMesh(key) {
     // Ствол смотрит вперёд-влево, модель крупная — видно затвор и рукоять;
     // при прицеливании (ПКМ) updateHand плавно переводит её в позу у глаз
     mesh = buildPistolModel();
-    mesh.scale.setScalar(0.8);
+    mesh.scale.setScalar(PISTOL_VIEW_SCALE);
     mesh.rotation.set(GUN_POSE_HIP.rx, GUN_POSE_HIP.ry, GUN_POSE_HIP.rz);
     mesh.position.set(GUN_POSE_HIP.px, GUN_POSE_HIP.py, GUN_POSE_HIP.pz);
     mesh.userData.isPistol = true;
@@ -741,13 +745,17 @@ function updateHeldItem() {
   for (const child of [...heldGroup.children]) heldGroup.remove(child);
   gunMuzzleFlash = null;
   heldPistol = null;
+  heldGunArm = null;
   if (!key) return;
   // блоки в креативе бесконечны — в руке всё равно показываем кубик
   const mesh = buildHeldMesh(key);
   if (mesh) {
     heldGroup.add(mesh);
     gunMuzzleFlash = mesh.getObjectByName?.('muzzleFlash') || null;
-    if (mesh.userData.isPistol) heldPistol = mesh;
+    if (mesh.userData.isPistol) {
+      heldPistol = mesh;
+      heldGunArm = mesh.getObjectByName('gunArm') || null;
+    }
   }
 }
 
@@ -903,8 +911,8 @@ function updateHand(dt, light) {
   handPivot.visible = state === 'game';
   const bow = isBowSelected();
   heldGroup.visible = !!heldKey && !bow;
-  // У лука в модели уже есть своя кисть: отдельная «рука-палка» больше не торчит
-  hand.visible = !bow;
+  // У лука и пистолета в модели своя кисть: отдельная «рука-палка» не торчит
+  hand.visible = !bow && !heldPistol;
   if (handSwing > 0) handSwing = Math.max(0, handSwing - dt / HAND_SWING_TIME);
   const p = Math.sin((1 - handSwing) * Math.PI) * handSwingPow; // 0 -> 1 -> 0
   const moving = Math.abs(input.move.forward) + Math.abs(input.move.right) > 0.1;
@@ -956,21 +964,9 @@ function updateHand(dt, light) {
       GUN_POSE_HIP.rz * (1 - a) + GUN_POSE_ADS.rz * a,
     );
   }
-  // Кисть: в прицеле становится аккуратным кулаком на рукояти, иначе — как обычно
-  {
-    const a = heldPistol ? gunAim : 0;
-    hand.position.set(
-      HAND_POSE_ADS.px * a,
-      HAND_POSE_ADS.py * a,
-      -0.1 * (1 - a) + HAND_POSE_ADS.pz * a,
-    );
-    hand.scale.set(
-      1 + (HAND_POSE_ADS.sx - 1) * a,
-      1 + (HAND_POSE_ADS.sy - 1) * a,
-      1 + (HAND_POSE_ADS.sz - 1) * a,
-    );
-    hand.rotation.set(HAND_POSE_ADS.rx * a, 0, 0);
-  }
+  // Предплечье модели пистолета: в прицеле оно уходит за кадр вместе с рукой,
+  // иначе смотрело бы прямо в камеру и закрывало низ экрана
+  if (heldGunArm) heldGunArm.visible = gunAim < 0.35;
   // Пистолет: отдача откидывает руку назад и вверх, вспышка живёт пару кадров
   if (gunKick > 0) {
     gunKick = Math.max(0, gunKick - dt / 0.18);

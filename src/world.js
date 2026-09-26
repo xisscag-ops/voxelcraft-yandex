@@ -126,6 +126,23 @@ export class World {
   // Голый камень на высокогорье
   isRocky(h) { return h >= ROCK_H; }
 
+  /**
+   * Порода деревьев этой точки: в каждом биоме растут только свои деревья.
+   * Тайга (снежные зоны) — ели; скальные склоны и предгорья — сосны;
+   * холмистые края — дубравы; поля-луга — берёзовые рощи; равнинный лес —
+   * дубы и берёзы. В пустыне деревьев нет — там только кактусы.
+   * Возвращает 'spruce' | 'pine' | 'oak' | 'birch' | 'forest' | null
+   * ('forest' — смешанный равнинный лес: дубы и берёзы).
+   */
+  treeSpeciesAt(wx, wz, h) {
+    if (this.isDry(wx, wz, h)) return null;             // пустыня
+    if (this.isCold(wx, wz)) return 'spruce';           // тайга
+    if (h >= ROCK_H - 6) return 'pine';                 // предгорья и склоны гор
+    if (this.plainsAt(wx, wz) > 0.55) return 'birch';   // поля-луга
+    if (this.hillCountryAt(wx, wz) > 0.5) return 'oak'; // холмистые края
+    return 'forest';                                    // равнинный лес
+  }
+
   // Пустынная колонка (сухо и не холодно)
   isDry(wx, wz, h = null) {
     if (this.temperatureAt(wx, wz) > COLD_T) return false;
@@ -830,23 +847,21 @@ export class World {
       }
     }
 
-    // Валуны и скальные выходы: крупные глыбы на поверхности. Возле гор их
-    // больше и они выше — там встречаются настоящие скалы-пальцы, а на равнине
-    // попадаются одиночные валуны.
+    // Скальные выходы высокогорья: валуны и скалы-пальцы. Живут только на голом
+    // камне высоких гор — на лугах, в лесу, в снежных зонах и на пляжах глыб
+    // больше нет: там они выглядели случайными каменными нашлёпками среди травы.
     {
       const rngRock = makeRng(hash3(cx, 23, cz, seed) * 0x7fffffff);
       const roll = rngRock();
-      const rocks = roll < 0.28 ? 0 : roll < 0.62 ? 1 : roll < 0.86 ? 2 : 3;
+      const rocks = roll < 0.2 ? 0 : roll < 0.5 ? 1 : roll < 0.8 ? 2 : roll < 0.95 ? 3 : 4;
       for (let r = 0; r < rocks; r++) {
         const rx = 3 + ((rngRock() * (S - 6)) | 0);
         const rz = 3 + ((rngRock() * (S - 6)) | 0);
         const baseH = terrainHeight[rz * S + rx];
-        if (baseH <= SEA + 1) continue;                       // в воде и на пляже глыб нет
-        const rocky = baseH >= ROCK_H - 8;                    // у гор — крупнее и чаще
-        const spire = rocky && rngRock() < 0.32;              // скала-палец
-        const rad = spire ? 1.8 + rngRock() * 1.6
-          : (rocky ? 1.7 : 1.2) + rngRock() * (rocky ? 1.7 : 1.0);
-        const tall = spire ? 4 + rngRock() * 5 : 1.0 + rngRock() * (rocky ? 1.6 : 1.0);
+        if (baseH < ROCK_H) continue;                         // только скальное высокогорье
+        const spire = rngRock() < 0.34;                       // скала-палец
+        const rad = spire ? 2.0 + rngRock() * 1.6 : 2.0 + rngRock() * 1.8;
+        const tall = spire ? 4 + rngRock() * 5 : 1.0 + rngRock() * 1.9;
         const cold = this.isCold(ox + rx, oz + rz) || baseH >= PEAK_H - 2;
         const steps = Math.ceil(rad);
         for (let dz = -steps; dz <= steps; dz++) {
@@ -856,6 +871,7 @@ export class World {
             const d2 = (dx * dx + dz * dz) / (rad * rad);
             if (d2 > 1) continue;
             const h = terrainHeight[wz * S + wx];
+            if (h < ROCK_H - 1) continue;                     // камень не сползает на травяной склон
             const profile = Math.pow(Math.max(0, 1 - d2), spire ? 1.05 : 0.5);
             const top = h + Math.round(tall * profile);
             for (let y = h; y <= top; y++) {
@@ -873,9 +889,12 @@ export class World {
       }
     }
 
-    // Деревья разных пород (полностью внутри чанка, чтобы не пересекать границы).
-    // Между деревьями держим дистанцию: кроны разных пород не должны
-    // срастаться в один сплошной комок листвы.
+    // Деревья (полностью внутри чанка, чтобы не пересекать границы). Порода
+    // выбирается по биому: в тайге — только ели, на предгорьях — только сосны,
+    // на холмах — только дубы, в полях — только берёзы, в равнинном лесу —
+    // дубы и берёзы. Смешанных «всех пород в кучу» больше нет.
+    // Между деревьями держим дистанцию: кроны не должны срастаться
+    // в один сплошной комок листвы.
     const rng = makeRng(hash3(cx, 0, cz, seed) * 0x7fffffff);
     const treeCount = 5 + ((rng() * 3) | 0);   // пробуем чаще — часть отпадёт по дистанции
     const treeSpots = [];                      // занятые кронами места: {x, z, r}
@@ -891,15 +910,19 @@ export class World {
       if (th <= SEA + 1 || th > ROCK_H) continue;
       const surface = chunk.get(tx, th, tz);
       if (surface !== BLOCK.GRASS && surface !== BLOCK.SNOW) continue;
-      const cold = this.isCold(ox + tx, oz + tz);
-      // Порода зависит от биома; в холоде — ели и сосны, в тепле больше выбора
+      // Порода — по биому (см. treeSpeciesAt). В полях-лугах берёзовые рощи
+      // реже леса, чтобы поля оставались открытыми площадками под застройку.
+      const species = this.treeSpeciesAt(ox + tx, oz + tz, th);
+      if (!species) continue;                                   // пустыня: только кактусы
       let tree;
       const pick = rng();
-      if (surface === BLOCK.SNOW || cold) {
-        tree = pick < 0.55 ? 'spruce' : 'pine';
-      } else {
-        tree = pick < 0.3 ? 'birch' : pick < 0.44 ? 'tall_birch' : pick < 0.58 ? 'pine' : 'oak';
-      }
+      if (species === 'spruce') tree = 'spruce';
+      else if (species === 'pine') tree = 'pine';
+      else if (species === 'oak') tree = 'oak';
+      else if (species === 'birch') {
+        if (pick < 0.45) continue;                              // роща разрежена
+        tree = pick < 0.88 ? 'birch' : 'tall_birch';
+      } else tree = pick < 0.5 ? 'oak' : pick < 0.88 ? 'birch' : 'tall_birch';  // равнинный лес
       const put = (lx, ly, lz, id, onlyAir = true) => {
         if (lx < 0 || lz < 0 || lx >= S || lz >= S || ly < 0 || ly >= H) return;
         if (onlyAir && chunk.get(lx, ly, lz) !== BLOCK.AIR) return;
