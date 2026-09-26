@@ -3,7 +3,7 @@ import { makeRng } from './noise.js';
 
 export const TILE = 16;
 export const ATLAS_COLS = 8;
-export const ATLAS_ROWS = 8;
+export const ATLAS_ROWS = 9;
 
 // Индексы тайлов
 export const T = {
@@ -33,6 +33,8 @@ export const T = {
   BIRCH_PLANKS: 56, FENCE: 57, ANVIL_TOP: 58, ANVIL_SIDE: 59, ANVIL_FRONT: 60,
   // Природа: заснеженный песок, пещерная лиана и светящийся гриб
   SAND_SNOW_SIDE: 61, VINE: 62, GLOW_SHROOM: 63,
+  // Объёмный забор: отдельные текстуры столбика и перекладины
+  FENCE_POST: 64, FENCE_RAIL: 65,
 };
 
 export const CRACK_TILES = [17, 18, 19, 20, 21];
@@ -107,14 +109,16 @@ function leavesFill(data, rng, base, holes = 0.14) {
 
 const painters = {
   [T.GRASS_TOP](data, rng) {
-    noisyFill(data, rng, [98, 168, 68], 18);
+    // Трава темнее остальных блоков: так газон не «светится» на солнце
+    // и лучше сочетается с землёй и камнем.
+    noisyFill(data, rng, [78, 140, 54], 16);
     for (let i = 0; i < 14; i++) {
       const x = (rng() * TILE) | 0, y = (rng() * TILE) | 0;
-      px(data, x, y, 76, 140, 50);
+      px(data, x, y, 58, 112, 40);
     }
     for (let i = 0; i < 6; i++) {
       const x = (rng() * TILE) | 0, y = (rng() * TILE) | 0;
-      px(data, x, y, 120, 190, 84);
+      px(data, x, y, 96, 160, 68);
     }
   },
   [T.GRASS_SIDE](data, rng) {
@@ -124,7 +128,7 @@ const painters = {
       const h = 2 + ((rng() * 3) | 0);
       for (let y = 0; y < h; y++) {
         const v = (rng() - 0.5) * 30;
-        px(data, x, y, 98 + v, 168 + v, 68 + v);
+        px(data, x, y, 78 + v, 140 + v, 54 + v);
       }
     }
   },
@@ -303,7 +307,7 @@ const painters = {
         let xx = x;
         if (i > h * 0.55) xx += lean * (((i - h * 0.55) / 1.6) | 0);
         const v = (rng() - 0.5) * 26;
-        px(data, xx, 15 - i, 80 + v, 145 + v, 54 + v);
+        px(data, xx, 15 - i, 64 + v, 122 + v, 44 + v);
       }
     }
   },
@@ -796,6 +800,58 @@ const painters = {
     for (let y = 11; y <= 15; y++) px(data, 3, y, 176, 208, 198);
     for (let y = 9; y <= 11; y++) for (let x = 2; x <= 4; x++) px(data, x, y, 120, 226, 200);
   },
+  // ---- Забор: столбик. Узкие грани берут среднюю четверть тайла (пиксели 6–9),
+  // поэтому «брусок» нарисован именно там, а вокруг — однородное дерево.
+  [T.FENCE_POST](data, rng) {
+    for (let x = 0; x < TILE; x++) {
+      const shade = x < 2 || x > TILE - 3 ? -26 : (x < 4 || x > TILE - 5 ? -10 : 0);
+      const base = [168 + shade, 126 + shade, 76 + shade];
+      for (let y = 0; y < TILE; y++) {
+        const v = (rng() - 0.5) * 12;
+        px(data, x, y, base[0] + v, base[1] + v, base[2] + v);
+      }
+    }
+    // светлые волокна вдоль бруска
+    for (let i = 0; i < 20; i++) {
+      const x = (rng() * TILE) | 0, y = (rng() * TILE) | 0, len = 3 + ((rng() * 6) | 0);
+      for (let k = 0; k < len; k++) px(data, x, y + k, 190, 148, 94);
+    }
+    // смоляные точки и тёмные сучки
+    for (let i = 0; i < 9; i++) {
+      const x = (rng() * TILE) | 0, y = (rng() * TILE) | 0;
+      px(data, x, y, 106, 74, 42);
+    }
+    // грани бруска: тёмная кромка слева, светлая фаска и тень справа
+    for (let y = 0; y < TILE; y++) {
+      px(data, 6, y, 108, 78, 44);
+      px(data, 7, y, 196, 154, 98);
+      px(data, 8, y, 176, 134, 84);
+      px(data, 9, y, 118, 84, 48);
+      if (y % 7 === 3) { px(data, 7, y, 150, 110, 64); px(data, 8, y, 140, 102, 60); }
+    }
+  },
+  // ---- Забор: перекладина. Волокно идёт вдоль доски, поэтому любая полоса
+  // тайла выглядит как настоящий брусок.
+  [T.FENCE_RAIL](data, rng) {
+    for (let y = 0; y < TILE; y++) {
+      // доска из трёх реек: у каждой свой оттенок и тёмный стык
+      const row = y < 5 ? 0 : y < 10 ? 1 : 2;
+      const shade = row === 0 ? 6 : row === 1 ? 0 : -10;
+      for (let x = 0; x < TILE; x++) {
+        const seam = y === 5 || y === 10 || y === 0 || y === TILE - 1 ? -30 : 0;
+        const v = (rng() - 0.5) * 12 + seam;
+        px(data, x, y, 172 + shade + v, 130 + shade + v, 80 + shade + v);
+      }
+    }
+    for (let i = 0; i < 26; i++) {
+      const y = (rng() * TILE) | 0, x = (rng() * TILE) | 0, len = 3 + ((rng() * 6) | 0);
+      for (let k = 0; k < len; k++) px(data, x + k, y, 194, 152, 98);
+    }
+    for (let i = 0; i < 6; i++) {
+      const x = (rng() * TILE) | 0, y = (rng() * TILE) | 0;
+      px(data, x, y, 112, 80, 46);
+    }
+  },
 };
 
 function chestWood(data, rng) {
@@ -867,6 +923,19 @@ function darkenTile(data, idx) {
   }
 }
 
+/**
+ * Пиксели одного тайла без канваса (RGBA). Нужны тестам и предпросмотру:
+ * цвет тайла можно проверить в node, где document недоступен.
+ */
+export function tilePixels(idx, darken = true) {
+  const data = new Uint8ClampedArray(TILE * TILE * 4);
+  // Сид по номеру тайла — стабильный вид между запусками
+  const rng = makeRng(1000 + idx * 77);
+  if (painters[idx]) painters[idx](data, rng);
+  if (darken) darkenTile(data, idx);
+  return data;
+}
+
 export function buildAtlas(darken = true) {
   const canvas = document.createElement('canvas');
   canvas.width = ATLAS_COLS * TILE;
@@ -875,19 +944,17 @@ export function buildAtlas(darken = true) {
 
   for (const key of Object.keys(painters)) {
     const idx = Number(key);
+    const px = tilePixels(idx, darken);
     const img = ctx.createImageData(TILE, TILE);
-    // Сид по номеру тайла — стабильный вид между запусками
-    const rng = makeRng(1000 + idx * 77);
-    painters[idx](img.data, rng);
-    if (darken) darkenTile(img.data, idx);
+    img.data.set(px);
     const tx = (idx % ATLAS_COLS) * TILE;
     const ty = ((idx / ATLAS_COLS) | 0) * TILE;
     ctx.putImageData(img, tx, ty);
 
     // Средний цвет тайла — для частиц и иконок
     let r = 0, g = 0, b = 0, n = 0;
-    for (let i = 0; i < img.data.length; i += 4) {
-      if (img.data[i + 3] > 200) { r += img.data[i]; g += img.data[i + 1]; b += img.data[i + 2]; n++; }
+    for (let i = 0; i < px.length; i += 4) {
+      if (px[i + 3] > 200) { r += px[i]; g += px[i + 1]; b += px[i + 2]; n++; }
     }
     if (n > 0) {
       tileColors[idx] = [r / n, g / n, b / n];

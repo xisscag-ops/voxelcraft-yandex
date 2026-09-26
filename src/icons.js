@@ -64,10 +64,11 @@ function drawFace(ctx, img, m) {
 }
 
 /**
- * Изометрический кубик блока (верхняя грань + левая и правая боковые)
- * Ромб сверху занимает половину высоты, боковины — вторую половину.
+ * Изометрический кубик блока (верхняя грань + левая и правая боковые).
+ * heightFactor < 1 сжимает только боковины — так рисуется полублок: верхняя
+ * грань остаётся целой, а бока становятся вполовину ниже и текстура не мылится.
  */
-export function blockCubeCanvas(id, size = 48) {
+export function blockCubeCanvas(id, size = 48, heightFactor = 1) {
   const def = BLOCKS[id];
   const c = makeCanvas(size, size);
   if (!def || !def.tiles) return c;
@@ -77,17 +78,20 @@ export function blockCubeCanvas(id, size = 48) {
   const s = size;
   const cx = s / 2;
   const k = s / TILE;           // масштаб «тайл → пиксели иконки»
+  const hf = Math.max(0.25, Math.min(1, heightFactor));
+  // Картинка занимает s/2 (ромб) + s/2·hf (боковины) — центрируем по высоте
+  const yOff = (s - (s / 2) * (1 + hf)) / 2;
 
   const top = shaded(tileCanvas(topId), FACE_SHADE.top);
   const left = shaded(tileCanvas(sideId), FACE_SHADE.left);
   const right = shaded(tileCanvas(frontId), FACE_SHADE.right);
 
   // верхняя грань: ромб
-  drawFace(ctx, top, [k / 2, k / 4, -k / 2, k / 4, cx, 0]);
+  drawFace(ctx, top, [k / 2, k / 4, -k / 2, k / 4, cx, yOff]);
   // левая грань
-  drawFace(ctx, left, [k / 2, k / 4, 0, k / 2, 0, s * 0.25]);
+  drawFace(ctx, left, [k / 2, (k / 4) * hf, 0, (k / 2) * hf, 0, yOff + s * 0.25]);
   // правая грань
-  drawFace(ctx, right, [k / 2, -k / 4, 0, k / 2, cx, s * 0.5]);
+  drawFace(ctx, right, [k / 2, (-k / 4) * hf, 0, (k / 2) * hf, cx, yOff + s * 0.5]);
   return c;
 }
 
@@ -189,6 +193,50 @@ const SPRITES = {
       '...RRRRRRR......',
       '....RRRRR.......',
       '................',
+      '................',
+      '................',
+    ],
+  },
+  // Пистолет: стальной затвор со стволом вправо и деревянная рукоять вниз-влево
+  pistol: {
+    pal: { t: '#2b2f36', s: '#39404a', S: '#7f8a96', l: '#c3ccd6', m: '#5a636e', g: '#6b4a2b', G: '#8a6134' },
+    rows: [
+      '................',
+      '................',
+      '................',
+      '..ttttttttttt...',
+      '.tSSllllllllttt.',
+      '.tSSllllllllSSt.',
+      '.ttsssssssssst..',
+      '.tttt..mttt.....',
+      '..tmtt..tt......',
+      '..gGtt..........',
+      '..gGGtt.........',
+      '..gGGgt.........',
+      '..gGGgt.........',
+      '..gGGgt.........',
+      '...gGg..........',
+      '................',
+    ],
+  },
+  // Патрон: латунная гильза с пулей
+  bullet: {
+    pal: { b: '#c9a227', B: '#f0d264', c: '#8a6d14', h: '#d8d2c0', H: '#fffbee' },
+    rows: [
+      '................',
+      '................',
+      '................',
+      '................',
+      '......hhh.......',
+      '.....hHHHh......',
+      '.....hHHHh......',
+      '....bbhHhbb.....',
+      '....bBBBBbb.....',
+      '....bBBBBbb.....',
+      '....bBBBBbb.....',
+      '....bBBBBbb.....',
+      '....cbbbbc......',
+      '.....cccc.......',
       '................',
       '................',
     ],
@@ -588,31 +636,35 @@ function resourcePixels(name) {
 /** Иконка блока по id: кубик или плоский спрайт */
 export function blockIconCanvas(id, size = 48) {
   if (FLAT_BLOCKS.has(id)) return blockSpriteCanvas(id, size);
-  if (SLAB_BLOCKS.has(id)) {
-    const c = makeCanvas(size, size);
-    c.getContext('2d').drawImage(blockCubeCanvas(id, size), 0, size * 0.17, size, size * 0.75);
-    return c;
-  }
+  // Полублок: верхняя грань как у блока, боковины вдвое ниже (текстура не сжата)
+  if (SLAB_BLOCKS.has(id)) return blockCubeCanvas(id, size, 0.5);
   if (FENCE_BLOCKS.has(id)) return fenceIconCanvas(id, size);
   return blockCubeCanvas(id, size);
 }
 
-/** Забор: столбик с двумя перекладинами — узнаваемый силуэт вместо целого куба */
+/**
+ * Забор: столбик с двумя перекладинами — узнаваемый силуэт вместо целого куба.
+ * Столбик берёт среднюю часть своей текстуры (как в мире), перекладины — свою,
+ * поэтому иконка и модель в мире выглядят одинаково.
+ */
 function fenceIconCanvas(id, size = 48) {
   const def = BLOCKS[id];
   const c = makeCanvas(size, size);
   if (!def || !def.tiles) return c;
   const ctx = c.getContext('2d');
   ctx.imageSmoothingEnabled = false;
-  const tile = tileCanvas(def.tiles[2]);
+  const post = tileCanvas(def.fenceTiles?.post ?? def.tiles[2]);
+  const rail = tileCanvas(def.fenceTiles?.rail ?? def.tiles[2]);
   const u = size / 16;
-  ctx.drawImage(tile, 0, 0, TILE, TILE, 5.5 * u, 1 * u, 5 * u, 14 * u);
-  ctx.fillStyle = 'rgba(0,0,0,0.28)';
-  ctx.fillRect(9.5 * u, 1 * u, 1 * u, 14 * u);
-  for (const [y, h] of [[4, 1.6], [9, 1.6]]) {
-    ctx.drawImage(tile, 0, 0, TILE, TILE, 1 * u, y * u, 14 * u, h * u);
-    ctx.fillStyle = 'rgba(0,0,0,0.22)';
-    ctx.fillRect(1 * u, (y + h - 0.4) * u, 14 * u, 0.4 * u);
+  // Столбик: та же четвёрка пикселей тайла, что и грани в мире
+  ctx.drawImage(post, 6, 0, 4, TILE, 6 * u, 1 * u, 4 * u, 14 * u);
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.fillRect(9 * u, 1 * u, 1 * u, 14 * u);
+  // Две перекладины поперёк столбика
+  for (const [y, h] of [[3.5, 2], [9.5, 2]]) {
+    ctx.drawImage(rail, 0, 5, TILE, 5, 1 * u, y * u, 14 * u, h * u);
+    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+    ctx.fillRect(1 * u, (y + h - 0.5) * u, 14 * u, 0.5 * u);
   }
   return c;
 }

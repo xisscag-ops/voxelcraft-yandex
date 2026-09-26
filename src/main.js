@@ -11,7 +11,7 @@ import { Furnace, serializeFurnaces, deserializeFurnaces } from './furnace.js';
 import { createChest, serializeChests, deserializeChests } from './chest.js';
 import { InventoryUI, setFullToast } from './inventory-ui.js';
 import { itemIconCanvas, spritePixels } from './icons.js';
-import { buildAtlas, tileColor, tileTexture, CRACK_TILES } from './textures.js';
+import { buildAtlas, tileColor, tileTexture, CRACK_TILES, ATLAS_COLS, ATLAS_ROWS } from './textures.js';
 import { World } from './world.js';
 import { hash3, makeRng } from './noise.js';
 import { migrateSave } from './save-migration.js';
@@ -24,6 +24,7 @@ import { Weather } from './weather.js';
 import { ItemDrops, XpOrbs } from './items.js';
 import { Arrows, buildArrowModel, arrowMaterials } from './projectiles.js';
 import { Eating } from './eating.js';
+import { PISTOL_PARTS, PISTOL_FLASH_PARTS, PISTOL_FLASH_Z, PISTOL_STATS } from './gun.js';
 import { Sky } from './sky.js';
 import { Sfx } from './audio.js';
 import { Music } from './music.js';
@@ -32,6 +33,8 @@ import { UI } from './ui.js';
 import { I18n } from './i18n.js';
 import { Ysdk } from './ysdk.js';
 import { updateRunShake } from './camera-effects.js';
+import { heldLightVertex, heldLightFragment, waterShaderHook } from './shaders.js';
+import { CAVE_FOG_COLOR, CAVE_FOG_FAR, CAVE_FOG_NEAR, caveFogTarget, stepCaveFog } from './fog.js';
 import { PitDepthFX } from './postfx.js';
 import { createWorldRecord, emptyWorldProfile, normalizeWorldProfile, serializeWorldProfile } from './world-store.js';
 
@@ -114,10 +117,7 @@ const heldTorchStemMat = new THREE.MeshBasicMaterial({ color: 0x744925, transpar
 const heldTorchCollarMat = new THREE.MeshBasicMaterial({ color: 0xb8763a, transparent: true, depthTest: false, depthWrite: false });
 const heldTorchOuterMat = new THREE.MeshBasicMaterial({ color: 0xffc22e, transparent: true, depthTest: false, depthWrite: false });
 const heldTorchInnerMat = new THREE.MeshBasicMaterial({ color: 0xfff3a0, transparent: true, depthTest: false, depthWrite: false });
-const heldTorchGlowMat = torchGlowMat.clone();
-heldTorchGlowMat.depthTest = false;
-heldTorchGlowMat.depthWrite = false;
-for (const material of [heldTorchStemMat, heldTorchCollarMat, heldTorchOuterMat, heldTorchInnerMat, heldTorchGlowMat]) {
+for (const material of [heldTorchStemMat, heldTorchCollarMat, heldTorchOuterMat, heldTorchInnerMat]) {
   material.userData.emissive = true;
 }
 // Материалы факела для мира и для выпавшего предмета (глубина как у обычных блоков)
@@ -135,8 +135,10 @@ const WALL_TORCH_YAW = { px: 0, nx: Math.PI, pz: -Math.PI / 2, nz: Math.PI / 2 }
 /**
  * Собирает модель факела: прямоугольная рукоять, обмотка, пламя и ореол.
  * Начало координат — основание рукояти, высота модели ~0.84 блока.
+ * `withGlow` выключается для факела в руке: там ореол-спрайт висел прямо перед
+ * камерой и выглядел как чужеродный круг, а свет и так даёт лампу шейдер.
  */
-function buildTorchModel(mats, glowMat, withLight = true) {
+function buildTorchModel(mats, glowMat, withLight = true, withGlow = true) {
   const group = new THREE.Group();
   const stem = new THREE.Mesh(torchStemGeo, mats.stem);
   stem.position.y = 0.22;
@@ -149,10 +151,14 @@ function buildTorchModel(mats, glowMat, withLight = true) {
   const inner = new THREE.Mesh(torchInnerFlameGeo, mats.inner);
   inner.position.y = 0.1;
   flame.add(outer, inner);
-  const glow = new THREE.Sprite(glowMat);
-  glow.position.y = 0.55;
-  glow.scale.set(0.85, 0.85, 1);
-  group.add(stem, collar, flame, glow);
+  let glow = null;
+  if (withGlow && glowMat) {
+    glow = new THREE.Sprite(glowMat);
+    glow.position.y = 0.55;
+    glow.scale.set(0.85, 0.85, 1);
+    group.add(glow);
+  }
+  group.add(stem, collar, flame);
   let light = null;
   if (withLight) {
     light = new THREE.PointLight(0xffb740, 1.15, 8.5, 2);
@@ -181,37 +187,8 @@ const heldLightUniforms = {
 function addHeldLight(material) {
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, heldLightUniforms);
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', `#include <common>
-attribute float torchLight;
-varying float vTorchLight;
-varying vec3 vHeldWorldPos;`)
-      .replace('#include <begin_vertex>', `#include <begin_vertex>
-vTorchLight = torchLight;
-vHeldWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`);
-    shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', `#include <common>
-varying float vTorchLight;
-varying vec3 vHeldWorldPos;
-uniform vec3 uHeldLightPos;
-uniform float uHeldLight;
-uniform float uHeldLightRadius;`)
-      // Итоговая освещённость = max(небо × оттенок времени суток, факелы).
-      // Факелы (поставленные — из вершин, в руке — по расстоянию) не зависят
-      // от времени суток: ночью светят так же, днём не пересвечивают.
-      .replace('#include <color_fragment>', `#if defined( USE_COLOR ) || defined( USE_COLOR_ALPHA )
-  float torchL = vTorchLight;
-  if (uHeldLight > 0.0) {
-    float heldD = distance(vHeldWorldPos, uHeldLightPos);
-    float heldF = clamp(1.0 - heldD / uHeldLightRadius, 0.0, 1.0);
-    vec3 heldN = normalize(cross(dFdx(vHeldWorldPos), dFdy(vHeldWorldPos)));
-    float heldShade = heldN.y > 0.5 ? 1.0 : (heldN.y < -0.5 ? 0.5 : (abs(heldN.x) > 0.5 ? 0.72 : 0.88));
-    torchL = max(torchL, heldF * heldF * heldShade * uHeldLight);
-  }
-  vec3 skyL = diffuse * vColor.rgb;
-  vec3 lightL = max(skyL, torchL * vec3(1.0, 0.93, 0.82));
-  diffuseColor.rgb = diffuseColor.rgb / max(diffuse, vec3(0.001)) * lightL;
-#endif`);
+    shader.vertexShader = heldLightVertex(shader.vertexShader);
+    shader.fragmentShader = heldLightFragment(shader.fragmentShader);
   };
 }
 addHeldLight(terrainMat);
@@ -219,30 +196,14 @@ const waterMat = new THREE.MeshBasicMaterial({
   map: atlasTex, vertexColors: true, transparent: true, opacity: 0.72,
   depthWrite: false, side: THREE.DoubleSide,
 });
-addHeldLight(waterMat);
-// Анимация воды: в шейдере текстура тайла воды медленно колышется (UV гуляет
-// внутри своего тайла атласа, не задевая соседние) и слегка переливается.
-const waterUniforms = { uTime: { value: 0 } };
-waterMat.onBeforeCompile = (shader) => {
-  Object.assign(shader.uniforms, waterUniforms);
-  shader.fragmentShader = shader.fragmentShader
-    .replace('#include <common>', `#include <common>
-uniform float uTime;
-varying vec3 vHeldWorldPos;`)
-    .replace('#include <map_fragment>', `
-  {
-    vec2 t8 = vMapUv * 8.0;
-    vec2 tileBase = floor(t8) / 8.0;
-    vec2 local = fract(t8);
-    float wob = sin(uTime * 1.3 + vHeldWorldPos.x * 1.7 + vHeldWorldPos.z * 1.1)
-              + cos(uTime * 0.9 + vHeldWorldPos.z * 1.9 - vHeldWorldPos.x * 0.7);
-    vec2 wuv = tileBase + fract(local + wob * 0.045) / 8.0;
-    vec4 sampledDiffuseColor = texture2D(map, wuv);
-    float shimmer = 0.94 + 0.06 * sin(uTime * 2.1 + vHeldWorldPos.x * 2.3 + vHeldWorldPos.z * 1.7);
-    diffuseColor *= sampledDiffuseColor * shimmer;
-  }
-`);
+// Анимация воды. Важно: здесь нужен ОДИН onBeforeCompile, который делает и
+// анимацию, и свет факелов (см. src/shaders.js): раньше два независимых хука
+// затирали друг друга, из-за чего вода не рисовалась совсем.
+const waterUniforms = {
+  uTime: { value: 0 },
+  uAtlasCells: { value: new THREE.Vector2(ATLAS_COLS, ATLAS_ROWS) },
 };
+waterMat.onBeforeCompile = waterShaderHook(waterUniforms, heldLightUniforms);
 
 const sky = new Sky(THREE, scene);
 sky.viewDistance = settings.viewDistance;
@@ -252,9 +213,13 @@ const weather = new Weather(THREE, scene);
 const items = new ItemDrops(scene, {
   tileMaterial: (idx) => dropTileMaterial(idx),
   iconMaterial: (key) => dropIconMaterial(key),
-  modelFor: (key) => (isBlockItem(key) && isTorch(blockIdOf(key))
-    ? buildDropTorchModel()
-    : null),
+  modelFor: (key) => {
+    if (!isBlockItem(key)) return null;
+    const id = blockIdOf(key);
+    if (isTorch(id)) return buildDropTorchModel();
+    if (isFence(id)) return buildDropFenceModel();
+    return null;
+  },
 });
 const xpOrbs = new XpOrbs(scene);
 let totalXp = 0;
@@ -263,6 +228,16 @@ let bowCharge = 0;               // 0..1 — натяжение тетивы
 let bowCharging = false;
 let bowKick = 0;                 // отдача лука после выстрела
 const BOW_CHARGE_TIME = 0.85;    // полное натяжение за 0.85 с
+
+// Пистолет: мгновенный выстрел, патроны, вспышка и отдача
+const GUN_COOLDOWN = PISTOL_STATS.cooldown;   // пауза между выстрелами
+const GUN_DAMAGE = PISTOL_STATS.damage;       // урон пули
+const GUN_SPEED = PISTOL_STATS.speed;         // м/с — пуля летит почти прямо
+const GUN_FLASH_TIME = 0.07;                  // сколько горит вспышка у дула
+let gunCooldown = 0;
+let gunKick = 0;                 // 0..1 — визуальная отдача
+let gunFlashT = 0;               // остаток времени вспышки
+let gunMuzzleFlash = null;       // меш вспышки в модели, что сейчас в руке
 
 // Еда: держим ЛКМ с едой в руке — персонаж жуёт (см. src/eating.js)
 const eat = new Eating();
@@ -278,8 +253,9 @@ let caveSpawnT = 10;             // таймер пещерного спавна
 // Подземный туман: кэш высоты поверхности под игроком и цвет глубинной дымки
 let surfCacheKey = '';
 let surfCacheH = 0;
-let undergroundF = 0;
-const caveFogColor = new THREE.Color(0x04050a);
+let undergroundF = 0;      // сглаженная «подземность» — по ней строится пещерный туман
+let caveRoof = 0;          // 1 — над головой камень, 0 — открытая яма или колодец
+const caveFogColor = new THREE.Color(CAVE_FOG_COLOR);
 const bgColor = new THREE.Color();
 // Звуки мобов с затуханием по расстоянию
 mobManager.onSound = (kind, dist, type) => {
@@ -415,14 +391,73 @@ function dropIconMaterial(key) {
   return DROP_ICON_MATS.get(key);
 }
 
+/**
+ * Geometry полублока с правильными UV: боковые грани показывают свою половину
+ * тайла (верхнюю для верхней плиты), а верх и низ — целую текстуру. Без этого
+ * текстура на боковине сжималась вдвое.
+ */
+function slabBoxGeometry(w, h, d, top) {
+  const geo = new THREE.BoxGeometry(w, h, d);
+  const uv = geo.attributes.uv;
+  // Порядок граней у BoxGeometry: px, nx, py, ny, pz, nz — по 4 вершины
+  for (let f = 0; f < 6; f++) {
+    if (f === 2 || f === 3) continue;         // верхняя и нижняя — целый тайл
+    for (let i = 0; i < 4; i++) {
+      const idx = f * 4 + i;
+      uv.setY(idx, top ? 0.5 + uv.getY(idx) * 0.5 : uv.getY(idx) * 0.5);
+    }
+  }
+  uv.needsUpdate = true;
+  return geo;
+}
+
 const heldGeo = {
   cube: new THREE.BoxGeometry(1, 1, 1),
   quad: new THREE.PlaneGeometry(1, 1),
   // Плита и забор в руке — не целый куб, а своя форма
-  slab: new THREE.BoxGeometry(1, 0.5, 1),
+  slabBottom: slabBoxGeometry(1, 0.5, 1, false),
+  slabTop: slabBoxGeometry(1, 0.5, 1, true),
   fencePost: new THREE.BoxGeometry(0.25, 1.5, 0.25),
-  fenceRail: new THREE.BoxGeometry(1.1, 0.22, 0.22),
+  fenceRail: new THREE.BoxGeometry(1, 0.2, 0.2),
 };
+
+/**
+ * Объёмная модель забора в руке: столбик и две перекладины — та же форма,
+ * что и в мире, только с отдельными текстурами столбика и перекладины.
+ */
+function heldFenceMesh(postMat, railMat) {
+  const g = new THREE.Group();
+  const post = new THREE.Mesh(heldGeo.fencePost, postMat);
+  post.position.y = 0.75;
+  const lower = new THREE.Mesh(heldGeo.fenceRail, railMat);
+  lower.position.y = 0.52; lower.scale.x = 0.86;
+  const upper = new THREE.Mesh(heldGeo.fenceRail, railMat);
+  upper.position.y = 1.16; upper.scale.x = 0.86;
+  g.add(post, lower, upper);
+  g.scale.setScalar(0.2);
+  g.rotation.set(0.2, -0.7, 0.14);
+  g.position.set(0.02, -0.06, -0.32);
+  return g;
+}
+
+/**
+ * Забор, выпавший на землю: маленький столбик с двумя перекладинами —
+ * та же объёмная форма, что и в мире (иконкой-плоскостью он больше не падает).
+ */
+function buildDropFenceModel() {
+  const post = dropTileMaterial(BLOCKS[BLOCK.FENCE].fenceTiles?.post ?? BLOCKS[BLOCK.FENCE].tiles[2]);
+  const rail = dropTileMaterial(BLOCKS[BLOCK.FENCE].fenceTiles?.rail ?? BLOCKS[BLOCK.FENCE].tiles[2]);
+  const g = new THREE.Group();
+  const postMesh = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.32, 0.075), post);
+  postMesh.position.y = 0.08;
+  g.add(postMesh);
+  for (const y of [-0.02, 0.1]) {
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.055, 0.055), rail);
+    bar.position.y = y;
+    g.add(bar);
+  }
+  return g;
+}
 
 /**
  * Геометрия блока в руке: обычные блоки — куб, плиты — полкуба (нижняя половина
@@ -430,23 +465,14 @@ const heldGeo = {
  */
 function heldBlockMesh(def, mats) {
   if (def.shape === 'slab') {
-    const mesh = new THREE.Mesh(heldGeo.slab, mats);
+    const top = def.half === 'top';
+    const mesh = new THREE.Mesh(top ? heldGeo.slabTop : heldGeo.slabBottom, mats);
     mesh.scale.setScalar(0.24);
     mesh.rotation.set(0.25, -0.75, 0.12);
-    mesh.position.set(0.02, def.half === 'top' ? 0.04 : -0.08, -0.32);
+    mesh.position.set(0.02, top ? 0.04 : -0.08, -0.32);
     return mesh;
   }
-  if (def.fence) {
-    const g = new THREE.Group();
-    const post = new THREE.Mesh(heldGeo.fencePost, mats);
-    const rail = new THREE.Mesh(heldGeo.fenceRail, mats);
-    rail.position.y = 0.28;
-    g.add(post, rail);
-    g.scale.setScalar(0.2);
-    g.rotation.set(0.2, -0.7, 0.14);
-    g.position.set(0.02, -0.06, -0.32);
-    return g;
-  }
+  if (def.fence) return heldFenceMesh(mats[1], mats[1]);
   const mesh = new THREE.Mesh(heldGeo.cube, mats);
   mesh.scale.setScalar(0.24);
   mesh.rotation.set(0.25, -0.75, 0.12);
@@ -519,6 +545,33 @@ function buildToolModel(kind, tier) {
     // Палка — просто рукоять чуть длиннее
     g.add(boxPart(0.068, 0.78, 0.068, c.handle, 0, 0.02, 0));
   }
+  return g;
+}
+
+/**
+ * Объёмный пистолет: затвор со стволом, рамка, рукоять и вспышка у дула.
+ * Форма берётся из PISTOL_PARTS (src/gun.js) — её же проверяют тесты.
+ * Вспышка лежит внутри модели и включается на пару кадров при выстреле.
+ */
+function buildPistolModel() {
+  const g = new THREE.Group();
+  for (const p of PISTOL_PARTS) {
+    const part = boxPart(p.w, p.h, p.d, p.color, p.x || 0, p.y || 0, p.z || 0);
+    part.name = p.name;
+    if (p.rotX) part.rotation.x = p.rotX;
+    g.add(part);
+  }
+  const flash = new THREE.Group();
+  flash.name = 'muzzleFlash';
+  flash.position.set(0, 0.02, PISTOL_FLASH_Z);
+  flash.visible = false;
+  for (const p of PISTOL_FLASH_PARTS) {
+    const part = boxPart(p.w, p.h, p.d, p.color, p.x || 0, p.y || 0, p.z || 0);
+    part.name = p.name;
+    part.material.userData.emissive = true;      // вспышка не темнеет от освещения
+    flash.add(part);
+  }
+  g.add(flash);
   return g;
 }
 
@@ -600,7 +653,8 @@ function buildAppleModel() {
 }
 
 function buildHeldTorchModel() {
-  const { group } = buildTorchModel(heldTorchMats, heldTorchGlowMat, false);
+  // Без ореола: он рисовался поверх всего и выглядел как «круг-аномалия» в руке
+  const { group } = buildTorchModel(heldTorchMats, null, false, false);
   group.scale.setScalar(0.62);
   group.rotation.set(-0.2, -0.55, 0.72);
   group.position.set(0.05, -0.16, -0.32);
@@ -610,7 +664,8 @@ function buildHeldTorchModel() {
 
 /** Маленький факел для выпавшего предмета: те же материалы, но без лампы */
 function buildDropTorchModel() {
-  const { group } = buildTorchModel(worldTorchMats, torchGlowMat, false);
+  // Ореол выпавшему факелу не нужен: он и так лежит на виду
+  const { group } = buildTorchModel(worldTorchMats, null, false, false);
   group.scale.setScalar(0.42);
   return group;
 }
@@ -623,14 +678,27 @@ function buildHeldMesh(key) {
     mesh = buildHeldTorchModel();
   } else if (def.kind === 'block') {
     const b = BLOCKS[def.block];
-    const [top, bottom, side, front = side] = b.tiles;
-    const mats = [
-      tileMaterial(side), tileMaterial(side),
-      tileMaterial(top), tileMaterial(bottom),
-      tileMaterial(front), tileMaterial(side),
-    ];
-    mesh = heldBlockMesh(b, mats);
-  } else if ((def.kind === 'tool' || def.icon === 'stick' || def.icon === 'arrow') && extrudedGeometry(def.icon)) {
+    if (b.fence) {
+      const postMat = tileMaterial(b.fenceTiles?.post ?? b.tiles[2]);
+      const railMat = tileMaterial(b.fenceTiles?.rail ?? b.tiles[2]);
+      mesh = heldFenceMesh(postMat, railMat);
+    } else {
+      const [top, bottom, side, front = side] = b.tiles;
+      const mats = [
+        tileMaterial(side), tileMaterial(side),
+        tileMaterial(top), tileMaterial(bottom),
+        tileMaterial(front), tileMaterial(side),
+      ];
+      mesh = heldBlockMesh(b, mats);
+    }
+  } else if (def.gun) {
+    // Ствол смотрит вперёд-влево, модель крупная — видно затвор и рукоять
+    mesh = buildPistolModel();
+    mesh.scale.setScalar(0.8);
+    mesh.rotation.set(0.06, 0.5, 0.17);
+    mesh.position.set(0.09, -0.06, -0.32);
+  } else if ((def.kind === 'tool' || def.icon === 'stick' || def.icon === 'arrow'
+    || def.icon === 'bullet') && extrudedGeometry(def.icon)) {
     // Инструменты, палка и стрела — выдавленная иконка: в руке та же картинка, что в инвентаре
     mesh = buildExtrudedItem(def.icon);
   } else if (def.kind === 'tool') {
@@ -659,10 +727,14 @@ function updateHeldItem() {
   if (key === heldKey) return;
   heldKey = key;
   for (const child of [...heldGroup.children]) heldGroup.remove(child);
+  gunMuzzleFlash = null;
   if (!key) return;
   // блоки в креативе бесконечны — в руке всё равно показываем кубик
   const mesh = buildHeldMesh(key);
-  if (mesh) heldGroup.add(mesh);
+  if (mesh) {
+    heldGroup.add(mesh);
+    gunMuzzleFlash = mesh.getObjectByName?.('muzzleFlash') || null;
+  }
 }
 
 // ---------------------------------------------------------------- Лук в руке (вид от первого лица) — детальный и крупный
@@ -843,6 +915,23 @@ function updateHand(dt, light) {
     heldGroup.scale.setScalar(1 + 0.05 * chew);
   } else {
     heldGroup.scale.setScalar(1);
+  }
+  // Пистолет: отдача откидывает руку назад и вверх, вспышка живёт пару кадров
+  if (gunKick > 0) {
+    gunKick = Math.max(0, gunKick - dt / 0.18);
+    const k = gunKick * gunKick;
+    handPivot.position.z += 0.11 * k;
+    handPivot.position.y += 0.045 * k;
+    handPivot.rotation.x -= 0.3 * k;
+  }
+  if (gunFlashT > 0) gunFlashT = Math.max(0, gunFlashT - dt);
+  if (gunMuzzleFlash) {
+    gunMuzzleFlash.visible = gunFlashT > 0;
+    if (gunMuzzleFlash.visible) {
+      const k = gunFlashT / GUN_FLASH_TIME;
+      gunMuzzleFlash.scale.setScalar(0.8 + 0.45 * k);
+      gunMuzzleFlash.rotation.z = Math.random() * Math.PI;
+    }
   }
   hand.material.color.setHex(0xd9a27a).multiplyScalar(0.35 + 0.65 * light);
   poseBow(dt, light);
@@ -1066,7 +1155,7 @@ function disposeChunkMeshes(c) {
 // Настенный факел получается сам при установке факела на стену — в каталоге он не нужен
 const CATALOG_KEYS = [
   ...BLOCKS.filter((b) => b.id !== BLOCK.AIR && b.id !== BLOCK.WATER && !b.variant).map((b) => blockItem(b.id)),
-  ITEM.STICK, ITEM.APPLE, ITEM.BOW, ITEM.ARROW,
+  ITEM.STICK, ITEM.APPLE, ITEM.BOW, ITEM.ARROW, ITEM.PISTOL, ITEM.BULLET,
   ITEM.WOOD_PICKAXE, ITEM.WOOD_AXE, ITEM.WOOD_SWORD, ITEM.STONE_PICKAXE, ITEM.STONE_AXE, ITEM.STONE_SWORD,
   ITEM.IRON_PICKAXE, ITEM.IRON_AXE, ITEM.IRON_SWORD,
   ITEM.GOLD_PICKAXE, ITEM.GOLD_AXE, ITEM.GOLD_SWORD,
@@ -1095,6 +1184,7 @@ function refreshHotbar() {
   ui.setHotbarSelection(hotbarIndex);
   ui.setApples(inventory.count(ITEM.APPLE), mode);
   ui.setArrows(arrowAmmo(), mode);
+  ui.setBullets(bulletAmmo(), mode);
   updateHeldItem();
 }
 
@@ -1204,6 +1294,61 @@ function fireBow(charge) {
     },
   );
   sfx.bowShoot(power);
+}
+
+/** Пистолет выбран в хотбаре */
+function isPistolSelected() {
+  return heldItem() === ITEM.PISTOL;
+}
+
+/** Сколько патронов доступно (в креативе — бесконечно) */
+function bulletAmmo() {
+  return isCreative() ? Infinity : inventory.count(ITEM.BULLET);
+}
+
+/**
+ * Выстрел из пистолета: пуля летит почти прямо и гасит удар в первом блоке,
+ * урон фиксированный, патрон расходуется. Пустую обойму слышно щелчком.
+ */
+function firePistol() {
+  if (!isPistolSelected() || gunCooldown > 0) return;
+  if (bulletAmmo() <= 0) {
+    gunCooldown = 0.3;
+    sfx.pistolEmpty();
+    ui.toast(i18n.t('no_bullets'), 1800);
+    return;
+  }
+  gunCooldown = GUN_COOLDOWN;
+  if (!isCreative()) {
+    inventory.remove(ITEM.BULLET, 1);
+    refreshHotbar();
+  }
+  ui.setBullets(bulletAmmo(), mode);
+  const eye = player.eyePos();
+  const d = player.lookDir();
+  // Небольшой разброс: стрельба не должна быть идеальным лазером
+  const spread = PISTOL_STATS.spread;
+  const dx = d.x + (Math.random() - 0.5) * spread;
+  const dy = d.y + (Math.random() - 0.5) * spread;
+  const dz = d.z + (Math.random() - 0.5) * spread;
+  projectiles.shoot(
+    eye.x + d.x * 0.5, eye.y + d.y * 0.5 - 0.06, eye.z + d.z * 0.5,
+    dx, dy, dz, GUN_SPEED, GUN_DAMAGE,
+    {
+      onMob: onArrowHitMob,
+      onBlock: (b) => {
+        sfx.bulletHitBlock();
+        const p = b.group.position;
+        particles.burst(p.x, p.y, p.z, [208, 202, 188], 6);
+      },
+    },
+    { kind: 'bullet', gravity: PISTOL_STATS.gravity, stick: false },
+  );
+  gunKick = 1;
+  gunFlashT = GUN_FLASH_TIME;
+  // Дымок и искры у дула
+  particles.burst(eye.x + d.x * 0.8, eye.y + d.y * 0.8 - 0.05, eye.z + d.z * 0.8, [232, 228, 208], 5);
+  sfx.pistolShot();
 }
 
 function hitMob(m) {
@@ -1993,9 +2138,10 @@ function showHints() {
   setTimeout(() => state === 'game'
     && ui.toast(i18n.t(isCreative() ? 'hint_fly' : 'hint_table'), 3500), 16000);
   at(19600, 'hint_bow', 4200);
-  at(23200, 'sneak_hint', 4000);
-  at(27600, 'hint_eat', 4200);
-  at(32100, 'esc_fullscreen', 4500);
+  at(23800, 'hint_pistol', 4200);
+  at(28000, 'sneak_hint', 4000);
+  at(32400, 'hint_eat', 4200);
+  at(36900, 'esc_fullscreen', 4500);
 }
 
 // ---------------------------------------------------------------- Награда за рекламу
@@ -2499,6 +2645,8 @@ input.handlers.onActionBreak = () => {
 };
 input.handlers.onActionPlace = () => {
   if (state !== 'game') return;
+  // С пистолетом в руке кнопка «поставить блок» стреляет
+  if (isPistolSelected()) { firePistol(); return; }
   doPlace(pickTarget());
 };
 
@@ -2752,8 +2900,14 @@ function frame() {
       bowCharge = 0;
     }
 
+    // Пистолет: ПКМ (или кнопка на тач-экране) — выстрел; удержание даёт
+    // очередь с паузой перезарядки, как у настоящего пистолета
+    const gunSel = isPistolSelected() && !interactiveTarget;
+    gunCooldown = Math.max(0, gunCooldown - dt);
+    if (gunSel && input.placeHeld) firePistol();
+
     placeCooldown -= dt;
-    if (!bowSel && input.placeHeld && placeCooldown <= 0 && hit) {
+    if (!bowSel && !gunSel && input.placeHeld && placeCooldown <= 0 && hit) {
       doPlace(hit);
       placeCooldown = CONFIG.PLACE_COOLDOWN;
     }
@@ -2774,6 +2928,8 @@ function frame() {
       camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 6);
       camera.updateProjectionMatrix();
     }
+    // Отдача: короткий подброс ствола вверх, гаснет за пару десятых секунды
+    if (gunKick > 0) camera.rotation.x += gunKick * gunKick * 0.05;
     // Эффект «заглянул в глубокий карьер/обрыв»: меряем, насколько глубоко под
     // глазами дно — при взгляде вниз низ экрана чуть темнеет и размывается.
     {
@@ -2819,14 +2975,25 @@ function frame() {
     // а не в серо-голубом фоне. Чем глубже игрок, тем ближе и чернее туман.
     {
       const bxp = Math.floor(player.pos.x), bzp = Math.floor(player.pos.z);
-      const sk = `${bxp},${bzp}`;
-      if (sk !== surfCacheKey) { surfCacheKey = sk; surfCacheH = world.heightAt(bxp, bzp); }
-      undergroundF = Math.max(0, Math.min(1, (surfCacheH - 5 - player.pos.y) / 9));
+      const sk = `${bxp},${bzp},${Math.floor(player.pos.y)}`;
+      if (sk !== surfCacheKey) {
+        surfCacheKey = sk;
+        surfCacheH = world.heightAt(bxp, bzp);
+        // Видно ли над головой небо: в открытом колодце, яме или на дне шахты
+        // тьма не такая глухая, как в закрытой пещере — там светит небо.
+        const eyeY = Math.floor(player.pos.y + 1.7);
+        let open = true;
+        for (let y = eyeY; y <= Math.min(world.worldHeight - 1, surfCacheH); y++) {
+          if (world.isSolidAt(bxp, y, bzp)) { open = false; break; }
+        }
+        caveRoof = open ? 0 : 1;
+      }
+      undergroundF = stepCaveFog(
+        undergroundF, caveFogTarget(surfCacheH, player.pos.y, caveRoof === 0), dt);
       if (undergroundF > 0.01) {
-        caveFogColor.setHex(0x04050a);
-        scene.fog.color.lerp(caveFogColor, undergroundF * 0.94);
-        scene.fog.near += (5 - scene.fog.near) * undergroundF;
-        scene.fog.far += (30 - scene.fog.far) * undergroundF;
+        scene.fog.color.lerp(caveFogColor, undergroundF * 0.9);
+        scene.fog.near += (CAVE_FOG_NEAR - scene.fog.near) * undergroundF;
+        scene.fog.far += (CAVE_FOG_FAR - scene.fog.far) * undergroundF;
         bgColor.copy(scene.fog.color);
         scene.background = bgColor;
       }
@@ -2857,13 +3024,17 @@ function frame() {
     }
     ui.setUnderwater(player.headInWater);
     if (player.headInWater) {
-      scene.fog.near = 2; scene.fog.far = 18;
-      scene.fog.color.setHex(0x1a4a8a);
+      // Под водой видно дальше и светлее, чем раньше: тёмно-синяя мгла до
+      // горизонта больше не превращает экран в сплошное пятно.
+      scene.fog.near = 3; scene.fog.far = 26;
+      scene.fog.color.setHex(0x245d9e);
       scene.background = scene.fog.color;
     }
 
     particles.update(dt);
-    ui.setDebug(debugVisible, fpsEma, player.pos, L);
+    ui.setDebug(debugVisible, fpsEma, player.pos, L, {
+      cave: undergroundF, fogNear: scene.fog.near, fogFar: scene.fog.far,
+    });
     checkOrientation();
   } else if (world && player) {
     // В меню/паузе — медленный облёт вокруг игрока, живой фон

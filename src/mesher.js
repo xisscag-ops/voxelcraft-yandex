@@ -95,6 +95,17 @@ const LIGHT_MARGIN = 16;
 const OPAQUE_TABLE = new Uint8Array(256);
 for (let id = 0; id < 256; id++) OPAQUE_TABLE[id] = isOpaque(id) ? 1 : 0;
 
+// Таблица листвы — по ней считается мягкая тень от кроны деревьев
+const FOLIAGE_TABLE = new Uint8Array(256);
+for (let id = 0; id < 256; id++) FOLIAGE_TABLE[id] = isFoliage(id) ? 1 : 0;
+
+// Тень от деревьев: каждый слой листвы над клеткой притемняет небесный свет,
+// ниже кроны тень постепенно рассеивается. Листва не перекрывает свет целиком
+// (иначе под деревом было бы черно), а даёт небольшую мягкую тень.
+const CANOPY_LEAF = 0.13;      // вклад одного слоя листвы
+const CANOPY_MAX = 0.45;       // сильнее этого крона не затеняет
+const CANOPY_DECAY = 0.85;     // рассеивание тени на блок вниз
+
 /**
  * Поле небесного света для чанка с запасом LIGHT_MARGIN блоков по сторонам.
  * 1. Колонки, открытые небу, получают полный уровень; под первым непрозрачным
@@ -110,6 +121,7 @@ export function buildSkylight(world, ox, oz, S, H, margin = LIGHT_MARGIN) {
   const total = W * W * H;
   const grid = new Uint8Array(total);    // уровень света 0..SKY_LIGHT_LEVELS
   const opaque = new Uint8Array(total);  // 1 — блок не пропускает свет
+  const shade = new Uint8Array(total).fill(255);  // тень от листвы: 255 — света столько же
   const index = (ix, iy, iz) => (ix * W + iz) * H + iy;
   const x0w = ox - M, z0w = oz - M;
   const MAX = SKY_LIGHT_LEVELS;
@@ -128,12 +140,17 @@ export function buildSkylight(world, ox, oz, S, H, margin = LIGHT_MARGIN) {
         lx = wx - cx * CS; lz = wz - cz * CS;
       }
       let open = true;
+      let canopy = 0;                        // накопленная тень от листвы сверху
       const base = (ix * W + iz) * H;
       for (let y = H - 1; y >= 0; y--) {
         const id = blocks ? blocks[(y * CS + lz) * CS + lx] : world.getBlock(wx, y, wz);
         const solid = OPAQUE_TABLE[id];
+        if (FOLIAGE_TABLE[id]) canopy = Math.min(CANOPY_MAX, canopy + CANOPY_LEAF);
+        else if (solid) canopy = 0;
+        else canopy *= CANOPY_DECAY;         // ниже кроны тень рассеивается
         if (solid) { opaque[base + y] = 1; open = false; }
         else if (open) grid[base + y] = MAX;
+        shade[base + y] = Math.round((1 - canopy) * 255);
       }
     }
   }
@@ -180,22 +197,33 @@ export function buildSkylight(world, ox, oz, S, H, margin = LIGHT_MARGIN) {
 
   /** Уровень света в клетке мира (за пределами поля: сверху небо, снизу темно) */
   const level = (wx, wy, wz) => {
-    if (wy >= H) return MAX;
-    if (wy < 0) return 0;
-    const ix = wx - x0w, iz = wz - z0w;
-    if (ix < 0 || iz < 0 || ix >= W || iz >= W) return 0;
-    return grid[index(ix, wy, iz)];
+    const x = Math.floor(wx), y = Math.floor(wy), z = Math.floor(wz);
+    // Проверки через «!» — заодно отсекают NaN, который иначе вернул бы NaN-яркость
+    if (!(y >= 0)) return 0;
+    if (y >= H) return MAX;
+    const ix = x - x0w, iz = z - z0w;
+    if (!(ix >= 0) || !(iz >= 0) || ix >= W || iz >= W) return 0;
+    return grid[index(ix, y, iz)];
   };
   const opaqueAt = (wx, wy, wz) => {
-    if (wy >= H) return 0;
-    if (wy < 0) return 1;
-    const ix = wx - x0w, iz = wz - z0w;
-    if (ix < 0 || iz < 0 || ix >= W || iz >= W) return 1;
-    return opaque[index(ix, wy, iz)];
+    const x = Math.floor(wx), y = Math.floor(wy), z = Math.floor(wz);
+    if (!(y >= 0)) return 1;
+    if (y >= H) return 0;
+    const ix = x - x0w, iz = z - z0w;
+    if (!(ix >= 0) || !(iz >= 0) || ix >= W || iz >= W) return 1;
+    return opaque[index(ix, y, iz)];
   };
   /** Уровень в клетке, содержащей точку */
   const sample = (px, py, pz) => level(Math.floor(px), Math.floor(py), Math.floor(pz));
-  return { sample, level, opaqueAt, grid, W, H };
+  /** Тень от листвы в клетке: 1 — открыто небу, меньше — под кроной */
+  const shadeAt = (wx, wy, wz) => {
+    const x = Math.floor(wx), y = Math.floor(wy), z = Math.floor(wz);
+    if (!(y >= 0) || y >= H) return 1;
+    const ix = x - x0w, iz = z - z0w;
+    if (!(ix >= 0) || !(iz >= 0) || ix >= W || iz >= W) return 1;
+    return shade[index(ix, y, iz)] / 255;
+  };
+  return { sample, level, opaqueAt, shadeAt, grid, W, H };
 }
 
 /**
@@ -261,7 +289,7 @@ function createLighting(world, ox, oz, S, H) {
    * которые касаются вершины (как «плавное освещение» в классических песочницах).
    * Непрозрачные клетки не участвуют — свет не протекает сквозь стены.
    */
-  const smoothSky = (p, normal) => {
+  const faceCells = (p, normal) => {
     const axis = normal[0] ? 0 : normal[1] ? 1 : normal[2] ? 2 : -1;
     const ranges = [];
     for (let a = 0; a < 3; a++) {
@@ -276,6 +304,11 @@ function createLighting(world, ox, oz, S, H) {
         ranges.push([Math.floor(c)]);
       }
     }
+    return ranges;
+  };
+
+  const smoothSky = (p, normal) => {
+    const ranges = faceCells(p, normal);
     let sum = 0, n = 0, maxLevel = 0;
     for (const x of ranges[0]) {
       for (const y of ranges[1]) {
@@ -293,12 +326,31 @@ function createLighting(world, ox, oz, S, H) {
     return (sum / n) * 0.7 + maxLevel * 0.3;
   };
 
+  /** Сглаженная тень от листвы в вершине — те же клетки, что и у небесного света */
+  const smoothShade = (p, normal) => {
+    const ranges = faceCells(p, normal);
+    let sum = 0, n = 0;
+    for (const x of ranges[0]) {
+      for (const y of ranges[1]) {
+        for (const z of ranges[2]) {
+          if (skylight.opaqueAt(x, y, z)) continue;
+          sum += skylight.shadeAt(x, y, z); n++;
+        }
+      }
+    }
+    return n ? sum / n : 1;
+  };
+
   // cell — клетка, из которой брать свет целиком (декор); иначе — сглаживание по вершине.
   // Возвращает яркость неба; яркость факелов кладётся в light.torch.
   const light = (p, normal, cell = null) => {
+    const dir = normal || [0, 1, 0];
     const level = cell
       ? skylight.sample(cell[0], cell[1], cell[2])
-      : smoothSky(p, normal || [0, 1, 0]);
+      : smoothSky(p, dir);
+    const shadow = cell
+      ? skylight.shadeAt(cell[0], cell[1], cell[2])
+      : smoothShade(p, dir);
     let torchLight = 0;
     for (const torch of torches) {
       const d = Math.hypot(p[0] - torch.x, p[1] - torch.y, p[2] - torch.z);
@@ -306,7 +358,7 @@ function createLighting(world, ox, oz, S, H) {
       if (b > torchLight) torchLight = b;
     }
     light.torch = torchLight;       // второй канал: свет факелов в этой вершине
-    return lightBrightness(level);
+    return lightBrightness(level) * shadow;
   };
   light.torch = 0;
   return light;
@@ -489,8 +541,10 @@ function pushShapeFace(builder, world, quad, lightAt, wx, y, wz, def, cell) {
  * Шесть граней бокса внутри клетки.
  * @param {object} box { x0,y0,z0,x1,y1,z1 }
  * @param {object} skip какие грани не рисовать: { px,nx,py,ny,pz,nz }
+ * @param {number|number[]} tile тайл для всех граней или [верх, низ, бок]
  */
 function pushBox(builder, world, box, skip, lightAt, wx, y, wz, def, tile, cell) {
+  const tiles = Array.isArray(tile) ? tile : [tile, tile, tile];
   const cx = (box.x0 + box.x1) / 2, cy = (box.y0 + box.y1) / 2, cz = (box.z0 + box.z1) / 2;
   const hx = (box.x1 - box.x0) / 2, hy = (box.y1 - box.y0) / 2, hz = (box.z1 - box.z0) / 2;
   const faces = [
@@ -503,7 +557,8 @@ function pushBox(builder, world, box, skip, lightAt, wx, y, wz, def, tile, cell)
   ];
   for (const f of faces) {
     if (skip && skip[f.key]) continue;
-    pushShapeFace(builder, world, { ...f, tile }, lightAt, wx, y, wz, def, cell);
+    const faceTile = f.key === 'py' ? tiles[0] : f.key === 'ny' ? tiles[1] : tiles[2];
+    pushShapeFace(builder, world, { ...f, tile: faceTile }, lightAt, wx, y, wz, def, cell);
   }
 }
 
@@ -516,7 +571,9 @@ function addSlabFaces(builder, world, wx, y, wz, def, lightAt) {
   const top = def.half === 'top';
   const y0 = top ? 0.5 : 0;
   const y1 = y0 + 0.5;
-  const tile = def.tiles[2];
+  // Свои тайлы для каждой грани: боковины берут свою половину тайла,
+  // верх и низ — свои текстуры (у плиты из будущих материалов они разные)
+  const tiles = [def.tiles[0], def.tiles[1] ?? def.tiles[0], def.tiles[2]];
   const cell = [wx + 0.5, y + 0.5, wz + 0.5];
 
   const above = world.getBlock(wx, y + 1, wz);
@@ -535,7 +592,7 @@ function addSlabFaces(builder, world, wx, y, wz, def, lightAt) {
     if (isOpaque(nb)) skip[key] = true;
     else if (isSlab(nb) && (BLOCKS[nb].half || 'bottom') === (top ? 'top' : 'bottom')) skip[key] = true;
   }
-  pushBox(builder, world, { x0: 0, y0, z0: 0, x1: 1, y1, z1: 1 }, skip, lightAt, wx, y, wz, def, tile, cell);
+  pushBox(builder, world, { x0: 0, y0, z0: 0, x1: 1, y1, z1: 1 }, skip, lightAt, wx, y, wz, def, tiles, cell);
 }
 
 /** Сосед, к которому забор тянет перекладину: другой забор или полный блок */
@@ -548,13 +605,16 @@ function fenceArmTo(world, x, y, z) {
 }
 
 /**
- * Забор: столбик в центре клетки (выше обычного блока — не перепрыгнуть)
- * плюс перекладины к соседним заборам и полным блокам.
+ * Забор: объёмный столбик в центре клетки (выше обычного блока — не перепрыгнуть)
+ * и две перекладины с каждой стороны, где есть сосед-забор или полный блок.
+ * Столбик обшит текстурами со всех четырёх сторон, сверху и снизу, поэтому
+ * в заборе не бывает «дыр» и односторонних граней.
  */
 function addFenceFaces(builder, world, wx, y, wz, def, lightAt) {
-  const tile = def.tiles[2];
+  const postTile = def.fenceTiles?.post ?? def.tiles[2];
+  const railTile = def.fenceTiles?.rail ?? def.tiles[2];
   const cell = [wx + 0.5, y + 0.5, wz + 0.5];
-  const P = 0.125;                 // половина ширины столбика
+  const P = 0.125;                 // половина ширины столбика (0.25 блока)
   const TOP = 1.5;                 // высота столбика
   const arms = {
     px: fenceArmTo(world, wx + 1, y, wz),
@@ -563,29 +623,37 @@ function addFenceFaces(builder, world, wx, y, wz, def, lightAt) {
     nz: fenceArmTo(world, wx, y, wz - 1),
   };
 
-  // Столбик: боковые грани закрыты перекладинами с соответствующей стороны
+  // Столбик: все шесть граней с текстурой
   pushBox(builder, world, {
     x0: 0.5 - P, y0: 0, z0: 0.5 - P, x1: 0.5 + P, y1: TOP, z1: 0.5 + P,
-  }, { px: arms.px, nx: arms.nx, pz: arms.pz, nz: arms.nz }, lightAt, wx, y, wz, def, tile, cell);
+  }, null, lightAt, wx, y, wz, def, postTile, cell);
 
-  // Перекладина: от столбика до края клетки. Если сосед — тоже забор,
-  // торец не рисуем (его закроет перекладина соседа), к полному блоку — рисуем.
-  const CY = 0.78, T = 0.12;
+  // Две перекладины (нижняя и верхняя) — от столбика до края клетки.
+  // К соседнему забору тянем вплотную (торец не нужен, его закрывает сосед),
+  // к полному блоку — чуть не доходя, чтобы грани не совпали и не «мигали».
+  const T = 0.1;                   // половина толщины перекладины
+  const RAIL_Y = [0.78, 1.22];     // высоты перекладин
   const dirs = [
-    { key: 'px', nb: [1, 0, 0], inner: 'nx', outer: 'px',
-      box: { x0: 0.5 + P, y0: CY - T, z0: 0.5 - T, x1: 1, y1: CY + T, z1: 0.5 + T } },
-    { key: 'nx', nb: [-1, 0, 0], inner: 'px', outer: 'nx',
-      box: { x0: 0, y0: CY - T, z0: 0.5 - T, x1: 0.5 - P, y1: CY + T, z1: 0.5 + T } },
-    { key: 'pz', nb: [0, 0, 1], inner: 'nz', outer: 'pz',
-      box: { x0: 0.5 - T, y0: CY - T, z0: 0.5 + P, x1: 0.5 + T, y1: CY + T, z1: 1 } },
-    { key: 'nz', nb: [0, 0, -1], inner: 'pz', outer: 'nz',
-      box: { x0: 0.5 - T, y0: CY - T, z0: 0, x1: 0.5 + T, y1: CY + T, z1: 0.5 - P } },
+    { key: 'px', nb: [1, 0, 0], inner: 'nx', outer: 'px', axis: 'x', sign: 1 },
+    { key: 'nx', nb: [-1, 0, 0], inner: 'px', outer: 'nx', axis: 'x', sign: -1 },
+    { key: 'pz', nb: [0, 0, 1], inner: 'nz', outer: 'pz', axis: 'z', sign: 1 },
+    { key: 'nz', nb: [0, 0, -1], inner: 'pz', outer: 'nz', axis: 'z', sign: -1 },
   ];
   for (const d of dirs) {
     if (!arms[d.key]) continue;
+    const neighbour = world.getBlock(wx + d.nb[0], y + d.nb[1], wz + d.nb[2]);
+    const isFence = neighbour === BLOCK.FENCE;
+    const end = 0.5 + (isFence ? 0.5 : 0.496) * d.sign;
+    const start = 0.5 + P * d.sign;
     const skip = { [d.inner]: true };
-    if (world.getBlock(wx + d.nb[0], y + d.nb[1], wz + d.nb[2]) === BLOCK.FENCE) skip[d.outer] = true;
-    pushBox(builder, world, d.box, skip, lightAt, wx, y, wz, def, tile, cell);
+    if (isFence) skip[d.outer] = true;
+    const lo = Math.min(start, end), hi = Math.max(start, end);
+    for (const cy of RAIL_Y) {
+      const box = d.axis === 'x'
+        ? { x0: lo, y0: cy - T, z0: 0.5 - T, x1: hi, y1: cy + T, z1: 0.5 + T }
+        : { x0: 0.5 - T, y0: cy - T, z0: lo, x1: 0.5 + T, y1: cy + T, z1: hi };
+      pushBox(builder, world, box, skip, lightAt, wx, y, wz, def, railTile, cell);
+    }
   }
 }
 

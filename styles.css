@@ -381,7 +381,8 @@ html, body {
   color: transparent;
 }
 #apples,
-#arrows {
+#arrows,
+#bullets {
   align-self: flex-start;
   background: rgba(12, 14, 20, 0.72);
   color: #fff;

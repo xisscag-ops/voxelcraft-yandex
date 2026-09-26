@@ -10,6 +10,8 @@ export const ITEM = {
   APPLE: 'apple',
   BOW: 'bow',
   ARROW: 'arrow',
+  PISTOL: 'pistol',
+  BULLET: 'bullet',
   WOOD_PICKAXE: 'tool_wood_pickaxe',
   WOOD_AXE: 'tool_wood_axe',
   WOOD_SWORD: 'tool_wood_sword',
@@ -66,6 +68,15 @@ export const ITEMS = {
   [ITEM.ARROW]: {
     kind: 'item', max: 64, icon: 'arrow',
     name: { ru: 'Стрела', en: 'Arrow' },
+  },
+  // Огнестрел: выстрел мгновенный (хлёсткий луч), патроны расходуются
+  [ITEM.PISTOL]: {
+    kind: 'item', max: 1, icon: 'pistol', gun: true, damage: 2,   // удар рукоятью в ближнем бою
+    name: { ru: 'Пистолет', en: 'Pistol' },
+  },
+  [ITEM.BULLET]: {
+    kind: 'item', max: 64, icon: 'bullet',
+    name: { ru: 'Патрон', en: 'Bullet' },
   },
   [ITEM.WOOD_PICKAXE]: {
     kind: 'tool', tool: 'pickaxe', tier: 'wood', max: 1, icon: 'wood_pickaxe',
@@ -265,6 +276,8 @@ const ITEM_DETAILS = {
   [ITEM.APPLE]: { ru: 'Еда: восстановит до 4 единиц здоровья. Удерживайте ЛКМ или нажмите F.', en: 'Food: restores up to 4 health. Hold left mouse or press F to eat.' },
   [ITEM.BOW]: { ru: 'Дальнее оружие. Удерживайте ПКМ, чтобы натянуть тетиву, затем отпустите.', en: 'Ranged weapon. Hold right mouse to draw, then release to fire.' },
   [ITEM.ARROW]: { ru: 'Боеприпас для лука. Можно подобрать после попадания в блок.', en: 'Ammunition for the bow. Can be picked up after hitting a block.' },
+  [ITEM.PISTOL]: { ru: 'Огнестрельное оружие: выстрел мгновенный, урон 5. Нужны патроны, держите ПКМ.', en: 'A firearm: instant shot, 5 damage. Needs bullets; hold RMB to fire.' },
+  [ITEM.BULLET]: { ru: 'Патроны для пистолета. Один выстрел расходует один патрон.', en: 'Pistol ammunition. Each shot spends one bullet.' },
   [ITEM.WOOD_PICKAXE]: { ru: 'Ускоряет добычу камня и руд. Урон по мобу: 1.', en: 'Speeds up mining stone and ore. Mob damage: 1.' },
   [ITEM.WOOD_AXE]: { ru: 'Ускоряет добычу брёвен и деревянных блоков. Урон по мобу: 1.', en: 'Speeds up mining logs and wooden blocks. Mob damage: 1.' },
   [ITEM.WOOD_SWORD]: { ru: 'Оружие ближнего боя. Урон по мобу: 2.', en: 'A melee weapon. Mob damage: 2.' },
@@ -451,10 +464,31 @@ const ORE_COLORS = {
   [ITEM.FANG]: 0xe8e4d8,
   [ITEM.IRON_INGOT]: 0xd8dee4,
   [ITEM.GOLD_INGOT]: 0xf0c451,
+  [ITEM.PISTOL]: 0x8a939f,
+  [ITEM.BULLET]: 0xd8b24a,
 };
 const SLAB_BLOCKS = new Set([
   BLOCK.PLANK_SLAB, BLOCK.PLANK_SLAB_TOP, BLOCK.COBBLE_SLAB, BLOCK.COBBLE_SLAB_TOP,
 ]);
+
+/**
+ * Кубик полублока для выпавшего предмета: боковые грани берут свою половину
+ * тайла (нижнюю для нижней плиты, верхнюю для верхней), поэтому текстура не
+ * сжимается вдвое, как на сплющенном кубе. Верх и низ — целая текстура.
+ */
+function slabDropGeometry(w, h, d, top = false) {
+  const geo = new THREE.BoxGeometry(w, h, d);
+  const uv = geo.attributes.uv;
+  for (let f = 0; f < 6; f++) {
+    if (f === 2 || f === 3) continue;      // верх и низ — целый тайл
+    for (let i = 0; i < 4; i++) {
+      const idx = f * 4 + i;
+      uv.setY(idx, top ? 0.5 + uv.getY(idx) * 0.5 : uv.getY(idx) * 0.5);
+    }
+  }
+  uv.needsUpdate = true;
+  return geo;
+}
 
 /**
  * Выпавшие предметы. Внешний вид собирается по ключу предмета:
@@ -470,7 +504,8 @@ export class ItemDrops {
     this.items = [];
     this.geo = new THREE.BoxGeometry(0.28, 0.28, 0.28);
     this.stemGeo = new THREE.BoxGeometry(0.08, 0.1, 0.08);
-    this.slabGeo = new THREE.BoxGeometry(0.28, 0.14, 0.28);
+    this.slabGeo = slabDropGeometry(0.28, 0.14, 0.28, false);        // нижняя плита
+    this.slabTopGeo = slabDropGeometry(0.28, 0.14, 0.28, true);     // верхняя плита
     this.quadGeo = new THREE.PlaneGeometry(0.32, 0.32);
     this.mats = {
       apple: new THREE.MeshBasicMaterial({ color: APPLE.color }),
@@ -492,6 +527,18 @@ export class ItemDrops {
     if (isBlockItem(kind)) {
       const id = blockIdOf(kind);
       const def = BLOCKS[id];
+      // Плита: настоящая половинка блока с текстурами со всех сторон
+      if (def && def.tiles && SLAB_BLOCKS.has(id) && this.tileMaterial) {
+        const [topTile, , sideTile, frontTile = sideTile] = def.tiles;
+        const mats = [
+          this.tileMaterial(sideTile), this.tileMaterial(sideTile),
+          this.tileMaterial(topTile), this.tileMaterial(topTile),
+          this.tileMaterial(frontTile), this.tileMaterial(sideTile),
+        ];
+        return new THREE.Mesh(def.half === 'top' ? this.slabTopGeo : this.slabGeo, mats);
+      }
+      // Полный блок: кубик с текстурами атласа (забор и прочие формы — модель
+      // из modelFor, иначе плоская иконка ниже)
       if (def && def.tiles && !def.shape && this.tileMaterial) {
         const [top, bottom, side, front = side] = def.tiles;
         const mats = [
@@ -499,8 +546,7 @@ export class ItemDrops {
           this.tileMaterial(top), this.tileMaterial(bottom),
           this.tileMaterial(front), this.tileMaterial(side),
         ];
-        const geo = SLAB_BLOCKS.has(id) ? this.slabGeo : this.geo;
-        return new THREE.Mesh(geo, mats);
+        return new THREE.Mesh(this.geo, mats);
       }
     }
     const icon = itemDef(kind)?.icon;
@@ -730,6 +776,12 @@ export class XpOrbs {
       }
       o.group.rotation.y += dt * 3;
       p.y += Math.sin(o.t * 4) * 0.001;
+
+      // Опыт подлетает к лицу: чтобы зелёный шар не «вспыхивал» кругом перед
+      // камерой, он плавно сжимается по мере приближения и гаснет у самого лица.
+      const near = Math.sqrt(d2);
+      if (near < 2.6) o.group.scale.setScalar(Math.max(0.15, Math.min(1, near / 2.6)));
+      else o.group.scale.setScalar(1);
 
       if (d2 < 1.4) {
         this.scene.remove(o.group);
