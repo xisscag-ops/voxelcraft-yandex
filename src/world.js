@@ -26,6 +26,12 @@ function idx(x, y, z) {
   return (y * S + z) * S + x;
 }
 
+// Плавный шаг 0..1 (как smoothstep): для мягких масок биомов без швов
+function smooth01(t) {
+  const x = Math.max(0, Math.min(1, t));
+  return x * x * (3 - 2 * x);
+}
+
 /**
  * Выравнивание пола пещер: где рядом с проходимым полом зияет яма глубже двух
  * блоков, подсыпаем камень — спуски и подъёмы превращаются в ступени по два
@@ -130,26 +136,68 @@ export class World {
   // Снежная колонка
   isCold(wx, wz) { return this.temperatureAt(wx, wz) > COLD_T; }
 
+  // Равнины-поля: крупные плоские области, на которых рельеф прижат к нулю.
+  // Возвращает вес 0..1 (1 — совершенно плоское поле).
+  plainsAt(wx, wz) {
+    const n = fbm2d(wx * 0.0031 + 911, wz * 0.0031 - 311, this.seed + 733, 2);
+    return smooth01((n - 0.55) / 0.14);
+  }
+
+  // Холмистые края: региональный усилитель мелкого рельефа (мягкие волны-холмы)
+  hillCountryAt(wx, wz) {
+    const n = fbm2d(wx * 0.0026 - 53, wz * 0.0026 + 117, this.seed + 311, 2);
+    return smooth01((n - 0.56) / 0.12);
+  }
+
   // Базовая высота поверхности без геологических особенностей.
+  // Мир делится на регионы-биомы по рельефу: плоские поля-луга, холмистая
+  // местность, высокие скальные горы с острыми гребнями, пустыни с дюнами;
+  // крупные кратеры с валом вырезаются отдельным слоем (featureAt).
   baseHeightAt(wx, wz) {
     const seed = this.seed;
     const cont = fbm2d(wx * 0.006, wz * 0.006, seed, 4);           // континентальность
-    const hills = fbm2d(wx * 0.03, wz * 0.03, seed + 991, 3);      // холмы
+    const hills = fbm2d(wx * 0.03, wz * 0.03, seed + 991, 3);      // мелкий рельеф
     const mt = fbm2d(wx * 0.0022, wz * 0.0022, seed + 77, 2);      // горные массивы
     const massif = fbm2d(wx * 0.0012 + 7, wz * 0.0012 - 11, seed + 411, 2);  // крупные массивы
     const ridgeN = fbm2d(wx * 0.0048 + 13, wz * 0.0048 - 27, seed + 505, 3);
+    const ridgeHi = fbm2d(wx * 0.012 + 41, wz * 0.012 - 8, seed + 909, 3);   // скальные зубья
+    const plainsW = this.plainsAt(wx, wz);                         // вес полей
+    const hillW = this.hillCountryAt(wx, wz);                      // вес холмистых краёв
     const c = Math.tanh((cont - 0.5) * 5);
-    let h = SEA + 3 + c * 18 + (hills - 0.5) * 12;
+    // Континентальность в полях почти выключена: поле держится у уровня моря,
+    // а не уезжает на дно океана или в гору.
+    let h = SEA + 3 + c * 18 * (1 - plainsW * 0.8);
+    // Холмы: в холмистых краях волны заметно крупнее (+170%), в полях —
+    // почти ровный стол (травяные просторы под застройку).
+    const hillAmp = 12 * (1 + hillW * 1.7) * (1 - plainsW * 0.9);
+    h += (hills - 0.5) * hillAmp;
     // Горы двух порядков: обычные хребты и крупные массивы. Массивы тянутся
     // сотни блоков и поднимают хребты на десятки блоков — это «большие горы».
+    // Сквозь поля горы если и прорываются, то редко и сильно ниже.
     const mountain = Math.max(0, mt - 0.42) / 0.58;
     const big = Math.max(0, massif - 0.4) / 0.6;
-    const amp = 38 * (1 + big * 0.55);
+    const mMask = 1 - plainsW * 0.78;
+    const amp = 41 * (1 + big * 0.6);
     // Острые пики: степень выше единицы делает подножие пологим, а вершину — крутой;
     // зазубренный гребень (ridge) добавляет горам резкие кромки и скалы.
-    h += Math.pow(mountain, 1.7) * amp;
+    h += Math.pow(mountain, 1.7) * amp * mMask;
     const ridge = 1 - Math.abs(ridgeN * 2 - 1);
-    h += Math.pow(ridge, 2.5) * mountain * (24 + big * 12);
+    h += Math.pow(ridge, 2.2) * mountain * (26 + big * 14) * mMask;
+    // Второй, мелкий гребень: каменные зубья и расщелины на склонах —
+    // именно они дают «скальный» характер высоким горам.
+    const ridgeF = 1 - Math.abs(ridgeHi * 2 - 1);
+    h += Math.pow(ridgeF, 3.2) * mountain * 9 * mMask;
+    // Пустынные дюны: в сухих зонах ниже гор рельеф идёт волнами-гребнями,
+    // сбитыми шумом, чтобы дюны не были идеальными параллельными линиями.
+    const dry = this.dryAt(wx, wz);
+    if (dry > DRY_T && h < ROCK_H - 2 && this.temperatureAt(wx, wz) <= COLD_T) {
+      const dw = smooth01((dry - DRY_T - 0.01) / 0.09) * (1 - mountain);
+      if (dw > 0) {
+        const sway = fbm2d(wx * 0.017 + 23, wz * 0.017 - 19, seed + 555, 2);
+        const crest = Math.pow(Math.abs(Math.sin(wx * 0.055 + wz * 0.021 + sway * 2.6)), 1.5);
+        h += (crest - 0.55) * 3.4 * dw;
+      }
+    }
     // Мягкий потолок: у самого верха мира горы выполаживаются, а не спиливаются
     // в одно плоское плато — иначе большие массивы выглядели бы столешницей.
     const ceiling = H - 3;
@@ -162,9 +210,10 @@ export class World {
 
   /**
    * Детерминированная геологическая особенность рядом с колонкой.
-   * Карьеры и разломы встречаются в нескольких вариантах формы: чаши,
-   * террасные выемки, узкие каньоны-карьеры, глубокие колодцы; у разломов —
-   * прямые и сильно изогнутые, с разными профилями глубины и ширины.
+   * Кратеры, карьеры и разломы встречаются в нескольких вариантах формы:
+   * ударные чаши с приподнятым валом, террасные выемки, узкие каньоны-карьеры,
+   * глубокие колодцы; у разломов — прямые и сильно изогнутые, с разными
+   * профилями глубины и ширины.
    */
   featureAt(wx, wz) {
     const gx0 = Math.floor(wx / FEATURE_CELL);
@@ -173,14 +222,35 @@ export class World {
     for (let gz = gz0 - 1; gz <= gz0 + 1; gz++) {
       for (let gx = gx0 - 1; gx <= gx0 + 1; gx++) {
         const roll = hash3(gx, 137, gz, this.seed);
-        const type = roll < 0.22 ? 'quarry' : roll < 0.42 ? 'rift' : null;
+        const type = roll < 0.07 ? 'crater' : roll < 0.26 ? 'quarry' : roll < 0.44 ? 'rift' : null;
         if (!type) continue;
         const fx = (gx + 0.25 + hash3(gx, 211, gz, this.seed) * 0.5) * FEATURE_CELL;
         const fz = (gz + 0.25 + hash3(gx, 307, gz, this.seed) * 0.5) * FEATURE_CELL;
         const dx = wx - fx, dz = wz - fz;
         let feature;
 
-        if (type === 'quarry') {
+        if (type === 'crater') {
+          // Ударный кратер: гладкая чаша с обсидиановым ядром и приподнятым
+          // валом по краю. Силуэт чуть «морщинится» — кратер не идеальный круг.
+          const rx = 13 + hash3(gx, 1901, gz, this.seed) * 9;
+          const rz = 12 + hash3(gx, 1903, gz, this.seed) * 8;
+          const wob = Math.sin(Math.atan2(dz, dx) * 3 + hash3(gx, 1907, gz, this.seed) * Math.PI * 2) * 0.045;
+          const radius = Math.hypot(dx / rx, dz / rz) + wob;
+          if (radius >= 1) continue;
+          const depth = 5 + hash3(gx, 1909, gz, this.seed) * 6;
+          const rimH = 2.2 + hash3(gx, 1913, gz, this.seed) * 3.4;
+          let cut = 0, rim = 0;
+          if (radius < 0.72) {
+            // Чаша: глубже всего в центре, к валу выходит на нет
+            cut = Math.floor(depth * Math.pow(1 - radius / 0.72, 1.35));
+          } else {
+            // Вал: кольцевой валик отброшенной породы, спадающий наружу
+            const t = Math.min(1, (radius - 0.72) / 0.28);
+            rim = Math.round(rimH * Math.sin(Math.PI * t));
+          }
+          if (cut < 2 && rim < 2) continue;
+          feature = { type, style: 'impact', cut, rim, radius, rx, rz, depth, x: fx, z: fz };
+        } else if (type === 'quarry') {
           // Четыре силуэта: округлая чаша, террасный карьер, вытянутый каньон и колодец
           const styleRoll = hash3(gx, 1201, gz, this.seed);
           const style = styleRoll < 0.34 ? 'bowl' : styleRoll < 0.62 ? 'terrace' : styleRoll < 0.85 ? 'canyon' : 'pit';
@@ -264,8 +334,11 @@ export class World {
     if (base <= SEA + 4) return base;
     const feature = this.featureAt(wx, wz);
     if (!feature) return base;
-    const cut = Math.min(feature.cut, base - (SEA + 4));
-    return cut >= 2 ? base - cut : base;
+    const cut = Math.min(feature.cut || 0, base - (SEA + 4));
+    const rim = feature.rim || 0;
+    if (cut < 2 && rim < 2) return base;
+    // Вал кратера не должен пробивать потолок мира
+    return Math.max(3, Math.min(H - 3, base - cut + rim));
   }
 
   /**
@@ -402,13 +475,15 @@ export class World {
         const baseH = this.baseHeightAt(wx, wz);
         let feature = baseH > SEA + 4 ? this.featureAt(wx, wz) : null;
         if (feature) {
-          const safeCut = Math.min(feature.cut, baseH - (SEA + 4));
-          if (safeCut < 2) feature = null;
-          else feature.cut = safeCut;
+          const safeCut = Math.min(feature.cut || 0, baseH - (SEA + 4));
+          feature.cut = safeCut;
+          if (safeCut < 2 && (feature.rim || 0) < 2) feature = null;
         }
-        const h = baseH - (feature?.cut || 0);
+        const h = Math.max(3, Math.min(H - 3, baseH - (feature?.cut || 0) + (feature?.rim || 0)));
         terrainHeight[z * S + x] = h;
         const excavated = !!(feature && feature.cut >= 3);
+        const craterCore = feature?.type === 'crater' && feature.radius < 0.34;
+        const craterWall = feature?.type === 'crater' && feature.rim >= 2;
         const cold = this.temperatureAt(wx, wz) > COLD_T;    // снежные зоны редкие
         const dry = !cold && !this.isRocky(h) && this.dryAt(wx, wz) > DRY_T;   // пустыни
         const rocky = this.isRocky(h);                        // высокогорье — голый камень
@@ -418,10 +493,13 @@ export class World {
             // В холодных зонах вода сверху затянута льдом
             b = y <= SEA ? ((cold && y === SEA) ? BLOCK.ICE : BLOCK.WATER) : BLOCK.AIR;
           } else if (y === h) {
-            if (excavated) {
-              // В карьере и разломе на поверхность выходят коренные породы.
+            if (craterCore) {
+              // Ядро кратера: оплавленный центр удара — обсидиан в камне
+              b = hash3(wx, y, wz, seed + 3400) < 0.55 ? BLOCK.OBSIDIAN : BLOCK.STONE;
+            } else if (excavated || craterWall) {
+              // В кратере, карьере и разломе на поверхность выходят коренные породы.
               b = h < 7 ? BLOCK.SLATE
-                : feature.type === 'quarry' && hash3(wx, y, wz, seed + 3300) < 0.07 ? BLOCK.GRAVEL
+                : (feature.type === 'quarry' || craterWall) && hash3(wx, y, wz, seed + 3300) < 0.07 ? BLOCK.GRAVEL
                   : BLOCK.STONE;
             } else if (h <= SEA + 2) b = cold ? BLOCK.SNOWY_SAND : BLOCK.SAND;  // пляжи; в холодных зонах песок под снегом
             else if (h >= PEAK_H) b = BLOCK.SNOW;            // снежные вершины
@@ -430,7 +508,8 @@ export class World {
             else if (dry) b = BLOCK.SAND;
             else b = BLOCK.GRASS;
           } else if (y >= h - 3) {
-            if (excavated) b = y < 5 ? BLOCK.SLATE : BLOCK.STONE;
+            if (craterCore) b = y < 5 ? BLOCK.SLATE : (hash3(wx, y, wz, seed + 3400) < 0.35 ? BLOCK.OBSIDIAN : BLOCK.STONE);
+            else if (excavated || craterWall) b = y < 5 ? BLOCK.SLATE : BLOCK.STONE;
             else if (h <= SEA + 2) b = BLOCK.SAND;
             else if (h >= PEAK_H) b = BLOCK.SNOW;
             else if (rocky) b = BLOCK.STONE;
@@ -1031,7 +1110,8 @@ export class World {
       }
     }
 
-    // Декоративная трава и цветы — на травяных вершинах
+    // Декоративная трава и цветы — на травяных вершинах. В полях-лугах
+    // травы и особенно цветов заметно больше: получаются цветущие луга.
     for (let z = 0; z < S; z++) {
       for (let x = 0; x < S; x++) {
         const wx = ox + x, wz = oz + z;
@@ -1039,12 +1119,15 @@ export class World {
         if (h <= SEA + 1 || h >= H - 1) continue;
         if (chunk.get(x, h, z) !== BLOCK.GRASS) continue;
         if (chunk.get(x, h + 1, z) !== BLOCK.AIR) continue;
+        const meadow = this.plainsAt(wx, wz) > 0.55 && this.hillCountryAt(wx, wz) < 0.4;
         const r = rng();
+        const flowerP = meadow ? 0.085 : 0.045;
+        const grassP = meadow ? 0.2 : 0.165;
         if (r < 0.12) chunk.set(x, h + 1, z, BLOCK.TALL_GRASS);
-        else if (r < 0.165) chunk.set(x, h + 1, z, BLOCK.FERN);
-        else if (r < 0.19) chunk.set(x, h + 1, z, BLOCK.CLOVER);
-        else if (r < 0.215) chunk.set(x, h + 1, z, BLOCK.FLOWER_RED);
-        else if (r < 0.235) chunk.set(x, h + 1, z, BLOCK.FLOWER_YELLOW);
+        else if (r < grassP) chunk.set(x, h + 1, z, BLOCK.FERN);
+        else if (r < grassP + 0.025) chunk.set(x, h + 1, z, BLOCK.CLOVER);
+        else if (r < grassP + 0.025 + flowerP * 0.55) chunk.set(x, h + 1, z, BLOCK.FLOWER_RED);
+        else if (r < grassP + 0.025 + flowerP) chunk.set(x, h + 1, z, BLOCK.FLOWER_YELLOW);
       }
     }
 

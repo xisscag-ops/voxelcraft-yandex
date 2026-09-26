@@ -276,7 +276,7 @@ const ITEM_DETAILS = {
   [ITEM.APPLE]: { ru: 'Еда: восстановит до 4 единиц здоровья. Удерживайте ЛКМ или нажмите F.', en: 'Food: restores up to 4 health. Hold left mouse or press F to eat.' },
   [ITEM.BOW]: { ru: 'Дальнее оружие. Удерживайте ПКМ, чтобы натянуть тетиву, затем отпустите.', en: 'Ranged weapon. Hold right mouse to draw, then release to fire.' },
   [ITEM.ARROW]: { ru: 'Боеприпас для лука. Можно подобрать после попадания в блок.', en: 'Ammunition for the bow. Can be picked up after hitting a block.' },
-  [ITEM.PISTOL]: { ru: 'Огнестрельное оружие: выстрел мгновенный, урон 5. Нужны патроны, держите ПКМ.', en: 'A firearm: instant shot, 5 damage. Needs bullets; hold RMB to fire.' },
+  [ITEM.PISTOL]: { ru: 'Огнестрельное оружие: выстрел мгновенный, урон 5. ЛКМ — выстрел, удерживайте ПКМ для прицеливания.', en: 'A firearm: instant shot, 5 damage. LMB — shoot, hold RMB to aim.' },
   [ITEM.BULLET]: { ru: 'Патроны для пистолета. Один выстрел расходует один патрон.', en: 'Pistol ammunition. Each shot spends one bullet.' },
   [ITEM.WOOD_PICKAXE]: { ru: 'Ускоряет добычу камня и руд. Урон по мобу: 1.', en: 'Speeds up mining stone and ore. Mob damage: 1.' },
   [ITEM.WOOD_AXE]: { ru: 'Ускоряет добычу брёвен и деревянных блоков. Урон по мобу: 1.', en: 'Speeds up mining logs and wooden blocks. Mob damage: 1.' },

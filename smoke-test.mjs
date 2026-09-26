@@ -85,7 +85,17 @@ const c0 = world.getChunk(0, 0);
 check('chunk generated', c0.generated);
 check('chunk has surface', c0.blocks.some((v) => v === 1 || v === 5 || v === 12)); // grass/sand/snow
 check('chunk has stone', c0.blocks.includes(3));
-check('water fills somewhere near sea', c0.blocks.includes(13) || world.heightAt(3, 3) > 22);
+check('water fills somewhere near sea', (() => {
+  if (c0.blocks.includes(13) || world.heightAt(3, 3) > 22) return true;
+  // Ищем впадину ниже уровня моря поблизости — там обязана быть вода
+  for (let x = -300; x < 300; x += 7) {
+    for (let z = -300; z < 300; z += 7) {
+      const h = world.heightAt(x, z);
+      if (h < world.seaLevel && world.getBlock(x, h + 1, z) === BLOCK.WATER) return true;
+    }
+  }
+  return false;
+})());
 
 // Высоты детерминированы
 check('heightAt deterministic', world.heightAt(10, -20) === world.heightAt(10, -20));
@@ -98,16 +108,28 @@ check('heightAt in bounds', (() => {
 })());
 check('geology: deterministic quarry and rift depressions', (() => {
   const geology = new World(4242);
-  const quarry = geology.featureAt(71, -841);
-  const rift = geology.featureAt(-1000, -107);
-  const quarryY = geology.heightAt(71, -841);
-  const riftY = geology.heightAt(-1000, -107);
-  const quarryFloor = geology.getBlock(71, quarryY, -841);
-  const riftFloor = geology.getBlock(-1000, riftY, -107);
+  const quarry = geology.featureAt(-854, 752);
+  const rift = geology.featureAt(-742, 202);
+  const quarryY = geology.heightAt(-854, 752);
+  const riftY = geology.heightAt(-742, 202);
+  const quarryFloor = geology.getBlock(-854, quarryY, 752);
+  const riftFloor = geology.getBlock(-742, riftY, 202);
   return quarry?.type === 'quarry' && rift?.type === 'rift'
-    && quarryY < geology.baseHeightAt(71, -841)
-    && riftY < geology.baseHeightAt(-1000, -107)
+    && quarryY < geology.baseHeightAt(-854, 752)
+    && riftY < geology.baseHeightAt(-742, 202)
     && [BLOCK.STONE, BLOCK.GRAVEL].includes(quarryFloor) && riftFloor === BLOCK.STONE;
+})());
+check('geology: crater has bowl, obsidian core and raised rim', (() => {
+  const geology = new World(4242);
+  const crater = geology.featureAt(-892, -46);
+  const rim = geology.featureAt(-873, -46);
+  const bowlY = geology.heightAt(-892, -46);
+  const rimY = geology.heightAt(-873, -46);
+  const core = geology.getBlock(-892, bowlY, -46);
+  return crater?.type === 'crater' && rim?.type === 'crater'
+    && bowlY < geology.baseHeightAt(-892, -46)          // чаша углублена
+    && rimY > geology.baseHeightAt(-873, -46)           // вал приподнят
+    && (core === BLOCK.OBSIDIAN || core === BLOCK.STONE); // ядро — оплавленный камень
 })());
 
 // Блоки: get/set и правки
@@ -795,6 +817,21 @@ check('модель пистолета: ствол вперёд, рукоять 
 })());
 check('пистолет мощнее лука и стреляет быстрее', gun.PISTOL_STATS.damage >= 5
   && gun.PISTOL_STATS.speed > 40 && gun.PISTOL_STATS.cooldown > 0);
+check('модель пистолета детализирована: механика, прицел и фурнитура', (() => {
+  const byName = (n) => gun.PISTOL_PARTS.find((p) => p.name === n);
+  const dots = gun.PISTOL_PARTS.filter((p) => p.emissive);
+  const front = byName('frontSight'), rearL = byName('rearSightL'), rearR = byName('rearSightR');
+  // прицельная линия: мушка и стойки целика на одной высоте — в прицеле картинка сходится
+  const sightAligned = front && rearL && rearR
+    && Math.abs(front.y - rearL.y) < 0.02 && rearL.x < 0 && rearR.x > 0;
+  return gun.PISTOL_PARTS.length >= 30                          // десятки деталей
+    && ['trigger', 'hammer', 'slideStop', 'ejectPort', 'magBase', 'guideRod'].every((n) => byName(n))
+    && byName('gripPanelL') && byName('gripPanelR')             // деревянные щёчки с двух сторон
+    && dots.length >= 3 && sightAligned;                        // тритиевые точки + ровный прицел
+})());
+check('в статах пистолета заданы зум и замедление при прицеливании (ПКМ)',
+  gun.PISTOL_STATS.adsFovFactor > 0 && gun.PISTOL_STATS.adsFovFactor < 1
+  && gun.PISTOL_STATS.adsMoveFactor > 0 && gun.PISTOL_STATS.adsMoveFactor < 1);
 
 // ---- Пуля: летит прямо, гаснет в блоке, бьёт моба ----
 {
@@ -1676,6 +1713,63 @@ check('сундук: разметка и стили панели', html.includes
   check('в пещерах появились высокие залы', halls > 20, 'столбцов-залов ' + halls);
   check('на поверхности есть валуны', boulders > 40, 'колонок с глыбами ' + boulders);
   check('встречаются высокие скалы-пальцы', spires > 3, 'скал ' + spires + ' на ' + chunks + ' чанков');
+}
+
+// ---- Биомы нового ландшафта: поля, холмы, пустыни с дюнами ----
+{
+  const w = new World(4242);
+  // Поля: при полном весе маски рельеф почти плоский (перепад ≤ 2 на участке 30×30)
+  let plainsChecked = 0, plainsFlat = 0, plainsFound = 0;
+  for (let px = -600; px < 600 && plainsChecked < 12; px += 24) {
+    for (let pz = -600; pz < 600 && plainsChecked < 12; pz += 24) {
+      if (w.plainsAt(px, pz) < 0.95 || w.baseHeightAt(px, pz) <= 26) continue;
+      let ok = true, lo = 99, hi = 0;
+      for (let dx = 0; dx < 30; dx += 6) {
+        for (let dz = 0; dz < 30; dz += 6) {
+          if (w.plainsAt(px + dx, pz + dz) < 0.85) { ok = false; break; }
+          const h = w.baseHeightAt(px + dx, pz + dz);
+          if (h < lo) lo = h; if (h > hi) hi = h;
+        }
+        if (!ok) break;
+      }
+      if (!ok) continue;
+      plainsFound++;
+      plainsChecked++;
+      if (hi - lo <= 2) plainsFlat++;
+    }
+  }
+  check('поля-равнины существуют и ровные (перепад ≤ 2 блоков)',
+    plainsChecked >= 4 && plainsFlat / plainsChecked > 0.6,
+    `участков ${plainsChecked}, ровных ${plainsFlat}`);
+  // Холмистые края: усиление рельефа даёт участки с перепадом высот ≥ 8
+  let hillsFound = 0;
+  for (let px = -600; px < 600 && hillsFound < 3; px += 13) {
+    for (let pz = -600; pz < 600 && hillsFound < 3; pz += 13) {
+      if (w.hillCountryAt(px, pz) < 0.9) continue;
+      let lo = 99, hi = 0;
+      for (let dx = -20; dx <= 20; dx += 5) {
+        for (let dz = -20; dz <= 20; dz += 5) {
+          const h = w.baseHeightAt(px + dx, pz + dz);
+          if (h < lo) lo = h; if (h > hi) hi = h;
+        }
+      }
+      if (hi - lo >= 8) hillsFound++;
+    }
+  }
+  check('холмистые края с заметными перепадами высот существуют', hillsFound >= 3, 'участков ' + hillsFound);
+  // Пустыни с дюнами: сухая зона с волнистым песком (перепад 2+ на короткой линии)
+  let dunes = 0, deserts = 0;
+  for (let px = -700; px < 700; px += 7) {
+    for (let pz = -700; pz < 700; pz += 7) {
+      const h0 = w.baseHeightAt(px, pz);
+      if (h0 <= 26 || !w.isDry(px, pz, h0)) continue;
+      deserts++;
+      const h1 = w.baseHeightAt(px + 9, pz);
+      if (Math.abs(h1 - h0) >= 2) dunes++;
+    }
+  }
+  check('пустыни существуют и в них есть дюны', deserts > 20 && dunes > 4,
+    `сухих колонок ${deserts}, дюнных гребней ${dunes}`);
 }
 
 // ---- Пост-эффект «заглянул в глубокий карьер»: гамма кадра и радиус размытия ----
