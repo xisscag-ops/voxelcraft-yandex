@@ -189,16 +189,19 @@ export const GUN_POSE_HIP = gripPose(ROT_HIP, HOLD_HIP);
 // Поза прицеливания: ствол по центру экрана, мушка и целик на оси взгляда
 export const GUN_POSE_ADS = gripPose(ROT_ADS, HOLD_ADS);
 
-// Вспышка у дула: ядро и четыре луча; в обычном состоянии скрыта
+// Огонёк у дула: компактное пламя вместо вспышки-звезды. Белое горячее ядро
+// у среза ствола, оранжевое тело и тёмный кончик, пара боковых язычков —
+// на пару кадров после выстрела это читается как маленький огонь из ствола.
 export const PISTOL_FLASH_Z = -0.318;
-const FLASH_A = 0xffef9c;    // ядро — горячий бело-жёлтый
-const FLASH_B = 0xffc845;    // лучи — оранжевые
+const FIRE_CORE = 0xfff3c0;   // ядро — раскалённое, почти белое
+const FIRE_MID = 0xff9d2e;    // тело пламени — оранжевое
+const FIRE_TIP = 0xd84315;    // кончик — тёмный багрянец
 export const PISTOL_FLASH_PARTS = [
-  { name: 'flashCore', w: 0.075, h: 0.075, d: 0.16, color: FLASH_A, x: 0, y: 0, z: -0.06 },
-  { name: 'flashRay0', w: 0.055, h: 0.055, d: 0.2, color: FLASH_B, x: 0.055, y: 0, z: -0.05 },
-  { name: 'flashRay1', w: 0.055, h: 0.055, d: 0.2, color: FLASH_B, x: -0.055, y: 0, z: -0.05 },
-  { name: 'flashRay2', w: 0.055, h: 0.055, d: 0.2, color: FLASH_B, x: 0, y: 0.055, z: -0.05 },
-  { name: 'flashRay3', w: 0.055, h: 0.055, d: 0.2, color: FLASH_B, x: 0, y: -0.055, z: -0.05 },
+  { name: 'flameCore', w: 0.052, h: 0.052, d: 0.085, color: FIRE_CORE, x: 0, y: 0, z: -0.028 },
+  { name: 'flameBody', w: 0.038, h: 0.038, d: 0.075, color: FIRE_MID, x: 0, y: 0.004, z: -0.082 },
+  { name: 'flameTip', w: 0.022, h: 0.022, d: 0.055, color: FIRE_TIP, x: 0, y: 0.008, z: -0.128 },
+  { name: 'flameLickL', w: 0.016, h: 0.016, d: 0.06, color: FIRE_MID, x: -0.028, y: 0.014, z: -0.07 },
+  { name: 'flameLickR', w: 0.016, h: 0.016, d: 0.06, color: FIRE_MID, x: 0.026, y: -0.01, z: -0.078 },
 ];
 
 // Баллистика пистолета (используется и в main.js, и в тестах)

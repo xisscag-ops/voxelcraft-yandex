@@ -265,6 +265,12 @@ const BLOCK_DETAILS = {
   [BLOCK.SNOWY_SAND]: { ru: 'Песок холодных берегов, припорошенный снегом.', en: 'Cold-beach sand dusted with snow.' },
   [BLOCK.VINE]: { ru: 'Пещерная лиана: свисает с потолка гротов. Срывается мгновенно.', en: 'A cave vine hanging from cavern ceilings. Breaks instantly.' },
   [BLOCK.GLOW_SHROOM]: { ru: 'Светящийся гриб из пещер: немного освещает всё вокруг себя.', en: 'A glowing cave mushroom that softly lights its surroundings.' },
+  [BLOCK.BUSH]: { ru: 'Низкий куст с густой листвой: оживляет опушки, поляны и сад.', en: 'A low leafy bush: brings forest edges, clearings and gardens to life.' },
+  [BLOCK.BERRY_BUSH]: { ru: 'Кустик с красными ягодами — лесной декор для полян.', en: 'A small bush dotted with red berries — woodland decoration for clearings.' },
+  [BLOCK.FLOWER_BLUE]: { ru: 'Синий василёк: дикий цветок для луга и клумбы.', en: 'A blue cornflower: a wild flower for meadows and flowerbeds.' },
+  [BLOCK.FLOWER_WHITE]: { ru: 'Белая ромашка — лёгкое украшение для травы.', en: 'A white daisy: a light touch of decoration for grassy ground.' },
+  [BLOCK.MUSHROOM_RED]: { ru: 'Красный гриб с белыми крапинками: растёт в тени крон.', en: 'A red speckled mushroom: grows in the shade of tree canopies.' },
+  [BLOCK.MUSHROOM_BROWN]: { ru: 'Бурый гриб: растёт в тени крон среди лесной подстилки.', en: 'A brown mushroom: grows in the shade of canopies among forest litter.' },
 };
 for (const id of [BLOCK.WALL_TORCH_PX, BLOCK.WALL_TORCH_NX, BLOCK.WALL_TORCH_PZ, BLOCK.WALL_TORCH_NZ]) {
   BLOCK_DETAILS[id] = BLOCK_DETAILS[BLOCK.WALL_TORCH];
