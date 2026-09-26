@@ -313,7 +313,7 @@ export class UI {
     fill.style.width = Math.min(100, p * 100) + '%';
   }
 
-  setDebug(visible, fps, pos, light) {
+  setDebug(visible, fps, pos, light, extra = null) {
     const el = document.getElementById('debug');
     if (!el) return;
     el.classList.toggle('hidden', !visible);
@@ -321,6 +321,10 @@ export class UI {
     el.textContent =
       `FPS: ${fps.toFixed(0)}  |  XYZ: ${pos.x.toFixed(1)} / ${pos.y.toFixed(1)} / ${pos.z.toFixed(1)}` +
       `  |  ${light > 0.5 ? this.i18n.t('day') : this.i18n.t('night')}` +
+      // Диагностика освещения: если мир внезапно темнеет, по этим числам видно,
+      // что именно сработало — ночь, пещерная мгла или туман.
+      (extra ? `  |  свет ${light.toFixed(2)}  мгла ${extra.cave.toFixed(2)}` +
+        `  туман ${extra.fogNear.toFixed(0)}/${extra.fogFar.toFixed(0)}` : '') +
       (this._built != null ? `  |  ${this.i18n.t('blocks_built')}: ${this._built}` : '');
   }
 

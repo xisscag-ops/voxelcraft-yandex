@@ -33,6 +33,8 @@ import { UI } from './ui.js';
 import { I18n } from './i18n.js';
 import { Ysdk } from './ysdk.js';
 import { updateRunShake } from './camera-effects.js';
+import { heldLightVertex, heldLightFragment, waterShaderHook } from './shaders.js';
+import { CAVE_FOG_COLOR, CAVE_FOG_FAR, CAVE_FOG_NEAR, caveFogTarget, stepCaveFog } from './fog.js';
 import { PitDepthFX } from './postfx.js';
 import { createWorldRecord, emptyWorldProfile, normalizeWorldProfile, serializeWorldProfile } from './world-store.js';
 
@@ -185,37 +187,8 @@ const heldLightUniforms = {
 function addHeldLight(material) {
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, heldLightUniforms);
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', `#include <common>
-attribute float torchLight;
-varying float vTorchLight;
-varying vec3 vHeldWorldPos;`)
-      .replace('#include <begin_vertex>', `#include <begin_vertex>
-vTorchLight = torchLight;
-vHeldWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`);
-    shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', `#include <common>
-varying float vTorchLight;
-varying vec3 vHeldWorldPos;
-uniform vec3 uHeldLightPos;
-uniform float uHeldLight;
-uniform float uHeldLightRadius;`)
-      // Итоговая освещённость = max(небо × оттенок времени суток, факелы).
-      // Факелы (поставленные — из вершин, в руке — по расстоянию) не зависят
-      // от времени суток: ночью светят так же, днём не пересвечивают.
-      .replace('#include <color_fragment>', `#if defined( USE_COLOR ) || defined( USE_COLOR_ALPHA )
-  float torchL = vTorchLight;
-  if (uHeldLight > 0.0) {
-    float heldD = distance(vHeldWorldPos, uHeldLightPos);
-    float heldF = clamp(1.0 - heldD / uHeldLightRadius, 0.0, 1.0);
-    vec3 heldN = normalize(cross(dFdx(vHeldWorldPos), dFdy(vHeldWorldPos)));
-    float heldShade = heldN.y > 0.5 ? 1.0 : (heldN.y < -0.5 ? 0.5 : (abs(heldN.x) > 0.5 ? 0.72 : 0.88));
-    torchL = max(torchL, heldF * heldF * heldShade * uHeldLight);
-  }
-  vec3 skyL = diffuse * vColor.rgb;
-  vec3 lightL = max(skyL, torchL * vec3(1.0, 0.93, 0.82));
-  diffuseColor.rgb = diffuseColor.rgb / max(diffuse, vec3(0.001)) * lightL;
-#endif`);
+    shader.vertexShader = heldLightVertex(shader.vertexShader);
+    shader.fragmentShader = heldLightFragment(shader.fragmentShader);
   };
 }
 addHeldLight(terrainMat);
@@ -223,34 +196,14 @@ const waterMat = new THREE.MeshBasicMaterial({
   map: atlasTex, vertexColors: true, transparent: true, opacity: 0.72,
   depthWrite: false, side: THREE.DoubleSide,
 });
-addHeldLight(waterMat);
-// Анимация воды: в шейдере текстура тайла воды медленно колышется (UV гуляет
-// внутри своего тайла атласа, не задевая соседние) и слегка переливается.
+// Анимация воды. Важно: здесь нужен ОДИН onBeforeCompile, который делает и
+// анимацию, и свет факелов (см. src/shaders.js): раньше два независимых хука
+// затирали друг друга, из-за чего вода не рисовалась совсем.
 const waterUniforms = {
   uTime: { value: 0 },
   uAtlasCells: { value: new THREE.Vector2(ATLAS_COLS, ATLAS_ROWS) },
 };
-waterMat.onBeforeCompile = (shader) => {
-  Object.assign(shader.uniforms, waterUniforms);
-  shader.fragmentShader = shader.fragmentShader
-    .replace('#include <common>', `#include <common>
-uniform float uTime;
-uniform vec2 uAtlasCells;
-varying vec3 vHeldWorldPos;`)
-    .replace('#include <map_fragment>', `
-  {
-    vec2 t8 = vMapUv * uAtlasCells;
-    vec2 tileBase = floor(t8) / uAtlasCells;
-    vec2 local = fract(t8);
-    float wob = sin(uTime * 1.3 + vHeldWorldPos.x * 1.7 + vHeldWorldPos.z * 1.1)
-              + cos(uTime * 0.9 + vHeldWorldPos.z * 1.9 - vHeldWorldPos.x * 0.7);
-    vec2 wuv = tileBase + fract(local + wob * 0.045) / uAtlasCells;
-    vec4 sampledDiffuseColor = texture2D(map, wuv);
-    float shimmer = 0.94 + 0.06 * sin(uTime * 2.1 + vHeldWorldPos.x * 2.3 + vHeldWorldPos.z * 1.7);
-    diffuseColor *= sampledDiffuseColor * shimmer;
-  }
-`);
-};
+waterMat.onBeforeCompile = waterShaderHook(waterUniforms, heldLightUniforms);
 
 const sky = new Sky(THREE, scene);
 sky.viewDistance = settings.viewDistance;
@@ -300,8 +253,9 @@ let caveSpawnT = 10;             // таймер пещерного спавна
 // Подземный туман: кэш высоты поверхности под игроком и цвет глубинной дымки
 let surfCacheKey = '';
 let surfCacheH = 0;
-let undergroundF = 0;
-const caveFogColor = new THREE.Color(0x04050a);
+let undergroundF = 0;      // сглаженная «подземность» — по ней строится пещерный туман
+let caveRoof = 0;          // 1 — над головой камень, 0 — открытая яма или колодец
+const caveFogColor = new THREE.Color(CAVE_FOG_COLOR);
 const bgColor = new THREE.Color();
 // Звуки мобов с затуханием по расстоянию
 mobManager.onSound = (kind, dist, type) => {
@@ -3021,14 +2975,25 @@ function frame() {
     // а не в серо-голубом фоне. Чем глубже игрок, тем ближе и чернее туман.
     {
       const bxp = Math.floor(player.pos.x), bzp = Math.floor(player.pos.z);
-      const sk = `${bxp},${bzp}`;
-      if (sk !== surfCacheKey) { surfCacheKey = sk; surfCacheH = world.heightAt(bxp, bzp); }
-      undergroundF = Math.max(0, Math.min(1, (surfCacheH - 5 - player.pos.y) / 9));
+      const sk = `${bxp},${bzp},${Math.floor(player.pos.y)}`;
+      if (sk !== surfCacheKey) {
+        surfCacheKey = sk;
+        surfCacheH = world.heightAt(bxp, bzp);
+        // Видно ли над головой небо: в открытом колодце, яме или на дне шахты
+        // тьма не такая глухая, как в закрытой пещере — там светит небо.
+        const eyeY = Math.floor(player.pos.y + 1.7);
+        let open = true;
+        for (let y = eyeY; y <= Math.min(world.worldHeight - 1, surfCacheH); y++) {
+          if (world.isSolidAt(bxp, y, bzp)) { open = false; break; }
+        }
+        caveRoof = open ? 0 : 1;
+      }
+      undergroundF = stepCaveFog(
+        undergroundF, caveFogTarget(surfCacheH, player.pos.y, caveRoof === 0), dt);
       if (undergroundF > 0.01) {
-        caveFogColor.setHex(0x04050a);
-        scene.fog.color.lerp(caveFogColor, undergroundF * 0.94);
-        scene.fog.near += (5 - scene.fog.near) * undergroundF;
-        scene.fog.far += (30 - scene.fog.far) * undergroundF;
+        scene.fog.color.lerp(caveFogColor, undergroundF * 0.9);
+        scene.fog.near += (CAVE_FOG_NEAR - scene.fog.near) * undergroundF;
+        scene.fog.far += (CAVE_FOG_FAR - scene.fog.far) * undergroundF;
         bgColor.copy(scene.fog.color);
         scene.background = bgColor;
       }
@@ -3059,13 +3024,17 @@ function frame() {
     }
     ui.setUnderwater(player.headInWater);
     if (player.headInWater) {
-      scene.fog.near = 2; scene.fog.far = 18;
-      scene.fog.color.setHex(0x1a4a8a);
+      // Под водой видно дальше и светлее, чем раньше: тёмно-синяя мгла до
+      // горизонта больше не превращает экран в сплошное пятно.
+      scene.fog.near = 3; scene.fog.far = 26;
+      scene.fog.color.setHex(0x245d9e);
       scene.background = scene.fog.color;
     }
 
     particles.update(dt);
-    ui.setDebug(debugVisible, fpsEma, player.pos, L);
+    ui.setDebug(debugVisible, fpsEma, player.pos, L, {
+      cave: undergroundF, fogNear: scene.fog.near, fogFar: scene.fog.far,
+    });
     checkOrientation();
   } else if (world && player) {
     // В меню/паузе — медленный облёт вокруг игрока, живой фон

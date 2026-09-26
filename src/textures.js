@@ -109,14 +109,16 @@ function leavesFill(data, rng, base, holes = 0.14) {
 
 const painters = {
   [T.GRASS_TOP](data, rng) {
-    noisyFill(data, rng, [98, 168, 68], 18);
+    // Трава темнее остальных блоков: так газон не «светится» на солнце
+    // и лучше сочетается с землёй и камнем.
+    noisyFill(data, rng, [78, 140, 54], 16);
     for (let i = 0; i < 14; i++) {
       const x = (rng() * TILE) | 0, y = (rng() * TILE) | 0;
-      px(data, x, y, 76, 140, 50);
+      px(data, x, y, 58, 112, 40);
     }
     for (let i = 0; i < 6; i++) {
       const x = (rng() * TILE) | 0, y = (rng() * TILE) | 0;
-      px(data, x, y, 120, 190, 84);
+      px(data, x, y, 96, 160, 68);
     }
   },
   [T.GRASS_SIDE](data, rng) {
@@ -126,7 +128,7 @@ const painters = {
       const h = 2 + ((rng() * 3) | 0);
       for (let y = 0; y < h; y++) {
         const v = (rng() - 0.5) * 30;
-        px(data, x, y, 98 + v, 168 + v, 68 + v);
+        px(data, x, y, 78 + v, 140 + v, 54 + v);
       }
     }
   },
@@ -305,7 +307,7 @@ const painters = {
         let xx = x;
         if (i > h * 0.55) xx += lean * (((i - h * 0.55) / 1.6) | 0);
         const v = (rng() - 0.5) * 26;
-        px(data, xx, 15 - i, 80 + v, 145 + v, 54 + v);
+        px(data, xx, 15 - i, 64 + v, 122 + v, 44 + v);
       }
     }
   },
@@ -921,6 +923,19 @@ function darkenTile(data, idx) {
   }
 }
 
+/**
+ * Пиксели одного тайла без канваса (RGBA). Нужны тестам и предпросмотру:
+ * цвет тайла можно проверить в node, где document недоступен.
+ */
+export function tilePixels(idx, darken = true) {
+  const data = new Uint8ClampedArray(TILE * TILE * 4);
+  // Сид по номеру тайла — стабильный вид между запусками
+  const rng = makeRng(1000 + idx * 77);
+  if (painters[idx]) painters[idx](data, rng);
+  if (darken) darkenTile(data, idx);
+  return data;
+}
+
 export function buildAtlas(darken = true) {
   const canvas = document.createElement('canvas');
   canvas.width = ATLAS_COLS * TILE;
@@ -929,19 +944,17 @@ export function buildAtlas(darken = true) {
 
   for (const key of Object.keys(painters)) {
     const idx = Number(key);
+    const px = tilePixels(idx, darken);
     const img = ctx.createImageData(TILE, TILE);
-    // Сид по номеру тайла — стабильный вид между запусками
-    const rng = makeRng(1000 + idx * 77);
-    painters[idx](img.data, rng);
-    if (darken) darkenTile(img.data, idx);
+    img.data.set(px);
     const tx = (idx % ATLAS_COLS) * TILE;
     const ty = ((idx / ATLAS_COLS) | 0) * TILE;
     ctx.putImageData(img, tx, ty);
 
     // Средний цвет тайла — для частиц и иконок
     let r = 0, g = 0, b = 0, n = 0;
-    for (let i = 0; i < img.data.length; i += 4) {
-      if (img.data[i + 3] > 200) { r += img.data[i]; g += img.data[i + 1]; b += img.data[i + 2]; n++; }
+    for (let i = 0; i < px.length; i += 4) {
+      if (px[i + 3] > 200) { r += px[i]; g += px[i + 1]; b += px[i + 2]; n++; }
     }
     if (n > 0) {
       tileColors[idx] = [r / n, g / n, b / n];

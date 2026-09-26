@@ -8,22 +8,59 @@ const S = CONFIG.CHUNK_SIZE;
 // пустыни — примерно 10% мира, снежные зоны — около 8%
 const DRY_T = 0.735;      // сухие (пустынные) зоны
 const COLD_T = 0.74;      // холодные (снежные) зоны
-const ROCK_H = 44;        // выше — голый камень
+const ROCK_H = 41;        // выше — голый камень (горные склоны и скалы)
 const PEAK_H = 51;        // выше — снежные вершины
 const H = CONFIG.WORLD_HEIGHT;
 const SEA = CONFIG.SEA_LEVEL;
 const FEATURE_CELL = 160;       // глобальная сетка для карьер и разломов
 // Пещеры-«черви»: ходы стартуют в чанках вокруг и вырезаются там, где проходят
 const CAVE_ORIGIN_R = 5;        // из скольких чанков вокруг может прийти ход
-const CAVE_MAX_REACH = 76;      // максимальная длина хода (с ветками) от точки старта
+const CAVE_MAX_REACH = 96;      // максимальная длина хода (с ветками) от точки старта
 const CAVE_BOTTOM = 5;          // ниже — сланцевое дно
 const CAVE_TOP = 46;            // выше ходы не поднимаются
-const CAVE_CRUST = 4;           // толщина нетронутой породы под поверхностью
+const CAVE_CRUST = 5;           // толщина нетронутой породы под поверхностью
 // Периметр колодца 3×3 — по нему идёт винтовая лестница входа в пещеру
 const RING_8 = [[-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0]];
 
 function idx(x, y, z) {
   return (y * S + z) * S + x;
+}
+
+/**
+ * Выравнивание пола пещер: где рядом с проходимым полом зияет яма глубже двух
+ * блоков, подсыпаем камень — спуски и подъёмы превращаются в ступени по два
+ * блока, по которым можно и спуститься, и подняться, не падая.
+ * @param {Chunk} chunk
+ * @param {Int16Array} terrainHeight высоты поверхности по колонкам чанка
+ * @param {number} passes сколько раз повторить проход (склоны чинятся за полом)
+ * @param {{x: number, z: number}|null} protect вход-лестница, который не трогаем
+ */
+function alignCaveFloors(chunk, terrainHeight, passes, protect = null) {
+  for (let pass = 0; pass < passes; pass++) {
+    for (let z = 0; z < S; z++) {
+      for (let x = 0; x < S; x++) {
+        if (protect && Math.abs(x - protect.x) <= 1 && Math.abs(z - protect.z) <= 1) continue;
+        for (let y = Math.min(terrainHeight[z * S + x] - 4, CAVE_TOP); y >= 4; y--) {
+          if (chunk.get(x, y, z) !== BLOCK.AIR) continue;
+          // над полом должно быть место в рост игрока (1.8 блока)
+          if (chunk.get(x, y + 1, z) !== BLOCK.AIR) continue;
+          if (!isSolid(chunk.get(x, y - 1, z))) continue;          // под ногами не пол
+          for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const nx = x + dx, nz = z + dz;
+            if (nx < 0 || nz < 0 || nx >= S || nz >= S) continue;
+            if (protect && Math.abs(nx - protect.x) <= 1 && Math.abs(nz - protect.z) <= 1) continue;
+            if (chunk.get(nx, y, nz) !== BLOCK.AIR) continue;      // туда не шагнуть
+            if (chunk.get(nx, y - 1, nz) !== BLOCK.AIR) continue;  // там не яма
+            let yf = y - 1;
+            while (yf > 5 && chunk.get(nx, yf - 1, nz) === BLOCK.AIR) yf--;
+            if (chunk.get(nx, yf - 1, nz) === BLOCK.WATER) continue;   // озеро не засыпаем
+            if (yf < 5 || y - yf < 3) continue;
+            for (let fy = yf; fy <= y - 2; fy++) chunk.set(nx, fy, nz, BLOCK.STONE);
+          }
+        }
+      }
+    }
+  }
 }
 
 export class Chunk {
@@ -99,16 +136,28 @@ export class World {
     const cont = fbm2d(wx * 0.006, wz * 0.006, seed, 4);           // континентальность
     const hills = fbm2d(wx * 0.03, wz * 0.03, seed + 991, 3);      // холмы
     const mt = fbm2d(wx * 0.0022, wz * 0.0022, seed + 77, 2);      // горные массивы
+    const massif = fbm2d(wx * 0.0012 + 7, wz * 0.0012 - 11, seed + 411, 2);  // крупные массивы
     const ridgeN = fbm2d(wx * 0.0048 + 13, wz * 0.0048 - 27, seed + 505, 3);
     const c = Math.tanh((cont - 0.5) * 5);
     let h = SEA + 3 + c * 18 + (hills - 0.5) * 12;
-    const mountain = Math.max(0, mt - 0.46) / 0.54;
+    // Горы двух порядков: обычные хребты и крупные массивы. Массивы тянутся
+    // сотни блоков и поднимают хребты на десятки блоков — это «большие горы».
+    const mountain = Math.max(0, mt - 0.42) / 0.58;
+    const big = Math.max(0, massif - 0.4) / 0.6;
+    const amp = 38 * (1 + big * 0.55);
     // Острые пики: степень выше единицы делает подножие пологим, а вершину — крутой;
-    // зазубренный гребень (ridge) добавляет горам резкие кромки.
-    h += Math.pow(mountain, 1.9) * 34;
+    // зазубренный гребень (ridge) добавляет горам резкие кромки и скалы.
+    h += Math.pow(mountain, 1.7) * amp;
     const ridge = 1 - Math.abs(ridgeN * 2 - 1);
-    h += Math.pow(ridge, 3) * mountain * 22;
-    return Math.max(3, Math.min(H - 3, Math.round(h)));
+    h += Math.pow(ridge, 2.5) * mountain * (24 + big * 12);
+    // Мягкий потолок: у самого верха мира горы выполаживаются, а не спиливаются
+    // в одно плоское плато — иначе большие массивы выглядели бы столешницей.
+    const ceiling = H - 3;
+    if (h > ceiling - 10) {
+      const over = h - (ceiling - 10);
+      h = ceiling - 10 + 10 * (1 - Math.exp(-over / 10));
+    }
+    return Math.max(3, Math.min(ceiling, Math.round(h)));
   }
 
   /**
@@ -260,9 +309,9 @@ export class World {
 
     // Подземный зал: несколько перекрывающихся эллипсоидов — неровные стены и свод
     const room = (rng, x, y, z) => {
-      const rh = 3.2 + rng() * 3.6, rv = 2.0 + rng() * 1.6;
+      const rh = 4.2 + rng() * 4.4, rv = 2.6 + rng() * 2.0;
       carve(x, y, z, rh, rv);
-      const blobs = 2 + ((rng() * 3) | 0);
+      const blobs = 3 + ((rng() * 4) | 0);
       for (let i = 0; i < blobs; i++) {
         const a = rng() * Math.PI * 2, d = rh * (0.4 + rng() * 0.5);
         carve(x + Math.cos(a) * d, y + (rng() - 0.6) * rv, z + Math.sin(a) * d,
@@ -325,10 +374,10 @@ export class World {
           const y = CAVE_BOTTOM + 3 + rng() * Math.max(6, Math.min(CAVE_TOP, surf - CAVE_CRUST - 3) - CAVE_BOTTOM - 3);
           const yaw = rng() * Math.PI * 2;
           const pitch = (rng() - 0.6) * 0.5;
-          const big = rng() < 0.12;
-          const radius = big ? 2.4 + rng() * 1.5 : 1.3 + rng() * 1.0;
-          const length = Math.floor(38 + rng() * 52);
-          if (rng() < 0.28) room(rng, x, y, z);
+          const big = rng() < 0.3;
+          const radius = big ? 3.0 + rng() * 1.8 : 1.6 + rng() * 1.1;
+          const length = Math.floor(44 + rng() * 64);
+          if (rng() < 0.38) room(rng, x, y, z);
           worm(rng, x, y, z, yaw, pitch, length, radius, 0, 0);
           // Часто из той же точки ход идёт и в обратную сторону — зал оказывается посередине
           if (rng() < 0.5) {
@@ -402,32 +451,9 @@ export class World {
     this.carveCaves(chunk, terrainHeight, carvedTop);
 
     // Выравнивание пола пещер: где рядом с полом зияет яма глубже двух блоков,
-    // подсыпаем камень. Спуски и подъёмы превращаются в ступени по два блока —
-    // по ним можно и спуститься, и подняться, не падая. Проход в два блока
-    // повторяем дважды: первый проход поднимает пол, второй чинит склоны за ним.
-    for (let pass = 0; pass < 2; pass++) {
-      for (let z = 0; z < S; z++) {
-        for (let x = 0; x < S; x++) {
-          for (let y = Math.min(terrainHeight[z * S + x] - 4, CAVE_TOP); y >= 4; y--) {
-            if (chunk.get(x, y, z) !== BLOCK.AIR) continue;
-            // над полом должно быть место в рост игрока (1.8 блока)
-            if (chunk.get(x, y + 1, z) !== BLOCK.AIR) continue;
-            if (!isSolid(chunk.get(x, y - 1, z))) continue;          // под ногами не пол
-            for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-              const nx = x + dx, nz = z + dz;
-              if (nx < 0 || nz < 0 || nx >= S || nz >= S) continue;
-              if (chunk.get(nx, y, nz) !== BLOCK.AIR) continue;      // туда не шагнуть
-              if (chunk.get(nx, y - 1, nz) !== BLOCK.AIR) continue;  // там не яма
-              let yf = y - 1;
-              while (yf > 5 && chunk.get(nx, yf - 1, nz) === BLOCK.AIR) yf--;
-              if (chunk.get(nx, yf - 1, nz) === BLOCK.WATER) continue;   // озеро не засыпаем
-              if (yf < 5 || y - yf < 3) continue;
-              for (let fy = yf; fy <= y - 2; fy++) chunk.set(nx, fy, nz, BLOCK.STONE);
-            }
-          }
-        }
-      }
-    }
+    // подсыпаем камень. Проход в два блока повторяем дважды: первый поднимает
+    // пол, второй чинит склоны за ним.
+    alignCaveFloors(chunk, terrainHeight, 2);
 
     // Вход в пещеру: ищем место у подножия склона (подошва горы, холма или
     // обрыва) с тонкой породой над полостью и прорубаем просторный колодец 3×3
@@ -644,6 +670,10 @@ export class World {
       }
     }
 
+    // Рельеф пола мог выломать новые ямки — выравниваем ещё раз, не трогая
+    // лестницу входа, чтобы в больших пещерах не оставалось отвесных провалов.
+    if (entX >= 0) alignCaveFloors(chunk, terrainHeight, 1, { x: entX, z: entZ });
+
     // Сундуки с лутом в глубоких гротах: редко, на сухом полу, подальше от входа
     {
       const rngChest = makeRng(hash3(cx, 71, cz, seed) * 0x7fffffff);
@@ -721,6 +751,49 @@ export class World {
       }
     }
 
+    // Валуны и скальные выходы: крупные глыбы на поверхности. Возле гор их
+    // больше и они выше — там встречаются настоящие скалы-пальцы, а на равнине
+    // попадаются одиночные валуны.
+    {
+      const rngRock = makeRng(hash3(cx, 23, cz, seed) * 0x7fffffff);
+      const roll = rngRock();
+      const rocks = roll < 0.28 ? 0 : roll < 0.62 ? 1 : roll < 0.86 ? 2 : 3;
+      for (let r = 0; r < rocks; r++) {
+        const rx = 3 + ((rngRock() * (S - 6)) | 0);
+        const rz = 3 + ((rngRock() * (S - 6)) | 0);
+        const baseH = terrainHeight[rz * S + rx];
+        if (baseH <= SEA + 1) continue;                       // в воде и на пляже глыб нет
+        const rocky = baseH >= ROCK_H - 8;                    // у гор — крупнее и чаще
+        const spire = rocky && rngRock() < 0.32;              // скала-палец
+        const rad = spire ? 1.8 + rngRock() * 1.6
+          : (rocky ? 1.7 : 1.2) + rngRock() * (rocky ? 1.7 : 1.0);
+        const tall = spire ? 4 + rngRock() * 5 : 1.0 + rngRock() * (rocky ? 1.6 : 1.0);
+        const cold = this.isCold(ox + rx, oz + rz) || baseH >= PEAK_H - 2;
+        const steps = Math.ceil(rad);
+        for (let dz = -steps; dz <= steps; dz++) {
+          for (let dx = -steps; dx <= steps; dx++) {
+            const wx = rx + dx, wz = rz + dz;
+            if (wx < 1 || wz < 1 || wx >= S - 1 || wz >= S - 1) continue;
+            const d2 = (dx * dx + dz * dz) / (rad * rad);
+            if (d2 > 1) continue;
+            const h = terrainHeight[wz * S + wx];
+            const profile = Math.pow(Math.max(0, 1 - d2), spire ? 1.05 : 0.5);
+            const top = h + Math.round(tall * profile);
+            for (let y = h; y <= top; y++) {
+              if (y < 1 || y >= H) continue;
+              const cur = chunk.get(wx, y, wz);
+              if (cur === BLOCK.WATER || cur === BLOCK.ICE) continue;
+              if (y > h && cur !== BLOCK.AIR) continue;       // не ломаем деревья и постройки
+              const kind = rngRock();
+              const was = y === top && cold ? BLOCK.SNOW
+                : kind < 0.62 ? BLOCK.STONE : kind < 0.82 ? BLOCK.COBBLE : BLOCK.MOSSY;
+              chunk.set(wx, y, wz, was);
+            }
+          }
+        }
+      }
+    }
+
     // Деревья разных пород (полностью внутри чанка, чтобы не пересекать границы).
     // Между деревьями держим дистанцию: кроны разных пород не должны
     // срастаться в один сплошной комок листвы.
@@ -736,7 +809,7 @@ export class World {
       const tx = 3 + ((rng() * (S - 6)) | 0);
       const tz = 3 + ((rng() * (S - 6)) | 0);
       const th = terrainHeight[tz * S + tx];
-      if (th <= SEA + 1 || th > 44) continue;
+      if (th <= SEA + 1 || th > ROCK_H) continue;
       const surface = chunk.get(tx, th, tz);
       if (surface !== BLOCK.GRASS && surface !== BLOCK.SNOW) continue;
       const cold = this.isCold(ox + tx, oz + tz);

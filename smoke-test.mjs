@@ -18,6 +18,12 @@ import {
 } from './src/crafts.js';
 import { ITEM, itemDef, itemDescription, foodValue, isFood, blockItem, blockDropItem, breakTime, itemDamage, maxStack, placeBlockId, toolKind, itemName } from './src/items.js';
 import { spriteNames } from './src/icons.js';
+import { tilePixels, T as TILE_ID, ATLAS_COLS, ATLAS_ROWS } from './src/textures.js';
+import { Sky } from './src/sky.js';
+import { heldLightVertex, heldLightFragment, waterFragment, waterShaderHook,
+  varyingMismatches, usesVarying, vertexDeclares, fragmentDeclares } from './src/shaders.js';
+import { CAVE_FOG_NEAR, CAVE_FOG_FAR, CAVE_FOG_COLOR, CAVE_OPEN_CAP,
+  caveFogTarget, stepCaveFog } from './src/fog.js';
 import { CONFIG } from './src/config.js';
 import { Furnace, serializeFurnaces, deserializeFurnaces, fuelDuration, smeltResult } from './src/furnace.js';
 import { STRINGS } from './src/i18n.js';
@@ -85,7 +91,7 @@ check('heightAt deterministic', world.heightAt(10, -20) === world.heightAt(10, -
 check('heightAt in bounds', (() => {
   for (let i = 0; i < 500; i++) {
     const h = world.heightAt((i * 37) % 1000, (i * 91) % 1000);
-    if (h < 3 || h > 58) return false;
+    if (h < 3 || h > CONFIG.WORLD_HEIGHT - 3) return false;
   }
   return true;
 })());
@@ -449,6 +455,7 @@ for (let cz = -6; cz <= 6; cz++) {
 check('decor (grass/flowers) generated', decorCount > 5);
 
 // Крестовый меш: +8 вершин и +24 индекса на один декор-блок
+wd.setBlock(2, 60, 2, 0);               // гарантированно пустая клетка (там могли быть валуны)
 const meshA = meshChunk(THREE, wd, 0, 0).opaque;
 wd.setBlock(2, 60, 2, 15); // трава гарантированно в воздухе
 const meshB = meshChunk(THREE, wd, 0, 0).opaque;
@@ -1124,8 +1131,28 @@ check('сундук: разметка и стили панели', html.includes
     }
   }
   const share = withCave / cols;
-  check('пещеры: отдельные ходы, а не сплошной слой', share > 0.08 && share < 0.6, (share * 100).toFixed(1) + '% колонок');
+  // Пещеры стали крупнее и встречаются чаще (просьба игрока), поэтому верхняя
+  // граница выше: важно, что это по-прежнему отдельные ходы, а не сплошной слой.
+  check('пещеры: отдельные ходы, а не сплошной слой', share > 0.08 && share < 0.8, (share * 100).toFixed(1) + '% колонок');
   check('пещеры: ходы уходят в глубину и поднимаются выше', deep > 300 && high > 100, 'глубоко ' + deep + ', высоко ' + high);
+  check('пещеры: мир не превратился в решето', (() => {
+    // Колонок, где пещера занимает больше половины подземной толщи, должно быть мало
+    let hollow = 0, seen = 0;
+    for (let cx = -3; cx <= 3; cx++) {
+      for (let cz = -3; cz <= 3; cz++) {
+        const c = cw.getChunk(cx, cz);
+        for (let x = 0; x < S; x++) {
+          for (let z = 0; z < S; z++) {
+            const h = cw.heightAt(cx * S + x, cz * S + z);
+            let air = 0, total = 0;
+            for (let y = 5; y < h - 2; y++) { total++; if (c.get(x, y, z) === BLOCK.AIR) air++; }
+            if (total > 0) { seen++; if (air / total > 0.5) hollow++; }
+          }
+        }
+      }
+    }
+    return hollow / seen < 0.05;
+  })());
 }
 
 // ---- Плиты, забор, наковальня, присед, дроп мобов, музыка, большие деревья ----
@@ -1465,6 +1492,189 @@ check('сундук: разметка и стили панели', html.includes
   check('наковальня, забор и берёзовые доски названы в обоих языках',
     [BLOCK.ANVIL, BLOCK.FENCE, BLOCK.BIRCH_PLANKS, BLOCK.PLANK_SLAB]
       .every((id) => both.every((l) => BLOCK_NAMES[l][id])));
+}
+
+// ---- Шейдеры: вода, свет факела, согласованность varying ----
+{
+  const lib = THREEReal.ShaderLib.basic;
+  const water = { uniforms: {}, vertexShader: lib.vertexShader, fragmentShader: lib.fragmentShader };
+  const uniforms = { uTime: { value: 0 }, uAtlasCells: { value: new THREEReal.Vector2(ATLAS_COLS, ATLAS_ROWS) } };
+  const held = { uHeldLightPos: { value: null }, uHeldLight: { value: 0 }, uHeldLightRadius: { value: 8.5 } };
+  waterShaderHook(uniforms, held)(water);
+  check('вода: вершинный и фрагментный шейдеры согласованы (иначе вода не рисуется вовсе)',
+    varyingMismatches(water.vertexShader, water.fragmentShader).length === 0,
+    varyingMismatches(water.vertexShader, water.fragmentShader).join(','));
+  check('вода: анимация тайла берёт размер атласа из униформы, а не из хардкода',
+    water.fragmentShader.includes('uniform vec2 uAtlasCells;')
+    && water.fragmentShader.includes('vMapUv * uAtlasCells') && !/[^.\w]8\.0/.test(water.fragmentShader));
+  check('вода: свет факела в руке подключён тем же хуком (один onBeforeCompile, а не два)',
+    water.fragmentShader.includes('torchL = max(torchL')
+    && water.vertexShader.includes('vHeldWorldPos = (modelMatrix')
+    && water.uniforms.uTime && water.uniforms.uAtlasCells);
+  check('вода: получила и униформы света факела в руке (uHeldLight)',
+    water.uniforms.uHeldLight === held.uHeldLight && water.uniforms.uHeldLightRadius === held.uHeldLightRadius
+    && water.uniforms.uHeldLightPos === held.uHeldLightPos);
+  // Детектор действительно ловит старый баг: без правки света varying не объявлен
+  const naive = { vertexShader: lib.vertexShader, fragmentShader: waterFragment(lib.fragmentShader) };
+  check('детектор ловит потерянный vHeldWorldPos (регрессия воды)',
+    varyingMismatches(naive.vertexShader, naive.fragmentShader).length > 0,
+    varyingMismatches(naive.vertexShader, naive.fragmentShader).join(','));
+  check('вода: vHeldWorldPos объявлен и в вершинном, и во фрагментном шейдере',
+    vertexDeclares(water.vertexShader, 'vHeldWorldPos') && fragmentDeclares(water.fragmentShader, 'vHeldWorldPos')
+    && usesVarying(water.fragmentShader, 'vHeldWorldPos'));
+  const terrain = { vertexShader: heldLightVertex(lib.vertexShader), fragmentShader: heldLightFragment(lib.fragmentShader) };
+  check('земля: свет факела согласован с вершинным шейдером',
+    varyingMismatches(terrain.vertexShader, terrain.fragmentShader).length === 0);
+  check('детектор не ругается на нетронутые шейдеры three.js',
+    varyingMismatches(lib.vertexShader, lib.fragmentShader).length === 0);
+  check('в атласе 8 колонок и 9 рядов — вода не уезжает в пустой тайл',
+    ATLAS_COLS === 8 && ATLAS_ROWS === 9);
+}
+
+// ---- Трава темнее ----
+{
+  const avg = (idx) => {
+    const d = tilePixels(idx);
+    let s = 0, n = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 200) { s += (d[i] + d[i + 1] + d[i + 2]) / 3; n++; }
+    return n ? s / n : 0;
+  };
+  const top = avg(TILE_ID.GRASS_TOP), side = avg(TILE_ID.GRASS_SIDE);
+  check('трава сверху заметно темнее прежней (было ~96)', top < 85 && top > 50, 'средняя яркость ' + top.toFixed(1));
+  check('трава сбоку тоже притемнена вместе с верхом', side < 92 && side > 50, 'средняя яркость ' + side.toFixed(1));
+  check('трава осталась зелёной, а не серой', (() => {
+    const d = tilePixels(TILE_ID.GRASS_TOP);
+    let g = 0, r = 0, b = 0, n = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 200) { r += d[i]; g += d[i + 1]; b += d[i + 2]; n++; }
+    return g / n > r / n * 1.5 && g / n > b / n * 2;
+  })());
+}
+
+// ---- Тень от деревьев ----
+{
+  const S = 9, H = 12, blocks = new Map();
+  const k = (x, y, z) => `${x},${y},${z}`;
+  for (let x = 0; x < S; x++) for (let z = 0; z < S; z++) blocks.set(k(x, 1, z), BLOCK.GRASS);
+  blocks.set(k(4, 2, 4), BLOCK.LOG); blocks.set(k(4, 3, 4), BLOCK.LOG); blocks.set(k(4, 4, 4), BLOCK.LOG);
+  for (let y = 5; y <= 6; y++) {
+    for (let dx = -2; dx <= 2; dx++) {
+      for (let dz = -2; dz <= 2; dz++) {
+        if (dx * dx + dz * dz <= 5) blocks.set(k(4 + dx, y, 4 + dz), BLOCK.LEAVES);
+      }
+    }
+  }
+  const treeWorld = { chunkSize: S, worldHeight: H, getBlock: (x, y, z) => blocks.get(k(x, y, z)) || BLOCK.AIR };
+  const mesh = meshChunk(THREE, treeWorld, 0, 0).opaque;
+  const topShade = (x, z) => {
+    const vals = [];
+    for (let v = 0; v < mesh.pos.length / 3; v++) {
+      if (mesh.pos[v * 3 + 1] !== 2) continue;
+      if (Math.floor(mesh.pos[v * 3]) !== x || Math.floor(mesh.pos[v * 3 + 2]) !== z) continue;
+      vals.push(mesh.col[v * 3]);
+    }
+    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+  };
+  const under = topShade(4, 4), away = topShade(0, 0), edge = topShade(8, 8);
+  check('под кроной земля темнее, чем на открытом месте', under < away * 0.8 && under < edge * 0.8,
+    `под кроной ${under.toFixed(3)}, рядом ${away.toFixed(3)}/${edge.toFixed(3)}`);
+  check('тень под деревом небольшая, а не чёрное пятно', under > 0.4, under.toFixed(3));
+  check('вне кроны земля не затенена', away > 0.75 && edge > 0.75, `${away.toFixed(3)}/${edge.toFixed(3)}`);
+  // Тень не должна «протекать» на открытую воду/лёд в стороне
+  const openShade = buildSkylight(treeWorld, 0, 0, S, H).shadeAt(0, 5, 0);
+  check('открытая колонка остаётся без тени', openShade === 1);
+  const underShade = buildSkylight(treeWorld, 0, 0, S, H).shadeAt(4, 5, 4);
+  check('под листвой небесный свет притемнён', underShade < 0.75 && underShade > 0.3, underShade.toFixed(3));
+}
+
+// ---- Ночь: темно, но не «ничего не видно» ----
+{
+  const skyTest = new Sky(THREEReal, new THREEReal.Scene());
+  let minL = 1, maxL = 0;
+  for (let i = 0; i < 9600; i++) {          // полный цикл суток шагами по 1/20 с
+    skyTest.update(1 / 20, { x: 0, y: 20, z: 0 });
+    minL = Math.min(minL, skyTest.lightLevel);
+    maxL = Math.max(maxL, skyTest.lightLevel);
+  }
+  check('ночь тёмная, но не чёрная: минимальная яркость 0.15..0.3', minL >= 0.15 && minL <= 0.3, minL.toFixed(3));
+  check('днём мир по-прежнему полностью освещён', maxL > 0.99, maxL.toFixed(3));
+  const sky2 = new Sky(THREEReal, new THREEReal.Scene());
+  let darkest = 255;
+  for (let i = 0; i < 9600; i++) {
+    sky2.update(1 / 20, { x: 0, y: 20, z: 0 });
+    // Цвет хранится в линейном пространстве, сравниваем в sRGB, как на экране
+    const srgb = Math.round(Math.pow(Math.max(0, sky2.scene.background.r), 1 / 2.2) * 255);
+    darkest = Math.min(darkest, srgb);
+  }
+  check('фон неба ночью не проваливается в абсолютно чёрный', darkest > 8 && darkest < 40, 'тёмный тон ' + darkest);
+}
+
+// ---- Пещерный туман ----
+{
+  check('на поверхности мглы нет', caveFogTarget(30, 31, false) === 0 && caveFogTarget(30, 31, true) === 0);
+  check('в закрытой пещере мгла сгущается полностью', caveFogTarget(30, 10, false) === 1);
+  check('в открытом колодце или яме тьма ослаблена', Math.abs(caveFogTarget(30, 10, true) - CAVE_OPEN_CAP) < 1e-9
+    && CAVE_OPEN_CAP < 0.5);
+  let fast = 0;
+  for (let i = 0; i < 3; i++) fast = stepCaveFog(fast, 1, 1 / 60);
+  check('мгла не накрывает экран за пару кадров', fast < 0.25, fast.toFixed(3));
+  let slow = 0;
+  for (let i = 0; i < 90; i++) slow = stepCaveFog(slow, 1, 1 / 60);
+  check('за полторы секунды под землёй мгла сгущается', slow > 0.7, slow.toFixed(3));
+  let out = 1;
+  for (let i = 0; i < 60; i++) out = stepCaveFog(out, 0, 1 / 60);
+  check('на выходе из пещеры светает за секунду', out < 0.25, out.toFixed(3));
+  check('в пещере видно дальше, чем раньше (дальняя граница мглы не меньше 30)',
+    CAVE_FOG_FAR >= 30 && CAVE_FOG_FAR > CAVE_FOG_NEAR && CAVE_FOG_COLOR === 0x0a0e16);
+}
+
+// ---- Генерация: большие горы, большие пещеры, валуны и скалы ----
+{
+  const w = new World(4242);
+  let maxH = 0, rocky = 0, n = 0;
+  for (let x = -450; x < 450; x += 10) {
+    for (let z = -450; z < 450; z += 10) {
+      const h = w.heightAt(x, z);
+      if (h > maxH) maxH = h;
+      if (h >= 41) rocky++;
+      n++;
+    }
+  }
+  check('горы стали выше прежнего максимума (было ~53)', maxH >= 57, 'максимум ' + maxH);
+  check('горы и скалы занимают заметную часть мира', rocky / n > 0.05, (rocky / n * 100).toFixed(1) + '% колонок');
+  const S = CONFIG.CHUNK_SIZE;
+  let air = 0, halls = 0, spires = 0, boulders = 0, chunks = 0;
+  // Площадка пошире: скалы-пальцы встречаются не в каждом углу массива
+  for (let cx = -6; cx <= 6; cx++) {
+    for (let cz = -6; cz <= 6; cz++) {
+      const c = w.getChunk(cx, cz);
+      chunks++;
+      for (let x = 0; x < S; x++) {
+        for (let z = 0; z < S; z++) {
+          const h = w.heightAt(cx * S + x, cz * S + z);
+          let run = 0, mx = 0;
+          for (let y = 4; y < Math.min(h - 2, 47); y++) {
+            if (c.get(x, y, z) === BLOCK.AIR) { air++; run++; if (run > mx) mx = run; } else run = 0;
+          }
+          if (mx >= 7) halls++;
+          // Глыбы над поверхностью: считаем каменные блоки выше рельефа
+          // (деревья не в счёт — у них своя проверка ниже)
+          let rise = 0;
+          for (let y = h + 1; y < Math.min(h + 14, w.worldHeight); y++) {
+            const id = c.get(x, y, z);
+            if (id !== BLOCK.STONE && id !== BLOCK.COBBLE && id !== BLOCK.MOSSY
+              && id !== BLOCK.SLATE && id !== BLOCK.GRAVEL && id !== BLOCK.SNOW) break;
+            rise++;
+          }
+          if (rise >= 1) boulders++;
+          if (rise >= 4) spires++;
+        }
+      }
+    }
+  }
+  check('пещер стало больше (воздух под землёй вырос)', air / chunks > 600, (air / chunks).toFixed(0) + ' клеток/чанк');
+  check('в пещерах появились высокие залы', halls > 20, 'столбцов-залов ' + halls);
+  check('на поверхности есть валуны', boulders > 40, 'колонок с глыбами ' + boulders);
+  check('встречаются высокие скалы-пальцы', spires > 3, 'скал ' + spires + ' на ' + chunks + ' чанков');
 }
 
 console.log(failed === 0 ? '\nВсе проверки пройдены' : `\nПровалено проверок: ${failed}`);
