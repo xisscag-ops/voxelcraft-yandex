@@ -833,6 +833,114 @@ check('в статах пистолета заданы зум и замедле�
   gun.PISTOL_STATS.adsFovFactor > 0 && gun.PISTOL_STATS.adsFovFactor < 1
   && gun.PISTOL_STATS.adsMoveFactor > 0 && gun.PISTOL_STATS.adsMoveFactor < 1);
 
+// ---- Пистолет в прицеле: в модели нет сквозных щелей ----
+{
+  // Та же цепочка, что в игре: камера → рука (handPivot) → модель.
+  // handPivot: у бедра 0.42/-0.36/-0.55, в прицеле 0/-0.072/-0.44.
+  const PIVOTS = {
+    hip: { px: 0.42, py: -0.36, pz: -0.55 },
+    ads: { px: 0, py: -0.072, pz: -0.44 },
+  };
+  const cos = Math.cos, sin = Math.sin;
+  // обратные повороты (R = Rx·Ry·Rz → обратный = Rz'·Ry'·Rx')
+  const localOf = (p, x, y, z) => {
+    let vx = x - (p.x || 0), vy = y - (p.y || 0), vz = z - (p.z || 0);
+    if (p.rotX) { const c = cos(p.rotX), s = sin(p.rotX); const ny = vy * c + vz * s, nz = -vy * s + vz * c; vy = ny; vz = nz; }
+    if (p.rotY) { const c = cos(p.rotY), s = sin(p.rotY); const nx = vx * c - vz * s, nz = vx * s + vz * c; vx = nx; vz = nz; }
+    if (p.rotZ) { const c = cos(p.rotZ), s = sin(p.rotZ); const nx = vx * c + vy * s, ny = -vx * s + vy * c; vx = nx; vy = ny; }
+    return { x: vx, y: vy, z: vz };
+  };
+  const inside = (p, x, y, z) => {
+    const l = localOf(p, x, y, z);
+    return Math.abs(l.x) <= p.w / 2 + 1e-9 && Math.abs(l.y) <= p.h / 2 + 1e-9 && Math.abs(l.z) <= p.d / 2 + 1e-9;
+  };
+  const insideModel = (x, y, z) => gun.PISTOL_PARTS.some((p) => inside(p, x, y, z));
+  // Линии-связки: стык рамки с рукоятью, скоба, ствол с затвором и магазин.
+  // Сквозная щель на такой линии — та самая «дырка» в модели.
+  const SEAMS = [
+    ['затвор↔рамка', -0.05, 0.055, -0.05],
+    ['рамка↔рукоять (перед)', 0.09, -0.02, -0.09],
+    ['рамка↔рукоять (зад)', 0.145, -0.02, -0.10],
+    ['рамка↔скоба (перед)', -0.05, -0.05, -0.105],
+    ['рамка↔скоба (зад)', 0.055, -0.05, -0.11],
+    ['ствол↔затвор', -0.205, 0.04, -0.02],
+    ['рукоять↔магазин', 0.135, -0.24, -0.30],
+    ['цевьё↔рамка', -0.13, -0.03, -0.085],
+  ];
+  const throughHoles = [];
+  for (const [label, z, y0, y1] of SEAMS) {
+    let run = 0;
+    for (let y = y0; y >= y1 - 1e-9; y -= 0.002) {
+      run = insideModel(0, y, z) ? 0 : run + 0.002;
+      if (run > 0.008) { throughHoles.push(label + '@' + y.toFixed(3)); break; }
+    }
+  }
+  check('в модели пистолета нет сквозных щелей (рамка, рукоять, скоба, магазин)',
+    throughHoles.length === 0, throughHoles.join(' '));
+
+  // Рука: ладонь и пальцы — часть модели, а предплечье с рукавом прячется в прицеле
+  const grip = gun.PISTOL_PARTS.find((p) => p.name === 'grip');
+  const gp = gun.PISTOL_GRIP_POINT;
+  const gripHeld = inside(grip, gp.x, gp.y, gp.z);
+  const palm = gun.PISTOL_PARTS.find((p) => p.name === 'palmSkin');
+  check('кисть — часть модели пистолета: ладонь и пальцы сжимают рукоять',
+    gun.PISTOL_HAND_PARTS.length >= 5
+    && gun.PISTOL_HAND_PARTS.every((n) => gun.PISTOL_PARTS.some((p) => p.name === n))
+    && !!palm && Math.abs(palm.x) < 0.02 && gripHeld,
+    'точка хвата внутри рукояти: ' + gripHeld);
+
+  // Поза: точка хвата рукояти в системе руки оказывается ровно там, где её
+  // держит кисть (иначе пистолет «висит у локтя»)
+  const poseOk = ['hip', 'ads'].every((k) => {
+    const pose = k === 'hip' ? gun.GUN_POSE_HIP : gun.GUN_POSE_ADS;
+    const hold = gun.PISTOL_HOLD[k];
+    const s = gun.PISTOL_VIEW_SCALE;
+    const q = { rx: pose.rx, ry: pose.ry, rz: pose.rz };
+    // поворот точки хвата модели тем же кватернионом, что и в игре
+    const cx = cos(q.rx / 2), sx = sin(q.rx / 2);
+    const cy = cos(q.ry / 2), sy = sin(q.ry / 2);
+    const cz = cos(q.rz / 2), sz = sin(q.rz / 2);
+    const Q = {
+      x: sx * cy * cz + cx * sy * sz, y: cx * sy * cz - sx * cy * sz,
+      z: cx * cy * sz + sx * sy * cz, w: cx * cy * cz - sx * sy * sz,
+    };
+    const v = { x: gp.x * s, y: gp.y * s, z: gp.z * s };
+    const tx = 2 * (Q.y * v.z - Q.z * v.y), ty = 2 * (Q.z * v.x - Q.x * v.z), tz = 2 * (Q.x * v.y - Q.y * v.x);
+    const r = {
+      x: v.x + Q.w * tx + (Q.y * tz - Q.z * ty),
+      y: v.y + Q.w * ty + (Q.z * tx - Q.x * tz),
+      z: v.z + Q.w * tz + (Q.x * ty - Q.y * tx),
+    };
+    return Math.abs(pose.px + r.x - hold.x) < 1e-3
+      && Math.abs(pose.py + r.y - hold.y) < 1e-3
+      && Math.abs(pose.pz + r.z - hold.z) < 1e-3;
+  });
+  check('пистолет держится в ладони: точка хвата рукояти совпадает с кистью в обеих позах', poseOk);
+
+  // В прицеле и у бедра модель не уходит за ближнюю плоскость камеры (0.1):
+  // иначе при повороте камеры части модели исчезают — в кадре появляется дыра
+  const NEAR = 0.1;
+  const nearClip = [];
+  for (const k of ['hip', 'ads']) {
+    const pose = k === 'hip' ? gun.GUN_POSE_HIP : gun.GUN_POSE_ADS;
+    const pivot = PIVOTS[k];
+    for (const p of gun.PISTOL_PARTS) {
+      // предплечье намеренно уходит за камеру (оно и не рисуется за ней)
+      if (gun.PISTOL_ARM_PARTS.includes(p.name)) continue;
+      const px = pose.px + (p.x || 0) * gun.PISTOL_VIEW_SCALE;
+      const py = pose.py + (p.y || 0) * gun.PISTOL_VIEW_SCALE;
+      const pz = pose.pz + (p.z || 0) * gun.PISTOL_VIEW_SCALE;
+      // приблизительная проверка: центр детали и её габарит впереди камеры
+      const back = pivot.pz + pz + Math.max(p.w, p.h, p.d) / 2 * gun.PISTOL_VIEW_SCALE;
+      if (back > -NEAR) nearClip.push(k + ':' + p.name + '(' + back.toFixed(3) + ')');
+    }
+  }
+  check('в прицеле и у бедра модель не задевает ближнюю плоскость камеры (нет дыр при повороте)',
+    nearClip.length === 0, nearClip.join(' '));
+  check('в прицеле предплечье и рукав прячутся (рука не лезет в кадр)',
+    gun.PISTOL_ARM_PARTS.length >= 3 && gun.PISTOL_HAND_PARTS.every((n) => !gun.PISTOL_ARM_PARTS.includes(n)));
+}
+
 // ---- Пуля: летит прямо, гаснет в блоке, бьёт моба ----
 {
   const proj = await import('./src/projectiles.js');
@@ -1681,9 +1789,11 @@ check('сундук: разметка и стили панели', html.includes
   check('горы и скалы занимают заметную часть мира', rocky / n > 0.05, (rocky / n * 100).toFixed(1) + '% колонок');
   const S = CONFIG.CHUNK_SIZE;
   let air = 0, halls = 0, spires = 0, boulders = 0, chunks = 0;
-  // Площадка пошире: скалы-пальцы встречаются не в каждом углу массива
-  for (let cx = -6; cx <= 6; cx++) {
-    for (let cz = -6; cz <= 6; cz++) {
+  let offRockBumps = 0;                    // каменные выросты на траве/снегу — их быть не должно
+  // Площадка пошире: каменные выходы живут только на скальном высокогорье,
+  // а горы встречаются не в каждом углу массива
+  for (let cx = -12; cx <= 12; cx++) {
+    for (let cz = -12; cz <= 12; cz++) {
       const c = w.getChunk(cx, cz);
       chunks++;
       for (let x = 0; x < S; x++) {
@@ -1703,7 +1813,10 @@ check('сундук: разметка и стили панели', html.includes
               && id !== BLOCK.SLATE && id !== BLOCK.GRAVEL && id !== BLOCK.SNOW) break;
             rise++;
           }
-          if (rise >= 1) boulders++;
+          if (rise >= 1) {
+            boulders++;
+            if (h < 40) offRockBumps++;      // глыба не на голом камне — это «каменный вырост» среди травы
+          }
           if (rise >= 4) spires++;
         }
       }
@@ -1711,8 +1824,63 @@ check('сундук: разметка и стили панели', html.includes
   }
   check('пещер стало больше (воздух под землёй вырос)', air / chunks > 600, (air / chunks).toFixed(0) + ' клеток/чанк');
   check('в пещерах появились высокие залы', halls > 20, 'столбцов-залов ' + halls);
-  check('на поверхности есть валуны', boulders > 40, 'колонок с глыбами ' + boulders);
+  check('на скальном высокогорье есть валуны', boulders > 40, 'колонок с глыбами ' + boulders);
   check('встречаются высокие скалы-пальцы', spires > 3, 'скал ' + spires + ' на ' + chunks + ' чанков');
+  check('каменные выросты не вырастают на траве, в лесу и на лугах', offRockBumps === 0,
+    'выростов вне скал ' + offRockBumps);
+}
+
+// ---- В каждом биоме — только свои деревья ----
+{
+  const S = CONFIG.CHUNK_SIZE;
+  const LOG_KIND = {
+    [BLOCK.LOG]: 'oak',
+    [BLOCK.BIRCH_LOG]: 'birch',
+    [BLOCK.SPRUCE_LOG]: 'conifer',      // ель и сосна растут на одном стволе-блоке
+  };
+  // Какие породы допустимы в биоме (см. World.treeSpeciesAt)
+  const ALLOWED = {
+    spruce: ['conifer'],
+    pine: ['conifer'],
+    oak: ['oak'],
+    birch: ['birch'],
+    forest: ['oak', 'birch'],
+  };
+  const byBiome = {};
+  let trunks = 0, wrong = 0;
+  for (const seed of [4242, 90210, 20260925]) {
+    const w = new World(seed);
+    for (let cx = -5; cx <= 5; cx++) {
+      for (let cz = -5; cz <= 5; cz++) {
+        const c = w.getChunk(cx, cz);
+        for (let x = 0; x < S; x++) {
+          for (let z = 0; z < S; z++) {
+            const wx = cx * S + x, wz = cz * S + z;
+            const h = w.heightAt(wx, wz);
+            const kind = LOG_KIND[c.get(x, h + 1, z)];
+            if (!kind) continue;
+            const ground = c.get(x, h, z);
+            if (ground !== BLOCK.GRASS && ground !== BLOCK.SNOW) continue;   // это ствол у земли, а не ветка
+            trunks++;
+            const species = w.treeSpeciesAt(wx, wz, h);
+            const key = species || 'нет';
+            byBiome[key] = byBiome[key] || {};
+            byBiome[key][kind] = (byBiome[key][kind] || 0) + 1;
+            if (!species || !ALLOWED[species].includes(kind)) wrong++;
+          }
+        }
+      }
+    }
+  }
+  check('в биомах растут деревья только своих пород', trunks > 100 && wrong === 0,
+    `стволов ${trunks}, чужих ${wrong} (${Object.entries(byBiome).map(([k, v]) => k + ':' + Object.keys(v).join('+')).join(', ')})`);
+  check('в тайге — только хвойные, в полях — только берёзы, на холмах — только дубы',
+    (byBiome.spruce ? Object.keys(byBiome.spruce).join() === 'conifer' : true)
+    && (byBiome.birch ? Object.keys(byBiome.birch).join() === 'birch' : true)
+    && (byBiome.oak ? Object.keys(byBiome.oak).join() === 'oak' : true),
+    JSON.stringify(byBiome));
+  check('в пустынях деревьев нет (там только кактусы)',
+    (byBiome['нет'] || {}) && Object.keys(byBiome['нет'] || {}).length === 0);
 }
 
 // ---- Биомы нового ландшафта: поля, холмы, пустыни с дюнами ----
