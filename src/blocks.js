@@ -67,6 +67,13 @@ export const BLOCK = {
   SNOWY_SAND: 53,
   VINE: 54,
   GLOW_SHROOM: 55,
+  // Лесная флора: кусты, ягодник, дикие цветы и грибы под кронами
+  BUSH: 56,
+  BERRY_BUSH: 57,
+  FLOWER_BLUE: 58,
+  FLOWER_WHITE: 59,
+  MUSHROOM_RED: 60,
+  MUSHROOM_BROWN: 61,
 };
 
 // tiles: [top, bottom, side] — индексы тайлов атласа
@@ -134,6 +141,13 @@ export const BLOCKS = [
   { id: 54, name: 'vine', solid: false, tiles: [62, 62, 62], break: 'fast', transparent: true, decor: true, hang: true },
   // Светящийся пещерный гриб: растение, которое немного освещает вокруг
   { id: 55, name: 'glow_shroom', solid: false, tiles: [63, 63, 63], break: 'fast', transparent: true, decor: true, emissive: true, lightRadius: 5.5 },
+  // Лесная флора: непроходимые растения-декор, как трава и цветы
+  { id: 56, name: 'bush', solid: false, tiles: [66, 66, 66], break: 'fast', transparent: true, decor: true },
+  { id: 57, name: 'berry_bush', solid: false, tiles: [67, 67, 67], break: 'fast', transparent: true, decor: true },
+  { id: 58, name: 'flower_blue', solid: false, tiles: [68, 68, 68], break: 'fast', transparent: true, decor: true },
+  { id: 59, name: 'flower_white', solid: false, tiles: [69, 69, 69], break: 'fast', transparent: true, decor: true },
+  { id: 60, name: 'mushroom_red', solid: false, tiles: [70, 70, 70], break: 'fast', transparent: true, decor: true },
+  { id: 61, name: 'mushroom_brown', solid: false, tiles: [71, 71, 71], break: 'fast', transparent: true, decor: true },
 ];
 
 // Плотная (без просветов) текстура листвы для внутренних граней кроны
@@ -157,6 +171,8 @@ export const BLOCK_NAMES = {
     46: 'Сундук', 47: 'Сундук', 48: 'Сундук', 49: 'Сундук',
     50: 'Берёзовые доски', 51: 'Забор', 52: 'Наковальня',
     53: 'Заснеженный песок', 54: 'Лиана', 55: 'Светящийся гриб',
+    56: 'Куст', 57: 'Ягодный куст', 58: 'Василёк', 59: 'Ромашка',
+    60: 'Красный гриб', 61: 'Бурый гриб',
   },
   en: {
     1: 'Grass', 2: 'Dirt', 3: 'Stone', 4: 'Cobblestone', 5: 'Sand',
@@ -174,6 +190,8 @@ export const BLOCK_NAMES = {
     46: 'Chest', 47: 'Chest', 48: 'Chest', 49: 'Chest',
     50: 'Birch planks', 51: 'Fence', 52: 'Anvil',
     53: 'Snowy sand', 54: 'Vine', 55: 'Glow mushroom',
+    56: 'Bush', 57: 'Berry bush', 58: 'Cornflower', 59: 'Daisy',
+    60: 'Red mushroom', 61: 'Brown mushroom',
   },
 };
 
@@ -190,6 +208,8 @@ export const BUILDER_PALETTE = [
   BLOCK.SANDSTONE, BLOCK.MOSSY, BLOCK.GRAVEL, BLOCK.ICE, BLOCK.CACTUS,
   BLOCK.COAL_ORE, BLOCK.IRON_ORE, BLOCK.GOLD_ORE, BLOCK.DIAMOND_ORE,
   BLOCK.OBSIDIAN, BLOCK.VINE, BLOCK.GLOW_SHROOM,
+  BLOCK.BUSH, BLOCK.BERRY_BUSH, BLOCK.FLOWER_BLUE, BLOCK.FLOWER_WHITE,
+  BLOCK.MUSHROOM_RED, BLOCK.MUSHROOM_BROWN,
 ];
 
 const FULL_BOUNDS = Object.freeze({ minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 1, maxZ: 1 });

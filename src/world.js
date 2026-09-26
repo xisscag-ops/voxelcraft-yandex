@@ -1,6 +1,6 @@
 // Мир: чанки-колонны, генерация рельефа, деревья, правки игрока
 import { BLOCK, BLOCKS, isDecor, isSolid, isTorch, torchSupport } from './blocks.js';
-import { fbm2d, makeRng, hash3 } from './noise.js';
+import { fbm2d, value2d, makeRng, hash3 } from './noise.js';
 import { CONFIG } from './config.js';
 
 const S = CONFIG.CHUNK_SIZE;
@@ -8,8 +8,8 @@ const S = CONFIG.CHUNK_SIZE;
 // пустыни — примерно 10% мира, снежные зоны — около 8%
 const DRY_T = 0.735;      // сухие (пустынные) зоны
 const COLD_T = 0.74;      // холодные (снежные) зоны
-const ROCK_H = 41;        // выше — голый камень (горные склоны и скалы)
-const PEAK_H = 51;        // выше — снежные вершины
+const ROCK_H = 46;        // выше — голый камень (горные склоны и скалы)
+const PEAK_H = 58;        // выше — снежные вершины
 const H = CONFIG.WORLD_HEIGHT;
 const SEA = CONFIG.SEA_LEVEL;
 const FEATURE_CELL = 160;       // глобальная сетка для карьер и разломов
@@ -17,7 +17,7 @@ const FEATURE_CELL = 160;       // глобальная сетка для кар
 const CAVE_ORIGIN_R = 5;        // из скольких чанков вокруг может прийти ход
 const CAVE_MAX_REACH = 96;      // максимальная длина хода (с ветками) от точки старта
 const CAVE_BOTTOM = 5;          // ниже — сланцевое дно
-const CAVE_TOP = 46;            // выше ходы не поднимаются
+const CAVE_TOP = 50;            // выше ходы не поднимаются
 const CAVE_CRUST = 5;           // толщина нетронутой породы под поверхностью
 // Периметр колодца 3×3 — по нему идёт винтовая лестница входа в пещеру
 const RING_8 = [[-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0]];
@@ -113,18 +113,28 @@ export class World {
     return c;
   }
 
-  // Температура: холодные (снежные) зоны — крупные, но редкие
+  // Температура: холодные (снежные) зоны — крупные, но редкие.
+  // Частота шума вдвое ниже прежней: биомы стали просторнее, границы — дальше.
   temperatureAt(wx, wz) {
-    return fbm2d(wx * 0.0016 + 40, wz * 0.0016 - 70, this.seed + 31, 3);
+    return fbm2d(wx * 0.00085 + 38.75, wz * 0.00085 - 69.75, this.seed + 31, 3);
   }
 
   // Сухие (пустынные) зоны
   dryAt(wx, wz) {
-    return fbm2d(wx * 0.0021 - 90, wz * 0.0021 + 55, this.seed + 17, 3);
+    return fbm2d(wx * 0.00115 - 88.75, wz * 0.00115 + 53.75, this.seed + 17, 3);
   }
 
   // Голый камень на высокогорье
   isRocky(h) { return h >= ROCK_H; }
+
+  // Линия голого камня и снежная линия «дышат» по высоте: граница снега и скал
+  // идёт неровной кромкой, как в Minecraft, а не ровной горизонталью.
+  rockLineAt(wx, wz) {
+    return ROCK_H + (fbm2d(wx * 0.017 + 5, wz * 0.017 - 9, this.seed + 2411, 2) - 0.5) * 8;
+  }
+  snowLineAt(wx, wz) {
+    return PEAK_H + (fbm2d(wx * 0.013 + 61, wz * 0.013 - 47, this.seed + 2601, 2) - 0.5) * 7;
+  }
 
   /**
    * Порода деревьев этой точки: в каждом биоме растут только свои деревья.
@@ -154,32 +164,31 @@ export class World {
   isCold(wx, wz) { return this.temperatureAt(wx, wz) > COLD_T; }
 
   // Равнины-поля: крупные плоские области, на которых рельеф прижат к нулю.
-  // Возвращает вес 0..1 (1 — совершенно плоское поле).
+  // Возвращает вес 0..1 (1 — совершенно плоское поле). Частота снижена почти
+  // вдвое: одно поле теперь тянется на сотни блоков, а не на десятки.
   plainsAt(wx, wz) {
-    const n = fbm2d(wx * 0.0031 + 911, wz * 0.0031 - 311, this.seed + 733, 2);
+    const n = fbm2d(wx * 0.0016 + 911, wz * 0.0016 - 311, this.seed + 733, 2);
     return smooth01((n - 0.55) / 0.14);
   }
 
   // Холмистые края: региональный усилитель мелкого рельефа (мягкие волны-холмы)
   hillCountryAt(wx, wz) {
-    const n = fbm2d(wx * 0.0026 - 53, wz * 0.0026 + 117, this.seed + 311, 2);
+    const n = fbm2d(wx * 0.0014 - 51.5, wz * 0.0014 + 116.5, this.seed + 311, 2);
     return smooth01((n - 0.56) / 0.12);
   }
 
   // Базовая высота поверхности без геологических особенностей.
-  // Мир делится на регионы-биомы по рельефу: плоские поля-луга, холмистая
-  // местность, высокие скальные горы с острыми гребнями, пустыни с дюнами;
-  // крупные кратеры с валом вырезаются отдельным слоем (featureAt).
+  // Рельеф строится как в Minecraft: континентальность задаёт сушу и океаны,
+  // горная страна — крупные хребты, а внутри неё «пики и долины» (ридж-шум со
+  // сплайном) рисуют острые гребни с покатыми подножиями; эрозия местами
+  // стачивает хребты в пологие предгорья. Между хребтами остаются долины с
+  // лесами, поэтому горы читаются грядой, а не сплошным белым куполом.
   baseHeightAt(wx, wz) {
     const seed = this.seed;
-    const cont = fbm2d(wx * 0.006, wz * 0.006, seed, 4);           // континентальность
-    const hills = fbm2d(wx * 0.03, wz * 0.03, seed + 991, 3);      // мелкий рельеф
-    const mt = fbm2d(wx * 0.0022, wz * 0.0022, seed + 77, 2);      // горные массивы
-    const massif = fbm2d(wx * 0.0012 + 7, wz * 0.0012 - 11, seed + 411, 2);  // крупные массивы
-    const ridgeN = fbm2d(wx * 0.0048 + 13, wz * 0.0048 - 27, seed + 505, 3);
-    const ridgeHi = fbm2d(wx * 0.012 + 41, wz * 0.012 - 8, seed + 909, 3);   // скальные зубья
-    const plainsW = this.plainsAt(wx, wz);                         // вес полей
-    const hillW = this.hillCountryAt(wx, wz);                      // вес холмистых краёв
+    const cont = fbm2d(wx * 0.0032, wz * 0.0032, seed, 4);           // континентальность
+    const hills = fbm2d(wx * 0.024, wz * 0.024, seed + 991, 3);      // мелкий рельеф
+    const plainsW = this.plainsAt(wx, wz);                          // вес полей
+    const hillW = this.hillCountryAt(wx, wz);                       // вес холмистых краёв
     const c = Math.tanh((cont - 0.5) * 5);
     // Континентальность в полях почти выключена: поле держится у уровня моря,
     // а не уезжает на дно океана или в гору.
@@ -188,27 +197,62 @@ export class World {
     // почти ровный стол (травяные просторы под застройку).
     const hillAmp = 12 * (1 + hillW * 1.7) * (1 - plainsW * 0.9);
     h += (hills - 0.5) * hillAmp;
-    // Горы двух порядков: обычные хребты и крупные массивы. Массивы тянутся
-    // сотни блоков и поднимают хребты на десятки блоков — это «большие горы».
-    // Сквозь поля горы если и прорываются, то редко и сильно ниже.
-    const mountain = Math.max(0, mt - 0.42) / 0.58;
-    const big = Math.max(0, massif - 0.4) / 0.6;
-    const mMask = 1 - plainsW * 0.78;
-    const amp = 41 * (1 + big * 0.6);
-    // Острые пики: степень выше единицы делает подножие пологим, а вершину — крутой;
-    // зазубренный гребень (ridge) добавляет горам резкие кромки и скалы.
-    h += Math.pow(mountain, 1.7) * amp * mMask;
-    const ridge = 1 - Math.abs(ridgeN * 2 - 1);
-    h += Math.pow(ridge, 2.2) * mountain * (26 + big * 14) * mMask;
-    // Второй, мелкий гребень: каменные зубья и расщелины на склонах —
-    // именно они дают «скальный» характер высоким горам.
-    const ridgeF = 1 - Math.abs(ridgeHi * 2 - 1);
-    h += Math.pow(ridgeF, 3.2) * mountain * 9 * mMask;
+
+    // ---- Горная страна: хребты с острыми вершинами ----
+    // Маска региона: горные гряды тянутся на тысячи блоков, между ними маска
+    // падает в ноль — там долины и равнины, а не «подножие купола».
+    const rangeN = fbm2d(wx * 0.00082 + 5.75, wz * 0.00082 - 12.25, seed + 411, 3);
+    const mRegion = smooth01((rangeN - 0.5) / 0.16);
+    const mMask = mRegion * (1 - plainsW * 0.85);
+    if (mMask > 0.002) {
+      // Ридж-мультифрактал: отражённый шум в четырёх октавах даёт острые линии
+      // гребней с широкими пологими долинами между ними — силуэт горной гряды,
+      // а не сплошное плато. Мультифрактальный вес гасит гребни в долинах.
+      // Доменный варп: линия гребня меандрирует, а не тянется прямой стеной
+      const warpX = (fbm2d(wx * 0.0041 + 551, wz * 0.0041 - 83, seed + 1901, 2) - 0.5) * 190;
+      const warpZ = (fbm2d(wx * 0.0041 - 277, wz * 0.0041 + 641, seed + 1907, 2) - 0.5) * 190;
+      const rwx = wx + warpX, rwz = wz + warpZ;
+      let rid = 0, amp = 1, freq = 0.0026, wsum = 0, signal = 1;
+      for (let i = 0; i < 4; i++) {
+        const n = value2d(rwx * freq + 13 + i * 3.7, rwz * freq - 27 - i * 2.3, seed + 505 + i * 1013);
+        // Отражённый шум с узкой вершиной: гребень — линия, а не полоса.
+        // Значения шума колоколообразны, поэтому «рид» сжимаем к нулю по краям.
+        const r = Math.max(0, 1 - Math.abs(n * 2 - 1) * 1.9) ** 2;
+        signal *= 0.5 + 0.5 * r;
+        rid += amp * r * signal;
+        wsum += amp;
+        amp *= 0.52;
+        freq *= 2.15;
+      }
+      rid = Math.min(1, (rid / wsum) * 3.1);
+      // Эрозия: стёртые горы ниже и положе, свежие — острые пики со скалами
+      const erosion = fbm2d(wx * 0.0014 + 211, wz * 0.0014 - 173, seed + 1213, 3);
+      const worn = smooth01((erosion - 0.42) / 0.24);
+      // Сплайн «пики-долины»: ниже порога — дно долины, выше — крутой подъём
+      // к гребню; степень выше единицы оставляет подножие пологим.
+      const peak = Math.pow(smooth01((rid - 0.16) / 0.6), 1.15 + worn * 0.85);
+      // Высота гребня меняется вдоль хребта: одни отрезки гряды — высокие пики,
+      // другие — пологие перевалы, поэтому вершины не сливаются в столешницу.
+      const crestAmp = 22 + 20 * fbm2d(wx * 0.0075 + 301, wz * 0.0075 - 149, seed + 1511, 2);
+      // Зубья на самом гребне: мелкий ридж-шум делает вершину зазубренной
+      const teethN = Math.max(0, 1 - Math.abs(value2d(wx * 0.02 + 77, wz * 0.02 - 61, seed + 909) * 2 - 1) * 1.7) ** 2;
+      // Предгорья приподнимают и долины между хребтами
+      h += mMask * (4 + peak * (crestAmp - worn * 14 + teethN * 10));
+      // Скальная шероховатость: уступы, осыпи и жёлоба только в горах и только
+      // там, где есть пик, — гладких склонов-«куполов» не остаётся.
+      const rough = (fbm2d(wx * 0.03 + 71, wz * 0.03 - 33, seed + 1717, 2) - 0.5) * 2;
+      h += mMask * peak * rough * 3.2;
+      // Зазубренность вершин: мелкий шум рвёт линию гребня на отдельные пики,
+      // как в Minecraft, вместо гладкого парапета.
+      const jag = (fbm2d(wx * 0.085 + 431, wz * 0.085 - 257, seed + 2101, 2) - 0.5) * 2;
+      h += mMask * peak * peak * jag * 4.6;
+    }
+
     // Пустынные дюны: в сухих зонах ниже гор рельеф идёт волнами-гребнями,
     // сбитыми шумом, чтобы дюны не были идеальными параллельными линиями.
     const dry = this.dryAt(wx, wz);
     if (dry > DRY_T && h < ROCK_H - 2 && this.temperatureAt(wx, wz) <= COLD_T) {
-      const dw = smooth01((dry - DRY_T - 0.01) / 0.09) * (1 - mountain);
+      const dw = smooth01((dry - DRY_T - 0.01) / 0.09) * (1 - mMask);
       if (dw > 0) {
         const sway = fbm2d(wx * 0.017 + 23, wz * 0.017 - 19, seed + 555, 2);
         const crest = Math.pow(Math.abs(Math.sin(wx * 0.055 + wz * 0.021 + sway * 2.6)), 1.5);
@@ -218,9 +262,9 @@ export class World {
     // Мягкий потолок: у самого верха мира горы выполаживаются, а не спиливаются
     // в одно плоское плато — иначе большие массивы выглядели бы столешницей.
     const ceiling = H - 3;
-    if (h > ceiling - 10) {
-      const over = h - (ceiling - 10);
-      h = ceiling - 10 + 10 * (1 - Math.exp(-over / 10));
+    if (h > ceiling - 12) {
+      const over = h - (ceiling - 12);
+      h = ceiling - 12 + 12 * (1 - Math.exp(-over / 12));
     }
     return Math.max(3, Math.min(ceiling, Math.round(h)));
   }
@@ -485,7 +529,9 @@ export class World {
     const seed = this.seed;
     const terrainHeight = new Int16Array(S * S);
 
-    // Рельеф и биомы
+    // Рельеф и биомы: сначала высоты и крутизна склонов, потом заполнение
+    // колонок — камню на обрывах нужен перепад высот с соседями.
+    const colFlag = new Uint8Array(S * S);   // 1 — выемка, 2 — ядро кратера, 4 — вал
     for (let z = 0; z < S; z++) {
       for (let x = 0; x < S; x++) {
         const wx = ox + x, wz = oz + z;
@@ -498,12 +544,40 @@ export class World {
         }
         const h = Math.max(3, Math.min(H - 3, baseH - (feature?.cut || 0) + (feature?.rim || 0)));
         terrainHeight[z * S + x] = h;
-        const excavated = !!(feature && feature.cut >= 3);
-        const craterCore = feature?.type === 'crater' && feature.radius < 0.34;
-        const craterWall = feature?.type === 'crater' && feature.rim >= 2;
+        colFlag[z * S + x] = (feature && feature.cut >= 3 ? 1 : 0)
+          | (feature?.type === 'crater' && feature.radius < 0.34 ? 2 : 0)
+          | (feature?.type === 'crater' && feature.rim >= 2 ? 4 : 0);
+      }
+    }
+    // Крутизна: максимальный перепад высоты с четырьмя соседями по чанку.
+    // На границах чанка берём высоту мира — стыки с соседями остаются верными.
+    const colSlope = new Uint8Array(S * S);
+    for (let z = 0; z < S; z++) {
+      for (let x = 0; x < S; x++) {
+        const h = terrainHeight[z * S + x];
+        const hx0 = x > 0 ? terrainHeight[z * S + x - 1] : this.heightAt(ox - 1, oz + z);
+        const hx1 = x < S - 1 ? terrainHeight[z * S + x + 1] : this.heightAt(ox + S, oz + z);
+        const hz0 = z > 0 ? terrainHeight[(z - 1) * S + x] : this.heightAt(ox + x, oz - 1);
+        const hz1 = z < S - 1 ? terrainHeight[(z + 1) * S + x] : this.heightAt(ox + x, oz + S);
+        colSlope[z * S + x] = Math.max(
+          Math.abs(h - hx0), Math.abs(h - hx1), Math.abs(h - hz0), Math.abs(h - hz1));
+      }
+    }
+    for (let z = 0; z < S; z++) {
+      for (let x = 0; x < S; x++) {
+        const wx = ox + x, wz = oz + z;
+        const h = terrainHeight[z * S + x];
+        const flag = colFlag[z * S + x];
+        const excavated = (flag & 1) !== 0;
+        const craterCore = (flag & 2) !== 0;
+        const craterWall = (flag & 4) !== 0;
         const cold = this.temperatureAt(wx, wz) > COLD_T;    // снежные зоны редкие
-        const dry = !cold && !this.isRocky(h) && this.dryAt(wx, wz) > DRY_T;   // пустыни
-        const rocky = this.isRocky(h);                        // высокогорье — голый камень
+        const rocky = h >= this.rockLineAt(wx, wz);           // высокогорье — голый камень
+        const snowy = h >= this.snowLineAt(wx, wz);           // вершины под снегом
+        const dry = !cold && !rocky && this.dryAt(wx, wz) > DRY_T;   // пустыни
+        // Крутой склон (обрыв, скальная стенка) — порода выходит наружу, как
+        // в Minecraft: трава держится только на пологих полках и плато.
+        const steep = colSlope[z * S + x] >= 3 && h > SEA + 4 && !snowy;
         for (let y = 0; y <= Math.max(h, SEA); y++) {
           let b = BLOCK.AIR;
           if (y > h) {
@@ -516,11 +590,12 @@ export class World {
             } else if (excavated || craterWall) {
               // В кратере, карьере и разломе на поверхность выходят коренные породы.
               b = h < 7 ? BLOCK.SLATE
-                : (feature.type === 'quarry' || craterWall) && hash3(wx, y, wz, seed + 3300) < 0.07 ? BLOCK.GRAVEL
+                : hash3(wx, y, wz, seed + 3300) < 0.07 ? BLOCK.GRAVEL
                   : BLOCK.STONE;
             } else if (h <= SEA + 2) b = cold ? BLOCK.SNOWY_SAND : BLOCK.SAND;  // пляжи; в холодных зонах песок под снегом
-            else if (h >= PEAK_H) b = BLOCK.SNOW;            // снежные вершины
-            else if (rocky) b = BLOCK.STONE;
+            else if (snowy) b = BLOCK.SNOW;            // снежные вершины
+            else if (rocky) b = hash3(wx, y, wz, seed + 3600) < 0.14 ? BLOCK.GRAVEL : BLOCK.STONE;
+            else if (steep) b = hash3(wx, y, wz, seed + 3600) < 0.1 ? BLOCK.GRAVEL : BLOCK.STONE;
             else if (cold) b = BLOCK.SNOW;
             else if (dry) b = BLOCK.SAND;
             else b = BLOCK.GRASS;
@@ -528,8 +603,8 @@ export class World {
             if (craterCore) b = y < 5 ? BLOCK.SLATE : (hash3(wx, y, wz, seed + 3400) < 0.35 ? BLOCK.OBSIDIAN : BLOCK.STONE);
             else if (excavated || craterWall) b = y < 5 ? BLOCK.SLATE : BLOCK.STONE;
             else if (h <= SEA + 2) b = BLOCK.SAND;
-            else if (h >= PEAK_H) b = BLOCK.SNOW;
-            else if (rocky) b = BLOCK.STONE;
+            else if (snowy) b = BLOCK.SNOW;
+            else if (rocky || steep) b = BLOCK.STONE;
             else if (dry) b = BLOCK.SANDSTONE;
             else b = BLOCK.DIRT;
           } else {
@@ -896,7 +971,7 @@ export class World {
     // Между деревьями держим дистанцию: кроны не должны срастаться
     // в один сплошной комок листвы.
     const rng = makeRng(hash3(cx, 0, cz, seed) * 0x7fffffff);
-    const treeCount = 5 + ((rng() * 3) | 0);   // пробуем чаще — часть отпадёт по дистанции
+    const treeCount = 8 + ((rng() * 4) | 0);   // пробуем чаще — часть отпадёт по дистанции
     const treeSpots = [];                      // занятые кронами места: {x, z, r}
     const tooClose = (x, z, r) => treeSpots.some((s) => {
       const dx = s.x - x, dz = s.z - z;
@@ -1151,6 +1226,36 @@ export class World {
         else if (r < grassP + 0.025) chunk.set(x, h + 1, z, BLOCK.CLOVER);
         else if (r < grassP + 0.025 + flowerP * 0.55) chunk.set(x, h + 1, z, BLOCK.FLOWER_RED);
         else if (r < grassP + 0.025 + flowerP) chunk.set(x, h + 1, z, BLOCK.FLOWER_YELLOW);
+      }
+    }
+
+    // Лесная флора: под кронами темнее и влажнее, поэтому там селятся грибы,
+    // а на опушках и прогалинах — кусты, ягодник и дикие цветы. В тайге и на
+    // скальных склонах такой флоры нет: только подстилка и хвоя.
+    for (let z = 0; z < S; z++) {
+      for (let x = 0; x < S; x++) {
+        const wx = ox + x, wz = oz + z;
+        const h = terrainHeight[z * S + x];
+        if (h <= SEA + 1 || h >= H - 1) continue;
+        if (chunk.get(x, h, z) !== BLOCK.GRASS) continue;
+        if (chunk.get(x, h + 1, z) !== BLOCK.AIR) continue;
+        const species = this.treeSpeciesAt(wx, wz, h);
+        if (!species || species === 'pine') continue;      // лесные биомы и тайга
+        const r = rng();
+        // Тень кроны: над клеткой в рост игрока есть листва
+        let canopy = false;
+        for (let dy = 2; dy <= 5 && !canopy; dy++) {
+          const b = chunk.get(x, h + dy, z);
+          if (b === BLOCK.LEAVES || b === BLOCK.BIRCH_LEAVES || b === BLOCK.SPRUCE_LEAVES) canopy = true;
+        }
+        if (canopy && r < 0.075) {
+          chunk.set(x, h + 1, z, r < 0.035 ? BLOCK.MUSHROOM_RED : BLOCK.MUSHROOM_BROWN);
+          continue;
+        }
+        if (species === 'spruce') continue;                // в тайге кустов не сеем
+        if (r < 0.085) { chunk.set(x, h + 1, z, BLOCK.BUSH); continue; }
+        if (r < 0.115) { chunk.set(x, h + 1, z, BLOCK.BERRY_BUSH); continue; }
+        if (r < 0.16) { chunk.set(x, h + 1, z, r < 0.137 ? BLOCK.FLOWER_BLUE : BLOCK.FLOWER_WHITE); continue; }
       }
     }
 

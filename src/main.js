@@ -234,7 +234,7 @@ const BOW_CHARGE_TIME = 0.85;    // полное натяжение за 0.85 с
 const GUN_COOLDOWN = PISTOL_STATS.cooldown;   // пауза между выстрелами
 const GUN_DAMAGE = PISTOL_STATS.damage;       // урон пули
 const GUN_SPEED = PISTOL_STATS.speed;         // м/с — пуля летит почти прямо
-const GUN_FLASH_TIME = 0.07;                  // сколько горит вспышка у дула
+const GUN_FLASH_TIME = 0.11;                  // сколько горит огонёк у дула
 let gunCooldown = 0;
 let gunKick = 0;                 // 0..1 — визуальная отдача
 let gunFlashT = 0;               // остаток времени вспышки
@@ -979,9 +979,12 @@ function updateHand(dt, light) {
   if (gunMuzzleFlash) {
     gunMuzzleFlash.visible = gunFlashT > 0;
     if (gunMuzzleFlash.visible) {
+      // Пламя живёт своей жизнью: масштаб дрожит, язычки качаются —
+      // каждый кадр огонёк чуть другой, как настоящий огонь из ствола.
       const k = gunFlashT / GUN_FLASH_TIME;
-      gunMuzzleFlash.scale.setScalar(0.8 + 0.45 * k);
-      gunMuzzleFlash.rotation.z = Math.random() * Math.PI;
+      const flick = 0.82 + 0.4 * k + Math.random() * 0.16;
+      gunMuzzleFlash.scale.set(flick, flick * (0.9 + Math.random() * 0.25), 0.9 + 0.55 * k);
+      gunMuzzleFlash.rotation.z = (Math.random() - 0.5) * 0.45;
     }
   }
   hand.material.color.setHex(0xd9a27a).multiplyScalar(0.35 + 0.65 * light);
@@ -1398,8 +1401,16 @@ function firePistol() {
   );
   gunKick = 1;
   gunFlashT = GUN_FLASH_TIME;
-  // Дымок и искры у дула
-  particles.burst(eye.x + d.x * 0.8, eye.y + d.y * 0.8 - 0.05, eye.z + d.z * 0.8, [232, 228, 208], 5);
+  // Огонь из ствола: пистолет держится правее и ниже линии взгляда, поэтому
+  // сноп искр и дымок вылетают из точки у дула, а не из центра экрана.
+  // В прицеле ствол стоит на оси взгляда — смещение почти гаснет.
+  const rl = Math.hypot(d.x, d.z) || 1;
+  const rx = -d.z / rl, rz = d.x / rl;              // вправо от направления взгляда
+  const off = 0.17 * (1 - gunAim * 0.8);
+  const mx = eye.x + d.x * 0.55 + rx * off;
+  const my = eye.y + d.y * 0.55 - 0.13 * (1 - gunAim * 0.8);
+  const mz = eye.z + d.z * 0.55 + rz * off;
+  particles.flame(mx, my, mz, d.x, d.y, d.z);
   sfx.pistolShot();
 }
 

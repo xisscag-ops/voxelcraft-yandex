@@ -2,7 +2,7 @@
 export const CONFIG = {
   // Мир
   CHUNK_SIZE: 16,
-  WORLD_HEIGHT: 64,
+  WORLD_HEIGHT: 80,          // выше прежних 64: горным хребтам нужен вертикальный запас
   SEA_LEVEL: 22,
   VIEW_DISTANCE: 5,          // в чанках
   MAX_MESH_PER_FRAME: 2,     // чанков на кадр

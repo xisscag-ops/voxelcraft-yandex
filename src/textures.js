@@ -35,6 +35,9 @@ export const T = {
   SAND_SNOW_SIDE: 61, VINE: 62, GLOW_SHROOM: 63,
   // Объёмный забор: отдельные текстуры столбика и перекладины
   FENCE_POST: 64, FENCE_RAIL: 65,
+  // Лесная флора: куст, ягодник, василёк, ромашка, красный и бурый грибы
+  BUSH: 66, BERRY_BUSH: 67, FLOWER_BLUE: 68, FLOWER_WHITE: 69,
+  MUSHROOM_RED: 70, MUSHROOM_BROWN: 71,
 };
 
 export const CRACK_TILES = [17, 18, 19, 20, 21];
@@ -851,6 +854,113 @@ const painters = {
       const x = (rng() * TILE) | 0, y = (rng() * TILE) | 0;
       px(data, x, y, 112, 80, 46);
     }
+  },
+
+  // ---- Лесная флора ----
+  // Куст: округлая крона из пучков листвы на низких веточках
+  [T.BUSH](data, rng) {
+    const dark = [44, 88, 38], mid = [62, 116, 46], light = [86, 146, 60];
+    for (let y = 4; y < 15; y++) {
+      for (let x = 1; x < 15; x++) {
+        const d = Math.hypot((x - 7.5) / 6.6, (y - 9.5) / 5.4);
+        if (d > 1) continue;
+        if (d > 0.8 && rng() < 0.5) continue;              // рваный силуэт
+        const v = rng();
+        const c = v < 0.3 ? dark : v < 0.75 ? mid : light;
+        const j = (rng() - 0.5) * 16;
+        px(data, x, y, c[0] + j, c[1] + j, c[2] + j * 0.7);
+      }
+    }
+    for (const [x, y] of [[7, 14], [8, 14], [7, 15], [8, 15], [6, 13], [9, 13]]) px(data, x, y, 74, 52, 30);
+  },
+  // Ягодный куст: та же крона, но ниже и с красными ягодами
+  [T.BERRY_BUSH](data, rng) {
+    const dark = [42, 84, 36], mid = [58, 110, 44], light = [82, 140, 58];
+    for (let y = 6; y < 15; y++) {
+      for (let x = 1; x < 15; x++) {
+        const d = Math.hypot((x - 7.5) / 6.4, (y - 10.5) / 4.6);
+        if (d > 1) continue;
+        if (d > 0.8 && rng() < 0.5) continue;
+        const v = rng();
+        const c = v < 0.32 ? dark : v < 0.78 ? mid : light;
+        const j = (rng() - 0.5) * 16;
+        px(data, x, y, c[0] + j, c[1] + j, c[2] + j * 0.7);
+      }
+    }
+    const berries = [[4, 9], [6, 11], [9, 8], [11, 10], [7, 13], [10, 12], [3, 11]];
+    for (const [x, y] of berries) {
+      px(data, x, y, 176, 38, 40);
+      px(data, x + 1, y, 150, 30, 34);
+      px(data, x, y - 1, 214, 92, 88);                     // блик на ягоде
+    }
+  },
+  // Василёк: зубчатая сине-лиловая головка на тонком стебле
+  [T.FLOWER_BLUE](data, rng) {
+    for (let y = 7; y < 16; y++) px(data, 7, y, 72, 116, 50);
+    px(data, 6, 11, 72, 116, 50); px(data, 5, 10, 88, 140, 60);
+    px(data, 8, 13, 72, 116, 50); px(data, 9, 12, 88, 140, 60);
+    const petal = [88, 110, 198], petalL = [126, 146, 226], core = [50, 60, 128];
+    for (let y = 1; y <= 7; y++) {
+      for (let x = 3; x <= 12; x++) {
+        const dx = x - 7.5, dy = y - 4;
+        const d = Math.hypot(dx, dy);
+        if (d > 3.5) continue;
+        if (d < 1.5) { px(data, x, y, core[0], core[1], core[2]); continue; }
+        const spike = Math.abs(Math.sin(Math.atan2(dy, dx) * 3.5)) > 0.4;
+        if (d > 2.6 && !spike) continue;                   // зубчатые лепестки
+        const c = rng() < 0.4 ? petalL : petal;
+        px(data, x, y, c[0], c[1], c[2]);
+      }
+    }
+  },
+  // Ромашка: белое кольцо лепестков вокруг жёлтой серединки
+  [T.FLOWER_WHITE](data, rng) {
+    for (let y = 8; y < 16; y++) px(data, 8, y, 72, 116, 50);
+    px(data, 7, 12, 88, 140, 60); px(data, 9, 10, 88, 140, 60);
+    const petal = [236, 236, 228], petalD = [204, 204, 196], core = [226, 196, 66];
+    for (let y = 1; y <= 8; y++) {
+      for (let x = 4; x <= 12; x++) {
+        const dx = x - 8, dy = y - 4.5;
+        const d = Math.hypot(dx, dy);
+        if (d <= 1.7) { px(data, x, y, core[0], core[1], core[2]); continue; }
+        if (d > 3.7) continue;
+        if (d > 2.5 && Math.abs(dx) > 1.2 && Math.abs(dy) > 1.2) continue;  // диагонали короче
+        const c = rng() < 0.3 ? petalD : petal;
+        px(data, x, y, c[0], c[1], c[2]);
+      }
+    }
+  },
+  // Красный гриб: шляпка с белыми крапинками на кремовой ножке
+  [T.MUSHROOM_RED](data, rng) {
+    for (let y = 9; y < 16; y++) {
+      for (let x = 6; x <= 9; x++) px(data, x, y, 224 + (rng() - 0.5) * 12, 212, 184);
+      px(data, 9, y, 194, 180, 150);
+    }
+    for (let y = 3; y <= 9; y++) {
+      const half = 6 - Math.abs(y - 9) * 0.85;
+      for (let x = Math.round(7.5 - half); x <= Math.round(7.5 + half); x++) {
+        const v = (rng() - 0.5) * 18;
+        px(data, x, y, 176 + v, 44 + v * 0.5, 38);
+      }
+    }
+    for (const [x, y] of [[5, 5], [6, 5], [9, 4], [10, 5], [7, 6], [4, 7], [11, 7]]) px(data, x, y, 240, 236, 228);
+    for (let x = 3; x <= 12; x++) px(data, x, 9, 148, 38, 32);   // кромка шляпки
+  },
+  // Бурый гриб: широкая светло-бурая шляпка-подушка на плотной ножке
+  [T.MUSHROOM_BROWN](data, rng) {
+    for (let y = 10; y < 16; y++) {
+      for (let x = 6; x <= 9; x++) px(data, x, y, 216 + (rng() - 0.5) * 12, 202, 172);
+      px(data, 9, y, 186, 172, 142);
+    }
+    for (let y = 4; y <= 10; y++) {
+      const half = 6.4 - Math.abs(y - 10) * 0.8;
+      for (let x = Math.round(7.5 - half); x <= Math.round(7.5 + half); x++) {
+        const v = (rng() - 0.5) * 16;
+        const top = y <= 6 ? 16 : 0;
+        px(data, x, y, 132 + v + top, 94 + v * 0.8 + top * 0.7, 56 + v * 0.6);
+      }
+    }
+    for (let x = 2; x <= 13; x++) px(data, x, 10, 108, 76, 44);  // кромка шляпки
   },
 };
 

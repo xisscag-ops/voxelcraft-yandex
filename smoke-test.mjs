@@ -10,7 +10,7 @@ import { createWorldRecord, emptyWorldProfile, normalizeWorldProfile, serializeW
 import { migrateSave } from './src/save-migration.js';
 import { raycastVoxel } from './src/raycast.js';
 import { isSolid, isOpaque, isDecor, BLOCK, BLOCKS, BLOCK_NAMES, isSlab, isFence, isAnvil,
-  blockBounds, slabFullBlock, slabPair, slabDropItem } from './src/blocks.js';
+  blockBounds, slabFullBlock, slabPair, slabDropItem, breakKind } from './src/blocks.js';
 import { Inventory } from './src/inventory.js';
 import {
   RECIPES, craft, canCraft, validateRecipes, emptyGrid, matchRecipe, gridResult,
@@ -108,27 +108,27 @@ check('heightAt in bounds', (() => {
 })());
 check('geology: deterministic quarry and rift depressions', (() => {
   const geology = new World(4242);
-  const quarry = geology.featureAt(-854, 752);
-  const rift = geology.featureAt(-742, 202);
-  const quarryY = geology.heightAt(-854, 752);
-  const riftY = geology.heightAt(-742, 202);
-  const quarryFloor = geology.getBlock(-854, quarryY, 752);
-  const riftFloor = geology.getBlock(-742, riftY, 202);
+  const quarry = geology.featureAt(-864, 752);
+  const rift = geology.featureAt(-698, -274);
+  const quarryY = geology.heightAt(-864, 752);
+  const riftY = geology.heightAt(-698, -274);
+  const quarryFloor = geology.getBlock(-864, quarryY, 752);
+  const riftFloor = geology.getBlock(-698, riftY, -274);
   return quarry?.type === 'quarry' && rift?.type === 'rift'
-    && quarryY < geology.baseHeightAt(-854, 752)
-    && riftY < geology.baseHeightAt(-742, 202)
+    && quarryY < geology.baseHeightAt(-864, 752)
+    && riftY < geology.baseHeightAt(-698, -274)
     && [BLOCK.STONE, BLOCK.GRAVEL].includes(quarryFloor) && riftFloor === BLOCK.STONE;
 })());
 check('geology: crater has bowl, obsidian core and raised rim', (() => {
   const geology = new World(4242);
-  const crater = geology.featureAt(-892, -46);
-  const rim = geology.featureAt(-873, -46);
-  const bowlY = geology.heightAt(-892, -46);
-  const rimY = geology.heightAt(-873, -46);
-  const core = geology.getBlock(-892, bowlY, -46);
+  const crater = geology.featureAt(-860, -888);
+  const rim = geology.featureAt(-842, -888);
+  const bowlY = geology.heightAt(-860, -888);
+  const rimY = geology.heightAt(-842, -888);
+  const core = geology.getBlock(-860, bowlY, -888);
   return crater?.type === 'crater' && rim?.type === 'crater'
-    && bowlY < geology.baseHeightAt(-892, -46)          // чаша углублена
-    && rimY > geology.baseHeightAt(-873, -46)           // вал приподнят
+    && bowlY < geology.baseHeightAt(-860, -888)          // чаша углублена
+    && rimY > geology.baseHeightAt(-842, -888)           // вал приподнят
     && (core === BLOCK.OBSIDIAN || core === BLOCK.STONE); // ядро — оплавленный камень
 })());
 
@@ -491,6 +491,64 @@ check('decor meshed as cross quads', (() => {
 // Декор непроходим и не непрозрачен
 check('decor is walk-through', isDecor(15) && !isSolid(15) && !isOpaque(15));
 
+// ---- Лесная флора: кусты, ягодник, дикие цветы и грибы ----
+{
+  const FLORA = [BLOCK.BUSH, BLOCK.BERRY_BUSH, BLOCK.FLOWER_BLUE, BLOCK.FLOWER_WHITE,
+    BLOCK.MUSHROOM_RED, BLOCK.MUSHROOM_BROWN];
+  const wf = new World(4242);
+  const found = new Set();
+  for (let cz = -6; cz <= 6 && found.size < FLORA.length; cz++) {
+    for (let cx = -6; cx <= 6 && found.size < FLORA.length; cx++) {
+      const c = wf.getChunk(cx, cz);
+      for (const v of c.blocks) if (FLORA.includes(v)) found.add(v);
+    }
+  }
+  check('в лесу растёт новая флора: кусты, ягодник, цветы и грибы', found.size >= 4,
+    'видов найдено ' + found.size + ' из ' + FLORA.length);
+  check('новая флора — декор: непроходимая, ломается мгновенно', FLORA.every((id) => isDecor(id) && !isSolid(id) && breakKind(id) === 'fast'));
+  check('новая флора нарисована в атласе и описана на двух языках', FLORA.every((id) => {
+    const d = tilePixels(BLOCKS[id].tiles[0]);
+    let opaque = 0;
+    for (let i = 3; i < d.length; i += 4) if (d[i] > 100) opaque++;
+    return opaque > 30 && itemDescription(blockItem(id), 'ru') && itemDescription(blockItem(id), 'en')
+      && itemName(blockItem(id), 'ru') && itemName(blockItem(id), 'en');
+  }));
+  // Грибы селятся в тени крон, кусты и цветы — на открытых полянах леса
+  check('грибы растут под кронами, кусты — на открытом дёрне', (() => {
+    let shroomShaded = 0, shroomTotal = 0, bushOpen = 0, bushTotal = 0;
+    for (let cz = -6; cz <= 6; cz++) {
+      for (let cx = -6; cx <= 6; cx++) {
+        const c = wf.getChunk(cx, cz);
+        for (let x = 0; x < CONFIG.CHUNK_SIZE; x++) {
+          for (let z = 0; z < CONFIG.CHUNK_SIZE; z++) {
+            for (let y = 2; y < CONFIG.WORLD_HEIGHT - 6; y++) {
+              const b = c.get(x, y, z);
+              if (b === BLOCK.MUSHROOM_RED || b === BLOCK.MUSHROOM_BROWN) {
+                shroomTotal++;
+                for (let dy = 2; dy <= 5; dy++) {
+                  const up = c.get(x, y + dy, z);
+                  if (up === BLOCK.LEAVES || up === BLOCK.BIRCH_LEAVES || up === BLOCK.SPRUCE_LEAVES) { shroomShaded++; break; }
+                }
+              }
+              if (b === BLOCK.BUSH || b === BLOCK.BERRY_BUSH) {
+                bushTotal++;
+                let shaded = false;
+                for (let dy = 2; dy <= 5; dy++) {
+                  const up = c.get(x, y + dy, z);
+                  if (up === BLOCK.LEAVES || up === BLOCK.BIRCH_LEAVES || up === BLOCK.SPRUCE_LEAVES) { shaded = true; break; }
+                }
+                if (!shaded) bushOpen++;
+              }
+            }
+          }
+        }
+      }
+    }
+    return shroomTotal > 3 && shroomShaded / shroomTotal > 0.8
+      && bushTotal > 3 && bushOpen / bushTotal > 0.5;
+  })(), 'грибов в тени/всего и кустов на открытом месте');
+}
+
 // ---- Предметы, описания и плавка ----
 check('предметы и блоки имеют описания на русском и английском', (() => {
   const allBlocks = BLOCKS.slice(1).filter((block) => block.id !== BLOCK.WATER);
@@ -815,6 +873,15 @@ check('модель пистолета: ствол вперёд, рукоять 
     && gun.PISTOL_FLASH_Z <= muzzle.z        // вспышка начинается на дуле и уходит вперёд
     && gun.PISTOL_FLASH_PARTS.every((p) => p.z <= 0);
 })());
+check('у дула — компактный огонёк пламени, а не широкая звезда-вспышка', (() => {
+  const parts = gun.PISTOL_FLASH_PARTS;
+  const maxW = Math.max(...parts.map((p) => Math.max(p.w, p.h)));
+  const maxD = Math.max(...parts.map((p) => p.d));
+  // пламя маленькое (не шире ствола с запасом) и короткое: язычки до ~10 см
+  const hot = parts.some((p) => p.color >= 0xfff000);       // раскалённое ядро
+  const fire = parts.some((p) => p.color >= 0xff8000 && p.color < 0xffb000); // оранжевое тело
+  return parts.length >= 4 && maxW <= 0.06 && maxD <= 0.1 && hot && fire;
+})());
 check('пистолет мощнее лука и стреляет быстрее', gun.PISTOL_STATS.damage >= 5
   && gun.PISTOL_STATS.speed > 40 && gun.PISTOL_STATS.cooldown > 0);
 check('модель пистолета детализирована: механика, прицел и фурнитура', (() => {
@@ -962,6 +1029,13 @@ check('в статах пистолета заданы зум и замедле�
     { kind: 'bullet', gravity: 4, stick: false });
   for (let i = 0; i < 60 && !bulletMob; i++) bullets2.update(1 / 60, wallWorld, [mob], null);
   check('пуля попадает в моба с уроном 5', bulletMob === mob && bulletDmg === 5 && bullets2.list.length === 0);
+  check('пуля невидима: снаряд летит без модели, жёлтой пули больше нет', (() => {
+    const b = new proj.Arrows(scene);
+    const a = b.shoot(0.5, 10, 0.5, 1, 0, 0, 62, 5, {}, { kind: 'bullet', gravity: 4, stick: false });
+    const invisible = !!a && a.group.children.length === 0;
+    b.clear();
+    return invisible && typeof proj.buildBulletModel !== 'function';
+  })());
   check('пуля почти не падает на дистанции выстрела', (() => {
     const b = new proj.Arrows(scene);
     const a = b.shoot(0.5, 10, 0.5, 1, 0, 0, 62, 5, {}, { kind: 'bullet', gravity: 4, stick: false });
@@ -1581,26 +1655,41 @@ check('сундук: разметка и стили панели', html.includes
   check('застрявший моб понимает, что застрял, и держит один курс обхода',
     trapped.stuckT > 0.2 || trapped.detourT > 0 || trapped.idleStandT > 0);
 
-  // Большие деревья
-  let bigTrees = 0, maxTrunk = 0, bigSpruce = 0, leafy = 0;
+  // Большие деревья.
+  // Биомы крупные: фиксированное окно могло попасть в пустыню или высокогорье,
+  // где леса нет вовсе. Поэтому чанки, где деревья расти не могут (пустыня,
+  // скалы, вода), пропускаем ещё до генерации, а считаем только лесные чанки.
+  let bigTrees = 0, maxTrunk = 0, bigSpruce = 0, leafy = 0, treeChunks = 0;
   for (const treeSeed of [90210, 4242, 20260925]) {
     const wt = new World(treeSeed);
-    for (let cx = 0; cx < 6; cx++) {
-      for (let cz = 0; cz < 6; cz++) {
+    for (let cx = -6; cx <= 6; cx++) {
+      for (let cz = -6; cz <= 6; cz++) {
+        let canGrow = false;
+        for (const [px, pz] of [[0, 0], [15, 0], [0, 15], [15, 15]]) {
+          const wx = cx * CONFIG.CHUNK_SIZE + px, wz = cz * CONFIG.CHUNK_SIZE + pz;
+          const h = wt.heightAt(wx, wz);
+          if (h > wt.seaLevel + 1 && h <= 46 && wt.treeSpeciesAt(wx, wz, h)) { canGrow = true; break; }
+        }
+        if (!canGrow) continue;
         const c = wt.getChunk(cx, cz);
+        let chunkTrunks = 0, chunkLeaves = 0;
         for (let x = 0; x < CONFIG.CHUNK_SIZE; x++) {
           for (let z = 0; z < CONFIG.CHUNK_SIZE; z++) {
             let run = 0, best = 0, kind = 0, leaves = 0;
             for (let y = 0; y < CONFIG.WORLD_HEIGHT; y++) {
               const b = c.get(x, y, z);
-              if (b === BLOCK.LOG || b === BLOCK.SPRUCE_LOG) { run++; if (run > best) { best = run; kind = b; } } else run = 0;
-              if (b === BLOCK.LEAVES || b === BLOCK.SPRUCE_LEAVES) leaves++;
+              if (b === BLOCK.LOG || b === BLOCK.SPRUCE_LOG || b === BLOCK.BIRCH_LOG) { run++; if (run > best) { best = run; kind = b; } } else run = 0;
+              if (b === BLOCK.LEAVES || b === BLOCK.SPRUCE_LEAVES || b === BLOCK.BIRCH_LEAVES) leaves++;
             }
-            leafy += leaves;
+            chunkLeaves += leaves;
+            if (best >= 1) chunkTrunks++;
             if (best >= 9) { bigTrees++; if (kind === BLOCK.SPRUCE_LOG) bigSpruce++; }
             maxTrunk = Math.max(maxTrunk, best);
           }
         }
+        if (chunkTrunks < 3) continue;
+        treeChunks++;
+        leafy += chunkLeaves;
       }
     }
   }
@@ -1608,7 +1697,8 @@ check('сундук: разметка и стили панели', html.includes
     'больших ' + bigTrees + ', макс. ствол ' + maxTrunk);
   check('большие деревья бывают и хвойные', bigSpruce > 0, 'елей ' + bigSpruce);
   check('ствол большого дерева не выше 16 блоков', maxTrunk <= 16 && maxTrunk >= 9);
-  check('у больших деревьев есть крона', leafy > 2000, 'листвы ' + leafy);
+  check('у больших деревьев есть крона', leafy > 2000 && treeChunks > 6,
+    'листвы ' + leafy + ' в ' + treeChunks + ' лесных чанках');
 
   // Музыка: папка music/ и плейлист
   const { Music, MUSIC_FILES, MUSIC_DIR } = await import('./src/music.js');

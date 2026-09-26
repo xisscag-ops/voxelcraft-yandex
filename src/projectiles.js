@@ -18,29 +18,9 @@ export function arrowMaterials() {
   };
 }
 
-// ---- Модель пули: короткая латунная гильза с ярким трассером ----
-let _bulletMats = null;
-export function bulletMaterials() {
-  if (!_bulletMats) {
-    _bulletMats = {
-      case: new THREE.MeshBasicMaterial({ color: 0xd8b24a, transparent: true, opacity: 0.95 }),
-      tip: new THREE.MeshBasicMaterial({ color: 0xf2f6ff, transparent: true, opacity: 0.95 }),
-    };
-  }
-  return _bulletMats;
-}
-
-/**
- * Пуля: начало координат — пятка, летит в +Z. Короткая, с белым носиком —
- * на скорости читается как трассер и не мешает обзору.
- */
-export function buildBulletModel(mats = null) {
-  const m = mats || bulletMaterials();
-  const g = new THREE.Group();
-  g.add(new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.028, 0.16).translate(0, 0, 0.08), m.case));
-  g.add(new THREE.Mesh(new THREE.BoxGeometry(0.034, 0.034, 0.06).translate(0, 0, 0.19), m.tip));
-  return g;
-}
+// Пуля невидима: из ствола вылетает только огонь и дым (см. main.js), а сам
+// снаряд остаётся чистой баллистикой — попадание, урон, затухание в блоке.
+// Пустая группа нужна, чтобы снаряд жил в сцене как объект с позицией.
 
 /**
  * Стрела: начало координат — пятка (хвост), сама стрела смотрит в +Z.
@@ -87,7 +67,8 @@ export class Arrows {
     }
     const l = Math.hypot(dx, dy, dz) || 1;
     const kind = opts.kind || 'arrow';
-    const group = kind === 'bullet' ? buildBulletModel() : buildArrowModel();
+    // Пуля — невидимый снаряд: модель не добавляем, только группу-точку в сцене
+    const group = kind === 'bullet' ? new THREE.Group() : buildArrowModel();
     group.position.set(x, y, z);
     this.scene.add(group);
     const arrow = {
