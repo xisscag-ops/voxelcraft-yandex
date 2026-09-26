@@ -56,7 +56,7 @@ export const STRINGS = {
       Рецепты «3×3» (кирки, топоры, мечи) требуют <b>верстак</b>: 4 доски в сетке 2×2 → верстак,
       поставьте его и нажмите ПКМ. Железные, золотые и алмазные инструменты куются только
       на <b>наковальне</b> (3 слитка + 4 доски). <b>Пистолет</b> (3 слитка + 2 доски + палка) стреляет
-      патронами (слиток + уголь) — удерживайте ПКМ, урон 5. Стопки в инвентаре можно <b>перетаскивать</b> мышью,
+      патронами (слиток + уголь) — ЛКМ выстрел, ПКМ прицеливание, урон 5. Стопки в инвентаре можно <b>перетаскивать</b> мышью,
       а Shift+клик перекладывает их в хотбар — если не открыт верстак, печь или сундук.<br><br>
       <b>Добыча:</b> овцы дают шерсть и мясо, волки — мясо и клыки, мясо жарится в печи.
       Две плиты в одной клетке складываются в полный блок, из берёзовых брёвен получаются
@@ -127,9 +127,9 @@ export const STRINGS = {
     fullscreen_off: 'Полный экран браузера выключен',
     fullscreen: 'Полный экран',
     no_arrows: 'Нет стрел — сделайте их из палки и камня',
-    hint_pistol: 'Пистолет: удерживайте ПКМ, чтобы стрелять. Патроны — из слитка и угля',
+    hint_pistol: 'Пистолет: ЛКМ — выстрел, ПКМ (удерживать) — прицеливание. Патроны — из слитка и угля',
     no_bullets: 'Нет патронов — скрафтите их из железного слитка и угля',
-    bullet_pickup: 'Пистолет в инвентаре: удерживайте ПКМ, чтобы стрелять',
+    bullet_pickup: 'Пистолет в инвентаре: ЛКМ — стрелять, ПКМ — прицелиться',
     arrow_pickup: 'Стрела подобрана',
     bow_pickup: 'Лук в инвентаре: удерживайте ПКМ, чтобы стрелять',
     to_spawn: 'К спавну',
@@ -275,7 +275,7 @@ export const STRINGS = {
       result. Recipes marked “3×3” (pickaxes, axes, swords) need a <b>crafting table</b>:
       4 planks in the 2×2 grid → table, place it and press RMB. Iron, golden and diamond tools
       can only be forged on an <b>anvil</b> (3 ingots + 4 planks). The <b>pistol</b>
-      (3 ingots + 2 planks + a stick) fires bullets (ingot + coal) — hold RMB, 5 damage.
+      (3 ingots + 2 planks + a stick) fires bullets (ingot + coal) — LMB to shoot, hold RMB to aim, 5 damage.
       Stacks can be <b>dragged</b>
       between slots, and Shift+click moves them to the hotbar — unless a table, furnace or chest is open.<br><br>
       <b>Gathering:</b> sheep drop wool and meat, wolves drop meat and fangs, meat can be cooked
@@ -347,9 +347,9 @@ export const STRINGS = {
     fullscreen_off: 'Browser fullscreen is off',
     fullscreen: 'Fullscreen',
     no_arrows: 'No arrows — craft them from a stick and stone',
-    hint_pistol: 'Pistol: hold RMB to shoot. Bullets are crafted from an ingot and coal',
+    hint_pistol: 'Pistol: LMB — shoot, RMB (hold) — aim down sights. Bullets are crafted from an ingot and coal',
     no_bullets: 'No bullets — craft them from an iron ingot and coal',
-    bullet_pickup: 'Pistol in inventory: hold RMB to shoot',
+    bullet_pickup: 'Pistol in inventory: LMB to shoot, RMB to aim',
     arrow_pickup: 'Arrow picked up',
     bow_pickup: 'Bow in inventory: hold RMB to shoot',
     to_spawn: 'To spawn',

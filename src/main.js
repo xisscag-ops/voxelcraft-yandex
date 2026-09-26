@@ -238,6 +238,13 @@ let gunCooldown = 0;
 let gunKick = 0;                 // 0..1 — визуальная отдача
 let gunFlashT = 0;               // остаток времени вспышки
 let gunMuzzleFlash = null;       // меш вспышки в модели, что сейчас в руке
+let gunAim = 0;                  // 0..1 — плавный заход в прицел (ПКМ) обратно
+let gunAimWant = false;          // игрок держит ПКМ с пистолетом и целится
+let heldPistol = null;           // модель пистолета в руке (для позы прицеливания)
+// Поза пистолета: «у бедра» (обычная) и «прицеливание» (ствол по центру экрана)
+const GUN_POSE_HIP = { px: 0.09, py: -0.06, pz: -0.32, rx: 0.06, ry: 0.5, rz: 0.17 };
+const GUN_POSE_ADS = { px: 0, py: 0.001, pz: -0.14, rx: 0, ry: 0, rz: 0 };
+const HAND_POSE_ADS = { px: 0, py: -0.135, pz: -0.045, sx: 0.85, sy: 0.8, sz: 0.3, rx: -0.16 };
 
 // Еда: держим ЛКМ с едой в руке — персонаж жуёт (см. src/eating.js)
 const eat = new Eating();
@@ -559,6 +566,9 @@ function buildPistolModel() {
     const part = boxPart(p.w, p.h, p.d, p.color, p.x || 0, p.y || 0, p.z || 0);
     part.name = p.name;
     if (p.rotX) part.rotation.x = p.rotX;
+    if (p.rotY) part.rotation.y = p.rotY;
+    if (p.rotZ) part.rotation.z = p.rotZ;
+    if (p.emissive) part.material.userData.emissive = true;   // огни прицела не темнеют
     g.add(part);
   }
   const flash = new THREE.Group();
@@ -692,11 +702,13 @@ function buildHeldMesh(key) {
       mesh = heldBlockMesh(b, mats);
     }
   } else if (def.gun) {
-    // Ствол смотрит вперёд-влево, модель крупная — видно затвор и рукоять
+    // Ствол смотрит вперёд-влево, модель крупная — видно затвор и рукоять;
+    // при прицеливании (ПКМ) updateHand плавно переводит её в позу у глаз
     mesh = buildPistolModel();
     mesh.scale.setScalar(0.8);
-    mesh.rotation.set(0.06, 0.5, 0.17);
-    mesh.position.set(0.09, -0.06, -0.32);
+    mesh.rotation.set(GUN_POSE_HIP.rx, GUN_POSE_HIP.ry, GUN_POSE_HIP.rz);
+    mesh.position.set(GUN_POSE_HIP.px, GUN_POSE_HIP.py, GUN_POSE_HIP.pz);
+    mesh.userData.isPistol = true;
   } else if ((def.kind === 'tool' || def.icon === 'stick' || def.icon === 'arrow'
     || def.icon === 'bullet') && extrudedGeometry(def.icon)) {
     // Инструменты, палка и стрела — выдавленная иконка: в руке та же картинка, что в инвентаре
@@ -728,12 +740,14 @@ function updateHeldItem() {
   heldKey = key;
   for (const child of [...heldGroup.children]) heldGroup.remove(child);
   gunMuzzleFlash = null;
+  heldPistol = null;
   if (!key) return;
   // блоки в креативе бесконечны — в руке всё равно показываем кубик
   const mesh = buildHeldMesh(key);
   if (mesh) {
     heldGroup.add(mesh);
     gunMuzzleFlash = mesh.getObjectByName?.('muzzleFlash') || null;
+    if (mesh.userData.isPistol) heldPistol = mesh;
   }
 }
 
@@ -916,10 +930,51 @@ function updateHand(dt, light) {
   } else {
     heldGroup.scale.setScalar(1);
   }
+  // Пистолет: плавный заход в прицел (ПКМ) и выход обратно. Работает и вне
+  // состояния игры: открыл инвентарь/паузу — рука мягко опускается из прицела.
+  gunAim += (((state === 'game' && gunAimWant && heldPistol) ? 1 : 0) - gunAim) * Math.min(1, dt * 12);
+  if (gunAim < 0.001) gunAim = 0;
+  if (heldPistol && gunAim > 0) {
+    const a = gunAim;
+    // Рука идёт к центру экрана, качание и взмах растворяются в позе прицеливания
+    handPivot.position.x += (0 - handPivot.position.x) * a;
+    handPivot.position.y += (-0.072 - handPivot.position.y) * a;
+    handPivot.position.z += (-0.44 - handPivot.position.z) * a;
+    handPivot.rotation.x += (0 - handPivot.rotation.x) * a;
+    handPivot.rotation.y += (0 - handPivot.rotation.y) * a;
+    handPivot.rotation.z += (0 - handPivot.rotation.z) * a;
+    // Сам пистолет: из наклона «у бедра» в стройную линию ствола по взгляду —
+    // мушка и целик встают строго на ось камеры
+    heldPistol.position.set(
+      GUN_POSE_HIP.px + (GUN_POSE_ADS.px - GUN_POSE_HIP.px) * a,
+      GUN_POSE_HIP.py + (GUN_POSE_ADS.py - GUN_POSE_HIP.py) * a,
+      GUN_POSE_HIP.pz + (GUN_POSE_ADS.pz - GUN_POSE_HIP.pz) * a,
+    );
+    heldPistol.rotation.set(
+      GUN_POSE_HIP.rx * (1 - a) + GUN_POSE_ADS.rx * a,
+      GUN_POSE_HIP.ry * (1 - a) + GUN_POSE_ADS.ry * a,
+      GUN_POSE_HIP.rz * (1 - a) + GUN_POSE_ADS.rz * a,
+    );
+  }
+  // Кисть: в прицеле становится аккуратным кулаком на рукояти, иначе — как обычно
+  {
+    const a = heldPistol ? gunAim : 0;
+    hand.position.set(
+      HAND_POSE_ADS.px * a,
+      HAND_POSE_ADS.py * a,
+      -0.1 * (1 - a) + HAND_POSE_ADS.pz * a,
+    );
+    hand.scale.set(
+      1 + (HAND_POSE_ADS.sx - 1) * a,
+      1 + (HAND_POSE_ADS.sy - 1) * a,
+      1 + (HAND_POSE_ADS.sz - 1) * a,
+    );
+    hand.rotation.set(HAND_POSE_ADS.rx * a, 0, 0);
+  }
   // Пистолет: отдача откидывает руку назад и вверх, вспышка живёт пару кадров
   if (gunKick > 0) {
     gunKick = Math.max(0, gunKick - dt / 0.18);
-    const k = gunKick * gunKick;
+    const k = gunKick * gunKick * (1 - gunAim * 0.35);   // в прицеле подброс мягче
     handPivot.position.z += 0.11 * k;
     handPivot.position.y += 0.045 * k;
     handPivot.rotation.x -= 0.3 * k;
@@ -1326,8 +1381,9 @@ function firePistol() {
   ui.setBullets(bulletAmmo(), mode);
   const eye = player.eyePos();
   const d = player.lookDir();
-  // Небольшой разброс: стрельба не должна быть идеальным лазером
-  const spread = PISTOL_STATS.spread;
+  // Небольшой разброс: стрельба не должна быть идеальным лазером;
+  // в прицеле (ПКМ) пуля идёт заметно точнее — разброс падает до четверти
+  const spread = PISTOL_STATS.spread * (1 - gunAim * 0.75);
   const dx = d.x + (Math.random() - 0.5) * spread;
   const dy = d.y + (Math.random() - 0.5) * spread;
   const dz = d.z + (Math.random() - 0.5) * spread;
@@ -2632,6 +2688,8 @@ input.handlers.onScroll = (dir) => {
 };
 input.handlers.onActionBreak = () => {
   if (state !== 'game') return;
+  // Тап по экрану с пистолетом в руке — выстрел (как ЛКМ на десктопе)
+  if (isPistolSelected()) { firePistol(); return; }
   if (findMobTarget()) return;          // тап по мобу — удар, а не ломание
   const hit = pickTarget();
   if (!hit) return;
@@ -2645,8 +2703,9 @@ input.handlers.onActionBreak = () => {
 };
 input.handlers.onActionPlace = () => {
   if (state !== 'game') return;
-  // С пистолетом в руке кнопка «поставить блок» стреляет
-  if (isPistolSelected()) { firePistol(); return; }
+  // С пистолетом в руке тап по «поставить» ничего не ставит: стрельба — ЛКМ/кнопка
+  // «копать», прицеливание — удержание ПКМ/кнопки «поставить»
+  if (isPistolSelected()) return;
   doPlace(pickTarget());
 };
 
@@ -2716,16 +2775,19 @@ function frame() {
   if (world && player && (state === 'game')) {
     input.update();
 
-    // Обзор
+    // Обзор (в прицеле чувствительность мыши ниже — точное наведение)
     const look = input.consumeLook();
-    player.yaw -= look.dx * 0.0022;
-    player.pitch -= look.dy * 0.0022;
+    const lookSens = 0.0022 * (1 - gunAim * 0.55);
+    player.yaw -= look.dx * lookSens;
+    player.pitch -= look.dy * lookSens;
     const lim = Math.PI / 2 - 0.01;
     player.pitch = Math.max(-lim, Math.min(lim, player.pitch));
 
+    // В прицеле шаг осторожнее
+    const aimSlow = 1 - gunAim * (1 - PISTOL_STATS.adsMoveFactor);
     player.update({
-      forward: input.move.forward,
-      right: input.move.right,
+      forward: input.move.forward * aimSlow,
+      right: input.move.right * aimSlow,
       jump: input.jump,
       sneak: input.sneak,
       sprint: input.sprint,
@@ -2775,9 +2837,11 @@ function frame() {
       }
     }
 
-    // Удар по любому мобу под прицелом, включая птиц
+    // Удар по любому мобу под прицелом, включая птиц.
+    // С пистолетом в руке ЛКМ — выстрел, а не удар: ближний бой отключаем.
+    const gunHeld = isPistolSelected();
     let mobTarget = null;
-    if (input.breakHeld) {
+    if (input.breakHeld && !gunHeld) {
       mobTarget = findMobTarget();
       attackCd -= dt;
       if (mobTarget && attackCd <= 0) {
@@ -2829,10 +2893,11 @@ function frame() {
       eatFullT = 2.5;
     }
 
-    // Ломание: удержание ЛКМ/кнопки или быстрое по тапу (с анимацией трещин)
+    // Ломание: удержание ЛКМ/кнопки или быстрое по тапу (с анимацией трещин).
+    // Пистолет в руке блоки не ломает — ЛКМ уходит на стрельбу.
     let breaking = null;
     decorBreakCd = Math.max(0, decorBreakCd - dt);
-    if (hit && !mobTarget && !eat.active && isDecor(hit.id)) {
+    if (hit && !mobTarget && !eat.active && !gunHeld && isDecor(hit.id)) {
       // Растения: мгновенный срыв удержанием кнопки, трещины не показываем
       if (input.breakHeld && decorBreakCd <= 0) breakDecor(hit);
       breakTarget = null;
@@ -2840,7 +2905,7 @@ function frame() {
       breakQuick = false;
       crackMesh.visible = false;
       ui.setBreakProgress(0);
-    } else if (hit && !mobTarget && !eat.active) {
+    } else if (hit && !mobTarget && !eat.active && !gunHeld) {
       const same = breakTarget && breakTarget.x === hit.x && breakTarget.y === hit.y && breakTarget.z === hit.z;
       if (breakQuick) {
         if (same) breaking = hit;
@@ -2900,11 +2965,14 @@ function frame() {
       bowCharge = 0;
     }
 
-    // Пистолет: ПКМ (или кнопка на тач-экране) — выстрел; удержание даёт
-    // очередь с паузой перезарядки, как у настоящего пистолета
-    const gunSel = isPistolSelected() && !interactiveTarget;
+    // Пистолет: ЛКМ (или кнопка «копать» на тач-экране) — выстрел,
+    // удержание ПКМ (или кнопки «поставить») — прицеливание: зум камеры,
+    // ствол по центру экрана, меньше разброс. ПКМ по печи/сундуку всё ещё
+    // открывает их — интерактивный блок важнее прицеливания.
+    const gunSel = gunHeld && !interactiveTarget;
     gunCooldown = Math.max(0, gunCooldown - dt);
-    if (gunSel && input.placeHeld) firePistol();
+    gunAimWant = gunSel && !!input.placeHeld;
+    if (gunSel && input.breakHeld) firePistol();
 
     placeCooldown -= dt;
     if (!bowSel && !gunSel && input.placeHeld && placeCooldown <= 0 && hit) {
@@ -2921,9 +2989,10 @@ function frame() {
     camera.rotation.y = player.yaw;
     camera.rotation.x = player.pitch;
     camera.rotation.z = 0;
-    // Поле зрения шире и вбок, и вниз: при крутом взгляде вниз FOV плавно растёт
+    // Поле зрения шире и вбок, и вниз: при крутом взгляде вниз FOV плавно растёт;
+    // в прицеле пистолета — сужается (зум для точного выстрела)
     const downFov = Math.max(0, Math.min(1, (-player.pitch - 0.22) / 0.8));
-    const targetFov = 75 + downFov * 9;
+    const targetFov = (75 + downFov * 9) * (1 - gunAim * (1 - PISTOL_STATS.adsFovFactor));
     if (Math.abs(camera.fov - targetFov) > 0.05) {
       camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 6);
       camera.updateProjectionMatrix();
