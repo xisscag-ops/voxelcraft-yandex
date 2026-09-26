@@ -52,7 +52,7 @@ const DEATH_COLOR_TO = [0.35, 0.05, 0.04];
 // Волк — только если его ударить.
 export const HOSTILE = new Set(['zombie', 'spider', 'creeper']);
 // Сколько мобов каждого вида держим одновременно
-export const MOB_CAPS = { spider: 3, creeper: 2, wolf: 3, fish: 4, zombie: 4 };
+export const MOB_CAPS = { spider: 3, creeper: 2, wolf: 3, fish: 4, zombie: 4, villager: 7 };
 
 // ---------------------------------------------------------------- Лица: глаза, зрачки, рты, зубы
 const EYE_WHITE = [0.98, 0.98, 0.99];
@@ -490,6 +490,83 @@ function buildBird(mat, geoCache, ci) {
 }
 
 // Зомби: привычный зеленокожий гуманоид в бирюзовой рубашке и с вытянутыми руками.
+// Халаты жителей: задумчивый коричневый, полевой зелёный, ярмарочный лиловый
+const VILLAGER_ROBES = [
+  { robe: [0.45, 0.31, 0.2], robeDark: [0.33, 0.22, 0.14], apron: [0.63, 0.52, 0.4] },   // мельник
+  { robe: [0.3, 0.42, 0.24], robeDark: [0.21, 0.31, 0.17], apron: [0.5, 0.42, 0.3] },    // огородник
+  { robe: [0.38, 0.28, 0.44], robeDark: [0.27, 0.19, 0.32], apron: [0.55, 0.46, 0.58] }, // торговец
+];
+
+function buildVillager(mat, geoCache, ci) {
+  const c = VILLAGER_ROBES[ci % VILLAGER_ROBES.length];
+  const skin = [0.72, 0.55, 0.42];
+  const skinDark = [0.6, 0.44, 0.33];
+  const g = new THREE.Group();
+  const legs = [];
+  const arms = [];
+
+  // Сандалии выглядывают из-под рясы
+  for (const sx of [-1, 1]) {
+    const leg = pendulumPart(mat, geoCache, 'villager-leg', 0.16, 0.34, 0.19, c.robeDark);
+    leg.position.set(sx * 0.12, 0.34, 0);
+    const shoe = fixedPart(mat, geoCache, 'villager-shoe', 0.17, 0.1, 0.23, [0.2, 0.14, 0.1]);
+    shoe.position.set(0, -0.285, 0.015);
+    leg.add(shoe);
+    legs.push(leg);
+    g.add(leg);
+  }
+
+  // Ряса до колен и фартук — силуэт читается издалека
+  const robe = fixedPart(mat, geoCache, `villager-robe-${ci}`, 0.54, 0.62, 0.34, c.robe);
+  robe.position.set(0, 0.62, 0);
+  const torso = fixedPart(mat, geoCache, `villager-torso-${ci}`, 0.5, 0.44, 0.3, c.robe);
+  torso.position.set(0, 1.06, 0);
+  const apron = fixedPart(mat, geoCache, `villager-apron-${ci}`, 0.34, 0.5, 0.03, c.apron);
+  apron.position.set(0, 0.92, 0.17);
+  const belt = fixedPart(mat, geoCache, 'villager-belt', 0.52, 0.07, 0.33, [0.24, 0.16, 0.1]);
+  belt.position.set(0, 0.78, 0);
+  const collar = fixedPart(mat, geoCache, `villager-collar-${ci}`, 0.3, 0.09, 0.04, c.robeDark);
+  collar.position.set(0, 1.26, 0.15);
+
+  // Руки сложены перед собой: тыльная сторона ладоней снаружи,
+  // как у деревенского жителя, который что-то обдумывает.
+  for (const sx of [-1, 1]) {
+    const arm = pendulumPart(mat, geoCache, 'villager-arm', 0.15, 0.5, 0.16, c.robe);
+    arm.position.set(sx * 0.32, 1.2, 0.02);
+    arm.rotation.x = -0.5;
+    arm.rotation.z = sx * 0.55;                    // кисти сходятся к животу
+    const hand = fixedPart(mat, geoCache, 'villager-hand', 0.15, 0.13, 0.15, skin);
+    hand.position.set(0, -0.48, 0.01);
+    arm.add(hand);
+    arms.push(arm);
+    g.add(arm);
+  }
+
+  // Голова: крупный нос, густые брови, добродушный рот — «деревенский» профиль
+  const head = fixedPart(mat, geoCache, 'villager-head', 0.46, 0.44, 0.42, skin);
+  head.position.set(0, 1.52, 0.01);
+  const nose = fixedPart(mat, geoCache, 'villager-nose', 0.1, 0.16, 0.12, skinDark);
+  nose.position.set(0, 1.44, 0.25);
+  const brow = fixedPart(mat, geoCache, 'villager-brow', 0.34, 0.06, 0.03, [0.3, 0.2, 0.13]);
+  brow.position.set(0, 1.63, 0.225);
+  const hair = fixedPart(mat, geoCache, 'villager-hair', 0.47, 0.1, 0.43, [0.28, 0.18, 0.11]);
+  hair.position.set(0, 1.76, 0);
+  const face = addEyes(g, mat, geoCache, 'villager', {
+    y: 1.56, z: 0.225, dx: 0.12, size: 0.08,
+    sclera: [0.97, 0.96, 0.92], pupil: [0.12, 0.2, 0.1], pupilScale: 0.5,
+  });
+  const mouth = addMouth(g, mat, geoCache, 'villager', {
+    y: 1.35, z: 0.225, w: 0.18, h: 0.045, color: [0.32, 0.2, 0.16], teeth: 0,
+  });
+
+  g.add(robe, torso, apron, belt, collar, head, nose, brow, hair);
+  return {
+    group: g, legs, head, ears: [], hop: false,
+    face, mouth, arms, look: [head, nose, brow, hair, ...face, ...mouth],
+    lookZ: 0.01, blink: face, scale: 1.12,
+  };
+}
+
 function buildZombie(mat, geoCache) {
   const g = new THREE.Group();
   const skin = [0.32, 0.64, 0.29];
@@ -556,7 +633,7 @@ export class Mob {
   constructor(world, visuals, type, x, y, z) {
     this.world = world;
     this.v = visuals;
-    this.type = type;            // 'bunny' | 'sheep' | 'slime' | 'zombie' | 'bird' | 'spider' | 'creeper' | 'wolf' | 'fish'
+    this.type = type;            // 'bunny' | 'sheep' | 'slime' | 'zombie' | 'bird' | 'spider' | 'creeper' | 'wolf' | 'fish' | 'villager'
     this.pos = { x, y, z };
     this.home = { x, y, z };
     this.heading = Math.random() * Math.PI * 2;
@@ -567,12 +644,12 @@ export class Mob {
     this.soundT = 1 + Math.random() * 3;
     this.onSound = null;         // (kind, dist) => void
     this.onAttack = null;        // (mob, playerPos) => void
-    const SPEEDS = { bunny: 2.2, slime: 1.6, zombie: 2.0, bird: 3.0, spider: 3.1, creeper: 2.3, wolf: 2.7, fish: 1.5 };
+    const SPEEDS = { bunny: 2.2, slime: 1.6, zombie: 2.0, bird: 3.0, spider: 3.1, creeper: 2.3, wolf: 2.7, fish: 1.5, villager: 1.15 };
     this.speed = SPEEDS[type] ?? 1.1;
     // Зайцы и овцы выдерживают 2–3 удара рукой, хищники — покрепче
     this.hp = type === 'sheep' ? 3 : type === 'bunny' ? 2 : type === 'slime' ? 2
       : type === 'zombie' ? 3 : type === 'spider' ? 4 : type === 'creeper' ? 6
-        : type === 'wolf' ? 5 : type === 'fish' ? 1 : 1;
+        : type === 'wolf' ? 5 : type === 'fish' ? 1 : type === 'villager' ? 5 : 1;
     this.maxHp = this.hp;
     this.attackT = 0;
     this.flashT = 0;
@@ -1231,6 +1308,9 @@ export class Mob {
       } else if (this.type === 'sheep' && Math.random() < 0.12) {
         this.onSound('bleat', dist);
         this.soundT = 4;
+      } else if (this.type === 'villager' && Math.random() < 0.2) {
+        this.onSound('huh', dist);
+        this.soundT = 5 + Math.random() * 4;
       } else {
         this.soundT = 0.4;
       }
@@ -1447,6 +1527,7 @@ export function buildVisualsFor(type, mat, geoCache, eyeMat, slimeMat = mat) {
   if (type === 'creeper') return buildCreeper(mat, geoCache);
   if (type === 'wolf') return buildWolf(mat, geoCache, ci);
   if (type === 'fish') return buildFish(mat, geoCache, ci);
+  if (type === 'villager') return buildVillager(mat, geoCache, ci);
   return buildSlime(slimeMat, geoCache);
 }
 
@@ -1465,6 +1546,7 @@ export class MobManager {
     this.mat = new THREE.MeshBasicMaterial({ vertexColors: true });
     this.slimeMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.8 });
     this.spawnT = 0;
+    this.villagerSpawnT = 0;           // отдельный таймер заселения деревень
     this.max = 14;                     // в мире стало больше видов мобов
     this.onHop = null; // (dist) => void — звук
     this.onSound = null; // (kind, dist, type) => void — звуки мобов
@@ -1604,6 +1686,50 @@ export class MobManager {
     this.night = n;
   }
 
+  /** Житель деревни: привязан к дому/колодцу, откуда заспавнен */
+  spawnVillagerAt(x, y, z) {
+    if (this._count('villager') >= MOB_CAPS.villager) return null;
+    const mob = this._addMob('villager', x, y, z);
+    if (mob) mob.home = { x, y, z };
+    return mob;
+  }
+
+  /**
+   * Деревенское население: рядом с игроком каждая деревня получает жителей
+   * (по точкам у домов и колодца), а уехав из зоны прорисовки жители
+   * «расходятся по домам» — выгружаются, чтобы не тикали вдали.
+   */
+  trySpawnVillagers(player) {
+    const playerPos = player.pos || player;
+    if (typeof this.world.villagesNear !== 'function') return;
+    const near = this.world.villagesNear(playerPos.x, playerPos.z);
+    for (let i = this.mobs.length - 1; i >= 0; i--) {
+      const m = this.mobs[i];
+      if (m.type !== 'villager') continue;
+      const dx = m.pos.x - playerPos.x, dz = m.pos.z - playerPos.z;
+      if (dx * dx + dz * dz > 110 * 110) {
+        m.dispose(this.scene);
+        this.mobs.splice(i, 1);
+      }
+    }
+    for (const v of near) {
+      const want = Math.min(v.spots.length, 4);
+      if (this._count('villager') >= MOB_CAPS.villager) return;
+      for (const spot of v.spots) {
+        if (this._count('villager') >= MOB_CAPS.villager) return;
+        const taken = this.mobs.some((m) => m.type === 'villager'
+          && Math.hypot(m.home.x - spot.x, m.home.z - spot.z) < 6);
+        if (taken) continue;
+        const crowd = this.mobs.filter((m) => m.type === 'villager'
+          && Math.hypot(m.pos.x - v.x, m.pos.z - v.z) < 60).length;
+        if (crowd >= want) break;
+        const pdx = spot.x - playerPos.x, pdz = spot.z - playerPos.z;
+        if (pdx * pdx + pdz * pdz > 72 * 72) continue;
+        this.spawnVillagerAt(spot.x, spot.y, spot.z);
+      }
+    }
+  }
+
   // Ночной спавн зомби (и отдельный хук для тестов) — тоже только вне видимости
   trySpawnZombie(player) {
     const playerPos = player.pos || player;
@@ -1678,6 +1804,12 @@ export class MobManager {
     if (this.spawnT <= 0) {
       this.spawnT = 5 + Math.random() * 3.5;
       if (active) this.trySpawn(player);
+    }
+    // Деревни заселяются чаще: игрок подошёл — жители выходят к колодцу
+    this.villagerSpawnT -= dt;
+    if (this.villagerSpawnT <= 0) {
+      this.villagerSpawnT = 1.4;
+      if (active) this.trySpawnVillagers(player);
     }
     for (let i = this.mobs.length - 1; i >= 0; i--) {
       const m = this.mobs[i];
